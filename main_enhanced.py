@@ -1,13 +1,11 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v4.1.1
+# 📁 ملف: main_enhanced.py - الإصدار v4.1.2
+# 🔧 التعديلات v4.1.2:
+#    - 🔥 لا تشغّل start_scanner_threads من main
+#    - 🔥 تُشغَّل من post_init في bot_enhanced.py
 # 🔧 التعديلات v4.1.1:
-#    - 🔥 fallback قائمة الرموز (إذا Binance محظور)
-#    - 🔥 معالجة أفضل لفشل الاتصال
-# 🔧 التعديلات v4.1:
-#    - تهيئة WebSocket اللحظي
-# 🔧 التعديلات v4.0:
-#    - منع الصفقات المتعاكسة
-#    - مزامنة profit_history
+#    - Cache الرموز
+#    - fallback قائمة الرموز
 # 📅 التاريخ: 2026-09-18
 # ==================================================
 
@@ -169,7 +167,7 @@ def send_startup():
         realtime_status = "✅ نشط" if REALTIME_AVAILABLE else "❌ معطل"
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.1.1</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.1.2</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"🎯 <b>نظام:</b> القناص + TP/SL محقق\n"
@@ -685,7 +683,7 @@ def get_system_status():
         'weekly_pnl': weekly['weekly_pnl'],
         'monthly_pnl': monthly['monthly_pnl'],
         'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
-        'strategy': 'نظام القناص v4.1.1',
+        'strategy': 'نظام القناص v4.1.2',
         'groq_available': GROQ_AVAILABLE,
         'memory_available': MEMORY_AVAILABLE,
         'market_regime_available': MARKET_REGIME_AVAILABLE,
@@ -717,14 +715,14 @@ def toggle_auto_scan():
 # ==================== التشغيل ====================
 
 def start_scanner_threads():
-    """تشغيل الخيوط"""
+    """تشغيل الخيوط - تُستدعى من post_init في bot_enhanced.py"""
+    logger.info("🔧 بدء تشغيل الخيوط...")
 
-    # ==================== ⚡ تهيئة WebSocket اللحظي ====================
+    # تهيئة WebSocket اللحظي
     if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
         try:
             all_symbols = core.get_all_futures_symbols()
 
-            # 🔥 fallback إذا القائمة فارغة
             if not all_symbols:
                 logger.warning("⚠️ قائمة الرموز فارغة - استخدام القائمة الاحتياطية")
                 all_symbols = FALLBACK_SYMBOLS
@@ -759,6 +757,7 @@ def start_scanner_threads():
 
 
 def main():
+    """الدالة الرئيسية"""
     try:
         send_startup()
         time.sleep(3)
@@ -774,9 +773,10 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ فشل مزامنة profit_history: {e}")
 
-        start_scanner_threads()
+        # 🔥 لا نشغّل start_scanner_threads هنا!
+        # ستُشغَّل من bot_enhanced.run_bot() بعد بدء polling
 
-        logger.info("🎯 نظام القناص v4.1.1 مفعل")
+        logger.info("🎯 نظام القناص v4.1.2 مفعل")
         logger.info(f"⏰ المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🔒 Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}")
         logger.info(f"🔒 Breakeven بعد TP1: ✅ ({TP_MULTIPLE_LEVELS[0]}%)")
@@ -787,6 +787,7 @@ def main():
         logger.info(f"📈 MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
         logger.info(f"🛑 توقف بعد {MAX_CONSECUTIVE_LOSSES} خسائر")
 
+        # 🔥 شغّل البوت مباشرة (blocking)
         tgbot.run_bot()
 
     except Exception as e:
