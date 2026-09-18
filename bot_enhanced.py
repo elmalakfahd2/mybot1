@@ -1,0 +1,1350 @@
+# ==================================================
+# 📁 ملف: bot_enhanced.py - الإصدار النهائي
+# 🔧 التعديلات:
+# 1. عرض الرصيد الصحيح (availableBalance)
+# 2. إصلاح إرسال الرسائل
+# 3. إضافة run_async_safe (إصلاح Event loop is closed)
+# 4. إصلاح التعامل مع الخيوط والـ async
+# 5. إضافة error_handler لـ Telegram
+# 6. إضافة cleanup_state_file لمزامنة الصفقات
+# 7. ✅ إضافة زر فحص الأوامر المشروطة (Algo Orders)
+# 8. ✅ إظهار أسعار TP/SL الفعلية في التنفيذ اليدوي
+# 📅 التاريخ: 2024-01-15
+# ==================================================
+
+import logging, os, json, threading, time, asyncio
+from datetime import datetime
+from telegram import ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext
+from telegram.ext import filters
+import concurrent.futures
+
+# تهيئة الـ logger أولاً
+logger = logging.getLogger("bot_enhanced")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+from config import *
+import core_functions as core
+
+# محاولة استيراد النظام المحسن
+try:
+    import bot_strategies_enhanced as strat
+    logger.info("✅ تم تحميل النظام المحسن")
+except ImportError as e:
+    logger.warning(f"❌ لم يتم العثور على النظام المحسن: {e}")
+    try:
+        import bot_strategies as strat
+        logger.info("✅ تم تحميل النظام الأساسي")
+    except ImportError as e:
+        logger.error(f"❌ فشل تحميل أي نظام: {e}")
+        raise
+
+# محاولة استيراد وحدة Groq
+try:
+    from groq_integration import enhance_signal_with_groq, is_groq_available
+    GROQ_AVAILABLE = is_groq_available()
+    if GROQ_AVAILABLE:
+        logger.info("✅ تم تحميل وحدة Groq")
+    else:
+        logger.warning("⚠️ وحدة Groq غير متاحة")
+except ImportError as e:
+    logger.warning(f"❌ Groq غير متاح: {e}")
+    GROQ_AVAILABLE = False
+    enhance_signal_with_groq = lambda x: x
+
+STATE_FILE = "open_positions.json"
+_lock = threading.Lock()
+_bot_running = True
+
+
+# ==================== 🔥 دالة async آمنة ====================
+
+def run_async_safe(coro):
+    """
+    ✅ تشغيل coroutine بأمان من thread
+    """
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            elif loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                return future.result(timeout=30)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            pass
+
+    except Exception as e:
+        if "Event loop is closed" not in str(e):
+            logger.error(f"❌ خطأ async آمن: {e}")
+        return None
+
+
+def run_async_new_loop(coro):
+    """
+    ✅ نسخة بديلة: إنشاء loop جديد دائماً
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    except Exception as e:
+        if "Event loop is closed" not in str(e):
+            logger.error(f"❌ خطأ async: {e}")
+        return None
+
+
+# ==================== دوال مساعدة ====================
+
+def get_accurate_balance():
+    """🔥 الحصول على الرصيد الصحيح (availableBalance)"""
+    try:
+        client_obj = core.get_client()
+        if not client_obj:
+            return 0.0
+
+        account = client_obj.futures_account()
+
+        for asset in account.get('assets', []):
+            if asset.get('asset') == 'USDT':
+                return float(asset.get('availableBalance', 0))
+
+        return 0.0
+    except Exception as e:
+        logger.error(f"خطأ في جلب الرصيد: {e}")
+        return 0.0
+
+
+def get_full_balance_info():
+    """معلومات الرصيد الكاملة"""
+    try:
+        client_obj = core.get_client()
+        if not client_obj:
+            return {}
+
+        account = client_obj.futures_account()
+
+        for asset in account.get('assets', []):
+            if asset.get('asset') == 'USDT':
+                return {
+                    'available': float(asset.get('availableBalance', 0)),
+                    'wallet': float(asset.get('walletBalance', 0)),
+                    'unrealized_pnl': float(asset.get('unrealizedProfit', 0)),
+                    'margin': float(asset.get('totalPositionInitialMargin', 0)),
+                    'maint_margin': float(asset.get('totalMaintMargin', 0)),
+                    'cross_wallet': float(asset.get('crossWalletBalance', 0))
+                }
+
+        return {}
+    except Exception as e:
+        logger.error(f"خطأ في جلب معلومات الرصيد: {e}")
+        return {}
+
+
+# 🔥 تنفيذ التحليل مع مهلة زمنية
+def analyze_with_timeout(symbol, timeout_seconds=30):
+    """تنفيذ التحليل مع مهلة زمنية"""
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(strat.generate_smart_analysis, symbol)
+            try:
+                result = future.result(timeout=timeout_seconds)
+                return result
+            except concurrent.futures.TimeoutError:
+                logger.error(f"⏰ انتهت مهلة التحليل لـ {symbol}")
+                return None
+    except Exception as e:
+        logger.error(f"❌ خطأ في التحليل: {e}")
+        return None
+
+
+def analyze_signal_with_timeout(symbol, timeout_seconds=25):
+    """تحليل الإشارة مع مهلة زمنية"""
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(strat.generate_premium_signal_light, symbol)
+            try:
+                result = future.result(timeout=timeout_seconds)
+                return result
+            except concurrent.futures.TimeoutError:
+                logger.error(f"⏰ انتهت المهلة لـ {symbol}")
+                return None
+    except Exception as e:
+        logger.error(f"❌ خطأ: {e}")
+        return None
+
+
+# لوحة المفاتيح الرئيسية
+main_kb = ReplyKeyboardMarkup([
+    ["💰 الرصيد", "📊 الصفقات المفتوحة"],
+    ["📈 الأرباح اليومية", "🔍 البحث عن إشارات"],
+    ["🤖 تشغيل/إوقف التلقائي", "🔄 تحديث الأوامر"],
+    ["📊 حالة النظام", "🔒 قفل الصفقات الرابحة"],
+    ["📋 تقرير الأداء", "🔄 تشغيل/إيقاف البوت"],
+    ["📊 الأرباح الأسبوعية", "📈 الأرباح الشهرية"],
+    ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
+    ["🔎 فحص الأوامر المشروطة"]
+], resize_keyboard=True)
+
+
+def ensure_state():
+    if not os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f)
+
+
+def load_state():
+    ensure_state()
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_state(data):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+# 🔥 مزامنة ملف الصفقات مع Binance الفعلي
+def cleanup_state_file():
+    """✅ مزامنة open_positions.json مع Binance الفعلي"""
+    try:
+        real_positions = core.get_open_positions()
+        real_keys = {f"{p['symbol']}_{p['positionSide']}" for p in real_positions}
+
+        with _lock:
+            st = load_state()
+            cleaned = [
+                s for s in st
+                if f"{s['symbol']}_{s['positionSide']}" in real_keys
+            ]
+
+            if len(cleaned) != len(st):
+                logger.info(f"🧹 تنظيف open_positions: {len(st)} → {len(cleaned)}")
+                save_state(cleaned)
+            else:
+                logger.info(f"✅ open_positions متزامن: {len(cleaned)} صفقة")
+
+            return len(cleaned)
+    except Exception as e:
+        logger.error(f"خطأ في التنظيف: {e}")
+        return 0
+
+
+def add_open_position(info):
+    with _lock:
+        st = load_state()
+        existing = [s for s in st if s.get("symbol") == info.get("symbol") and s.get("positionSide") == info.get("positionSide")]
+        if not existing:
+            st.append(info)
+            save_state(st)
+
+
+def remove_open_position(symbol, positionSide=None):
+    with _lock:
+        st = load_state()
+        if positionSide:
+            st = [s for s in st if not (s.get("symbol") == symbol and s.get("positionSide") == positionSide)]
+        else:
+            st = [s for s in st if s.get("symbol") != symbol]
+        save_state(st)
+
+
+def format_number_english(number, decimals=4):
+    try:
+        if number is None:
+            return "0"
+        return f"{number:.{decimals}f}".replace(',', '')
+    except:
+        return str(number)
+
+
+# ==================== إرسال الرسائل ====================
+
+async def send_message_safe(update: Update, text: str, parse_mode="HTML", reply_markup=None):
+    """إرسال رسالة آمن"""
+    try:
+        if not text or len(text.strip()) == 0:
+            logger.warning("⚠️ نص فارغ")
+            return
+
+        if len(text) > 4096:
+            logger.warning(f"⚠️ تقصير النص من {len(text)}")
+            text = text[:4090] + "..."
+
+        if update.callback_query:
+            try:
+                await update.callback_query.message.reply_text(
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+                logger.info(f"✅ إرسال callback: {text[:100]}...")
+            except Exception as e:
+                logger.error(f"❌ خطأ callback: {e}")
+                try:
+                    await update.callback_query.edit_message_text(
+                        text=text,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup
+                    )
+                except Exception as e2:
+                    logger.error(f"❌ فشل تحرير: {e2}")
+
+        elif update.message:
+            try:
+                await update.message.reply_text(
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=True
+                )
+                logger.info(f"✅ إرسال عادي: {text[:100]}...")
+            except Exception as e:
+                logger.error(f"❌ خطأ إرسال: {e}")
+        else:
+            logger.warning("⚠️ إرسال مباشر")
+            await send_direct_message(text, parse_mode, reply_markup)
+
+    except Exception as e:
+        logger.error(f"❌ خطأ عام: {e}")
+        try:
+            await send_direct_message(text, parse_mode, reply_markup)
+        except Exception as final_error:
+            logger.error(f"❌ فشل نهائي: {final_error}")
+
+
+async def send_direct_message(text: str, parse_mode="HTML", reply_markup=None):
+    """إرسال رسالة مباشرة"""
+    try:
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_TOKEN)
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True
+        )
+        logger.info(f"✅ إرسال مباشر: {text[:100]}...")
+    except Exception as e:
+        logger.error(f"❌ فشل الإرسال المباشر: {e}")
+
+
+# ==================== التنفيذ اليدوي ====================
+
+def execute_trade_manual(update: Update, symbol: str, side: str):
+    """تنفيذ صفقة يدوية"""
+    try:
+        if not _bot_running:
+            run_async_safe(send_message_safe(update, "❌ البوت متوقف حالياً.", reply_markup=main_kb))
+            return
+
+        current_positions = core.get_open_positions()
+        if len(current_positions) >= MAX_OPEN_POSITIONS:
+            run_async_safe(send_message_safe(update, f"❌ وصلت للحد الأقصى ({MAX_OPEN_POSITIONS})", reply_markup=main_kb))
+            return
+
+        for pos in current_positions:
+            if pos["symbol"] == symbol:
+                run_async_safe(send_message_safe(update, f"⚠️ يوجد صفقة مفتوحة لـ {symbol}", reply_markup=main_kb))
+                return
+
+        run_async_safe(send_message_safe(update, f"🔄 جاري تنفيذ {side} {symbol}...", reply_markup=main_kb))
+
+        if ENABLE_MULTIPLE_TP:
+            result = core.place_market_order_with_multiple_tp(symbol, side, TRADE_USDT, LEVERAGE)
+        else:
+            result = core.place_market_order_with_tp_sl(symbol, side, TRADE_USDT, LEVERAGE)
+
+        if result:
+            # 🔥 التحقق من فشل TP/SL
+            if result.get('closed_due_to_failure'):
+                msg = (f"⚠️ <b>فشل إنشاء TP/SL</b>\n\n"
+                       f"💰 <b>العملة:</b> {symbol}\n"
+                       f"🔒 <b>الإجراء:</b> تم إغلاق الصفقة فوراً\n"
+                       f"✅ <b>لم تخسر شيئاً</b>")
+                run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+                return
+
+            add_open_position(result)
+
+            entry_price_eng = format_number_english(result['entry_price'])
+            quantity_eng = format_number_english(result['quantity'], 6)
+
+            verification = result.get('verification', {})
+            tp_count = verification.get('details', {}).get('tp_count', 0)
+            sl_count = verification.get('details', {}).get('sl_count', 0)
+            
+            entry_price = result['entry_price']
+            position_side = result['positionSide']
+
+            if result.get('multiple_tp'):
+                # ==================== ✅ الرسالة الجديدة مع الأسعار الفعلية ====================
+                msg = (
+                    f"✅ <b>تم تنفيذ الصفقة بنجاح</b>\n\n"
+                    f"💰 <b>العملة:</b> {symbol}\n"
+                    f"📈 <b>الاتجاه:</b> {side}\n"
+                    f"💵 <b>سعر الدخول:</b> <code>{entry_price_eng}</code>\n"
+                    f"⚖️ <b>الكمية:</b> <code>{quantity_eng}</code>\n\n"
+                    f"🎯 <b>مستويات TP الفعلية:</b>\n"
+                )
+
+                tp_results = result.get('tp_results', {})
+                successful_tps = [tp for tp in tp_results.get('tp_orders', []) if tp.get('success')]
+
+                for tp in successful_tps:
+                    tp_price_eng = format_number_english(tp['tp_price'])
+                    
+                    # حساب النسبة الفعلية من الدخول
+                    try:
+                        if position_side == "LONG":
+                            actual_pct = ((float(tp['tp_price']) - entry_price) / entry_price) * 100
+                        else:
+                            actual_pct = ((entry_price - float(tp['tp_price'])) / entry_price) * 100
+                        pct_str = f"{actual_pct:+.2f}%"
+                    except:
+                        pct_str = f"+{tp['tp_percent']:.1f}%"
+                    
+                    msg += (
+                        f"   ✅ <b>TP{tp['level']}:</b> <code>{tp_price_eng}</code>\n"
+                        f"      ({pct_str} | {tp['ratio']*100:.0f}% كمية: {format_number_english(tp['quantity'], 4)})\n"
+                    )
+
+                # ✅ إضافة SL بسعره الفعلي
+                if tp_results.get('sl_success'):
+                    sl_price_eng = format_number_english(tp_results.get('sl_price'))
+                    sl_percent = tp_results.get('sl_percent', SL_PERCENT)
+                    
+                    # حساب النسبة الفعلية
+                    try:
+                        if position_side == "LONG":
+                            actual_sl_pct = ((float(tp_results.get('sl_price')) - entry_price) / entry_price) * 100
+                        else:
+                            actual_sl_pct = ((entry_price - float(tp_results.get('sl_price'))) / entry_price) * 100
+                        sl_pct_str = f"{actual_sl_pct:.2f}%"
+                    except:
+                        sl_pct_str = f"-{sl_percent:.2f}%"
+                    
+                    msg += (
+                        f"\n🛡️ <b>SL:</b> <code>{sl_price_eng}</code>\n"
+                        f"      ({sl_pct_str})\n"
+                    )
+                else:
+                    msg += f"\n🚨 <b>لا يوجد SL! - خطر!</b>\n"
+
+                msg += (
+                    f"\n✅ <b>التحقق:</b>\n"
+                    f"   • أوامر TP: {tp_count}\n"
+                    f"   • أوامر SL: {sl_count}\n"
+                    f"   • الحالة: {'✅ محمية بالكامل' if sl_count > 0 else '⚠️ غير كاملة'}"
+                )
+            else:
+                msg = (f"✅ <b>تم تنفيذ الصفقة</b>\n\n"
+                       f"💰 <b>العملة:</b> {symbol}\n"
+                       f"📈 <b>الاتجاه:</b> {side}\n"
+                       f"💵 <b>الدخول:</b> <code>{entry_price_eng}</code>\n"
+                       f"⚖️ <b>الكمية:</b> <code>{quantity_eng}</code>\n")
+        else:
+            msg = "❌ <b>فشل تنفيذ الصفقة</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+
+    except Exception as e:
+        logger.error(f"خطأ في التنفيذ اليدوي: {e}")
+        run_async_safe(send_message_safe(update, "❌ حدث خطأ غير متوقع", reply_markup=main_kb))
+
+
+# ==================== معالج الأخطاء ====================
+
+async def error_handler(update, context):
+    """✅ معالج الأخطاء لـ Telegram"""
+    error = context.error
+
+    if "Conflict" in str(error):
+        logger.warning("⚠️ Conflict: نسخة أخرى من البوت تعمل - تجاهل")
+        return
+
+    if "Network" in str(error) or "timed out" in str(error):
+        logger.warning(f"🌐 خطأ شبكة: {error}")
+        return
+
+    if "Event loop is closed" in str(error):
+        logger.warning("⚠️ Event loop مغلق - تجاهل")
+        return
+
+    logger.error(f"❌ خطأ في Telegram: {error}")
+
+
+# ==================== الأوامر ====================
+
+async def start(update: Update, context: CallbackContext):
+    status = "🟢 نشط" if _bot_running else "🔴 متوقف"
+    tp_system = "متعدد المستويات" if ENABLE_MULTIPLE_TP else "مستوى واحد"
+
+    daily_data = core.get_accurate_daily_pnl()
+    weekly_data = core.get_accurate_weekly_pnl()
+    monthly_data = core.get_accurate_monthly_pnl()
+
+    groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
+
+    await update.message.reply_text(
+        f"🤖 <b>بوت القناص الذكي v3.0</b> - {status}\n\n"
+        f"🎯 <b>الاستراتيجية:</b> Price Action + AI\n"
+        f"• تحليل متعدد المؤشرات والفريمات\n"
+        f"• فلترة صارمة بالحجم والسيولة\n"
+        f"• TP/SL محقق تلقائياً\n"
+        f"• Trailing SL ديناميكي\n\n"
+        f"⚙️ <b>الإعدادات:</b>\n"
+        f"• رأس المال: {TRADE_USDT} USDT\n"
+        f"• الرافعة: {LEVERAGE}x\n"
+        f"• الحد الأقصى: {MAX_OPEN_POSITIONS} صفقات\n"
+        f"• TP: {tp_system}\n"
+        f"• SL: {SL_PERCENT}%\n"
+        f"• Groq AI: {groq_status}\n\n"
+        f"🚀 <b>نظام TP المتعدد:</b>\n"
+        f"• L1: {TP_MULTIPLE_LEVELS[0]}% ({TP_QUANTITY_RATIOS[0]*100}%)\n"
+        f"• L2: {TP_MULTIPLE_LEVELS[1]}% ({TP_QUANTITY_RATIOS[1]*100}%)\n"
+        f"• L3: {TP_MULTIPLE_LEVELS[2]}% ({TP_QUANTITY_RATIOS[2]*100}%)\n\n"
+        f"📊 <b>الأرباح:</b>\n"
+        f"• اليوم: {daily_data['daily_pnl']:.2f}\n"
+        f"• الأسبوع: {weekly_data['weekly_pnl']:.2f}\n"
+        f"• الشهر: {monthly_data['monthly_pnl']:.2f}\n\n"
+        f"📊 <b>الحالة: {status}</b>",
+        parse_mode="HTML",
+        reply_markup=main_kb
+    )
+
+
+async def handle_message(update: Update, context: CallbackContext):
+    text = (update.message.text or "").strip()
+    global _bot_running
+
+    # ==================== الرصيد ====================
+    if text == "💰 الرصيد":
+        try:
+            balance_info = get_full_balance_info()
+            
+            if balance_info:
+                available = balance_info.get('available', 0)
+                wallet = balance_info.get('wallet', 0)
+                unrealized = balance_info.get('unrealized_pnl', 0)
+                margin = balance_info.get('margin', 0)
+                cross_wallet = balance_info.get('cross_wallet', 0)
+
+                available_eng = format_number_english(available, 2)
+                wallet_eng = format_number_english(wallet, 2)
+                unrealized_eng = format_number_english(unrealized, 2)
+                margin_eng = format_number_english(margin, 2)
+
+                msg = (
+                    f"💰 <b>تفاصيل الرصيد:</b>\n\n"
+                    f"✅ <b>المتاح للتداول:</b> {available_eng} USDT\n"
+                    f"💼 <b>إجمالي المحفظة:</b> {wallet_eng} USDT\n"
+                    f"📊 <b>هامش الصفقات:</b> {margin_eng} USDT\n"
+                    f"📈 <b>ربح/خسارة غير محقق:</b> {unrealized_eng} USDT\n"
+                )
+
+                await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+                return
+        except Exception as e:
+            logger.error(f"خطأ: {e}")
+
+        bal = core.get_futures_balance("USDT")
+        bal_eng = format_number_english(bal, 2)
+        await update.message.reply_text(f"💰 <b>الرصيد:</b> {bal_eng} USDT", parse_mode="HTML", reply_markup=main_kb)
+        return
+
+    # ==================== تشغيل/إيقاف البوت ====================
+    if text == "🔄 تشغيل/إيقاف البوت":
+        _bot_running = not _bot_running
+        status = "🟢 نشط" if _bot_running else "🔴 متوقف"
+
+        if _bot_running:
+            import main_enhanced as auto_main
+            auto_main._auto_scan_enabled = True
+            auto_main._auto_trading_enabled = True
+            msg = f"✅ <b>تم تشغيل البوت</b>\n\n📊 الحالة: {status}"
+        else:
+            import main_enhanced as auto_main
+            auto_main._auto_scan_enabled = False
+            auto_main._auto_trading_enabled = False
+            msg = f"⏸️ <b>تم إيقاف البوت</b>\n\n📊 الحالة: {status}"
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+        return
+
+    # ==================== تشغيل/إيقاف التلقائي ====================
+    if text == "🤖 تشغيل/إوقف التلقائي":
+        import main_enhanced as auto_main
+        result = auto_main.toggle_auto_trading()
+        await update.message.reply_text(result, parse_mode="HTML", reply_markup=main_kb)
+        return
+
+    # ==================== البحث عن إشارات ====================
+    if text == "🔍 البحث عن إشارات":
+        if not _bot_running:
+            await update.message.reply_text("❌ البوت متوقف.", parse_mode="HTML", reply_markup=main_kb)
+            return
+        await update.message.reply_text("🔍 <b>جاري البحث...</b>", parse_mode="HTML", reply_markup=main_kb)
+        threading.Thread(target=_scan_premium_signals, args=(update,), daemon=True).start()
+        return
+
+    # ==================== الصفقات المفتوحة ====================
+    if text == "📊 الصفقات المفتوحة":
+        await _show_open_positions(update)
+        return
+
+    # ==================== فحص الأوامر المشروطة (Algo Orders) ====================
+    if text == "🔎 فحص الأوامر المشروطة":
+        await _show_algo_orders(update)
+        return
+
+    # ==================== الأرباح ====================
+    if text == "📈 الأرباح اليومية":
+        await _show_daily_pnl(update)
+        return
+
+    if text == "📊 الأرباح الأسبوعية":
+        await _show_weekly_pnl(update)
+        return
+
+    if text == "📈 الأرباح الشهرية":
+        await _show_monthly_pnl(update)
+        return
+
+    # ==================== إغلاق الصفقات ====================
+    if text == "⚡ إغلاق جميع الصفقات":
+        keyboard = [
+            [InlineKeyboardButton("✅ نعم، إغلاق الكل", callback_data="confirm_close_all")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data="cancel_close_all")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "⚠️ <b>إغلاق جميع الصفقات؟</b>\n\nهذا الإجراء سيغلق كل الصفقات المفتوحة.",
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        return
+
+    if text == "🔒 قفل الصفقات الرابحة":
+        keyboard = [
+            [InlineKeyboardButton("✅ نعم، قفل الرابحة", callback_data="confirm_close_profitable")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data="cancel_close_profitable")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "⚠️ <b>قفل الصفقات الرابحة فقط؟</b>",
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        return
+
+    if text == "🛑 إغلاق الصفقات الخاسرة":
+        keyboard = [
+            [InlineKeyboardButton("✅ نعم، إغلاق الخاسرة", callback_data="confirm_close_losing")],
+            [InlineKeyboardButton("❌ إلغاء", callback_data="cancel_close_losing")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "⚠️ <b>إغلاق الصفقات الخاسرة فقط؟</b>",
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        return
+
+    # ==================== تقارير ====================
+    if text == "📋 تقرير الأداء":
+        await _show_enhanced_performance_report(update)
+        return
+
+    # ==================== تحديث الأوامر ====================
+    if text == "🔄 تحديث الأوامر":
+        await update.message.reply_text("🔄 <b>جاري التحديث...</b>", parse_mode="HTML", reply_markup=main_kb)
+        threading.Thread(target=_update_orders, args=(update,), daemon=True).start()
+        return
+
+    # ==================== حالة النظام ====================
+    if text == "📊 حالة النظام":
+        import main_enhanced as auto_main
+        status = auto_main.get_system_status()
+
+        auto_scan_status = "✅" if status['auto_scan'] else "⏸️"
+        auto_trading_status = "✅" if status['auto_trading'] else "⏸️"
+        bot_status = "🟢" if _bot_running else "🔴"
+        tp_system = "متعدد" if ENABLE_MULTIPLE_TP else "واحد"
+        groq_status = "✅" if GROQ_AVAILABLE else "❌"
+
+        balance_info = get_full_balance_info()
+        available = balance_info.get('available', 0)
+        wallet = balance_info.get('wallet', 0)
+
+        msg = (
+            f"📊 <b>حالة النظام v3.0</b>\n\n"
+            f"🤖 <b>البوت:</b> {bot_status}\n"
+            f"🔍 <b>المسح:</b> {auto_scan_status}\n"
+            f"🤖 <b>التنفيذ:</b> {auto_trading_status}\n"
+            f"🧠 <b>Groq AI:</b> {groq_status}\n"
+            f"📈 <b>الصفقات:</b> {status['open_positions']}/{status['max_positions']}\n\n"
+            f"💰 <b>الرصيد:</b>\n"
+            f"   • المتاح: {available:.2f} USDT\n"
+            f"   • الإجمالي: {wallet:.2f} USDT\n\n"
+            f"📊 <b>الأرباح:</b>\n"
+            f"   • اليوم: {status['daily_pnl']:.2f}\n"
+            f"   • الأسبوع: {status['weekly_pnl']:.2f}\n"
+            f"   • الشهر: {status['monthly_pnl']:.2f}\n\n"
+            f"⏳ <b>التبريد:</b> {status['cooldown_symbols']}\n"
+            f"🛑 <b>خسائر متتالية:</b> {status.get('consecutive_losses', 0)}/{MAX_CONSECUTIVE_LOSSES}\n"
+            f"🚀 <b>TP:</b> {tp_system}\n"
+            f"⚙️ <b>SL:</b> {SL_PERCENT}% (ديناميكي)\n"
+            f"🔒 <b>Trailing SL:</b> {'✅' if TRAILING_SL_ENABLED else '❌'}\n"
+        )
+
+        if status.get('is_paused'):
+            msg += f"\n⏸️ <b>متوقف:</b> {status.get('pause_remaining', 0)} دقيقة"
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+        return
+
+    # ==================== تحليل عملة ====================
+    t = text.upper().lstrip("/")
+    sym = None
+    if len(t) in [3, 4] and t.isalpha():
+        sym = t + "USDT"
+    elif t.endswith("USDT"):
+        sym = t
+
+    if sym:
+        if not _bot_running:
+            await update.message.reply_text("❌ البوت متوقف.", parse_mode="HTML", reply_markup=main_kb)
+            return
+        await update.message.reply_text(f"🧠 <b>جاري تحليل {sym}...</b>", parse_mode="HTML", reply_markup=main_kb)
+        threading.Thread(target=_analyze_smart_detailed, args=(update, sym), daemon=True).start()
+        return
+
+    # ==================== تعليمات ====================
+    await update.message.reply_text(
+        "❓ <b>تعليمات البوت v3.0:</b>\n\n"
+        "• <code>💰 الرصيد</code> - الرصيد الدقيق\n"
+        "• <code>📊 الصفقات المفتوحة</code> - الصفقات الحالية\n"
+        "• <code>🔎 فحص الأوامر المشروطة</code> - عرض TP/SL الفعلية\n"
+        "• <code>🔍 البحث عن إشارات</code> - بحث يدوي\n"
+        "• <code>رمز العملة</code> - تحليل (مثال: BTC)\n"
+        "• <code>📊 حالة النظام</code> - حالة كاملة\n"
+        "• <code>📋 تقرير الأداء</code> - تقرير مفصل\n"
+        "• <code>🔄 تحديث الأوامر</code> - إصلاح TP/SL\n\n"
+        "🎯 <b>مثال:</b> أرسل <code>BTC</code>",
+        parse_mode="HTML",
+        reply_markup=main_kb
+    )
+
+
+# ==================== دوال مساعدة ====================
+
+def _scan_premium_signals(update: Update):
+    """البحث عن إشارات"""
+    try:
+        signals = strat.scan_premium_signals()
+
+        if signals:
+            msg = f"🎯 <b>تم العثور على {len(signals)} إشارة:</b>\n\n"
+            for i, sig in enumerate(signals, 1):
+                groq_info = ""
+                if sig.get('groq_recommendation'):
+                    groq_emoji = "✅" if sig['groq_recommendation'] == "تأكيد" else "❌" if sig['groq_recommendation'] == "رفض" else "⚠️"
+                    groq_info = f" | 🧠 {groq_emoji}"
+
+                score = sig.get('total_score', 0)
+                msg += f"{i}. {sig['symbol']} - {sig['direction']}\n"
+                msg += f"   قوة: {sig['strength']}/10 | ثقة: {sig['confidence']:.1f}% | نقاط: {score}/100{groq_info}\n"
+
+            actual_positions = len(core.get_open_positions())
+            msg += f"\n📊 <b>الصفقات المفتوحة:</b> {actual_positions}/{MAX_OPEN_POSITIONS}"
+        else:
+            msg = "🔍 <b>لم يتم العثور على إشارات</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        run_async_safe(send_message_safe(update, "❌ <b>خطأ</b>", reply_markup=main_kb))
+
+
+async def _analyze_smart_detailed_async(update: Update, symbol):
+    """تحليل ذكي"""
+    try:
+        logger.info(f"🧠 تحليل {symbol}")
+
+        analysis = analyze_with_timeout(symbol, 25)
+
+        if analysis and analysis.get('recommendation'):
+            from bot_strategies_enhanced import format_smart_analysis_for_display
+            analysis_msg = format_smart_analysis_for_display(analysis)
+
+            recommendation = analysis['recommendation']
+            confidence = recommendation['confidence']
+
+            if confidence >= 60 and recommendation['action'] in ['BUY', 'SELL']:
+                if confidence >= 75:
+                    button_text = f"🚀 تنفيذ {recommendation['action']}"
+                elif confidence >= 65:
+                    button_text = f"⚠️ تنفيذ {recommendation['action']}"
+                else:
+                    button_text = f"🛑 تنفيذ {recommendation['action']}"
+
+                keyboard = [
+                    [InlineKeyboardButton(button_text, callback_data=f"trade_{symbol}_{recommendation['action']}")],
+                    [InlineKeyboardButton("🔄 تحليل جديد", callback_data=f"new_analysis_{symbol}")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await send_message_safe(update, analysis_msg, reply_markup=reply_markup)
+            else:
+                keyboard = [[InlineKeyboardButton("🔄 تحليل جديد", callback_data=f"new_analysis_{symbol}")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await send_message_safe(update, analysis_msg, reply_markup=reply_markup)
+
+        else:
+            await send_message_safe(update,
+                f"🔍 <b>لا توجد إشارة قوية لـ {symbol}</b>\n\n"
+                f"📉 <b>الأسباب:</b>\n"
+                f"• اتجاه غير واضح\n"
+                f"• حجم غير كافٍ\n"
+                f"• مؤشرات متضاربة\n\n"
+                f"⏰ <b>جرب بعد 15-30 دقيقة</b>",
+                reply_markup=main_kb
+            )
+
+    except Exception as e:
+        logger.error(f"❌ خطأ: {e}")
+        await send_message_safe(update, f"❌ <b>خطأ في التحليل</b>", reply_markup=main_kb)
+
+
+def _analyze_smart_detailed(update: Update, symbol):
+    """تحليل ذكي - wrapper"""
+    try:
+        run_async_new_loop(_analyze_smart_detailed_async(update, symbol))
+    except Exception as e:
+        logger.error(f"❌ خطأ: {e}")
+        try:
+            run_async_new_loop(send_direct_message(f"❌ فشل التحليل لـ {symbol}"))
+        except:
+            pass
+
+
+# ==================== ✅ فحص الأوامر المشروطة ====================
+
+async def _show_algo_orders(update: Update):
+    """🔎 عرض الأوامر المشروطة (Algo Orders) لكل صفقة"""
+    try:
+        positions = core.get_open_positions()
+        
+        if not positions:
+            await update.message.reply_text(
+                "📭 <b>لا توجد صفقات مفتوحة</b>",
+                parse_mode="HTML",
+                reply_markup=main_kb
+            )
+            return
+
+        msg = "🔎 <b>فحص الأوامر المشروطة (Algo Orders):</b>\n\n"
+        total_orders = 0
+        missing_count = 0
+
+        for pos in positions:
+            try:
+                symbol = pos.get("symbol", "UNKNOWN")
+                position_side = pos.get("positionSide", "BOTH")
+                entry_price = float(pos.get("entryPrice", 0))
+                amt = float(pos.get("positionAmt", 0))
+                side_emoji = "🟢" if amt > 0 else "🔴"
+                
+                msg += f"{side_emoji} <b>{symbol}</b> ({position_side})\n"
+                msg += f"💰 الدخول: <code>{entry_price}</code>\n"
+
+                # 🔥 جلب الأوامر المشروطة (Algo) + العادية
+                algo_orders = []
+                regular_orders = []
+                
+                try:
+                    algo_orders = core.get_open_algo_orders(symbol) or []
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل جلب Algo Orders لـ {symbol}: {e}")
+                
+                try:
+                    regular_orders = core.get_open_orders(symbol) or []
+                except Exception as e:
+                    logger.warning(f"⚠️ فشل جلب Regular Orders لـ {symbol}: {e}")
+
+                all_orders = list(algo_orders) + list(regular_orders)
+
+                # تصنيف الأوامر
+                tp_orders = [o for o in all_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+                sl_orders = [o for o in all_orders if o.get('type') == 'STOP_MARKET']
+
+                # ==================== عرض الأوامر ====================
+                msg += f"📊 <b>الأوامر:</b>\n"
+                msg += f"   • Algo: {len(algo_orders)}\n"
+                msg += f"   • عادية: {len(regular_orders)}\n"
+                msg += f"   • TP: {len(tp_orders)}\n"
+                msg += f"   • SL: {len(sl_orders)}\n"
+
+                total_orders += len(all_orders)
+
+                # ==================== تفاصيل TP ====================
+                if tp_orders:
+                    msg += f"\n🎯 <b>أوامر TP:</b>\n"
+                    # ترتيب حسب السعر
+                    tp_sorted = sorted(tp_orders, key=lambda x: float(x.get('triggerPrice') or x.get('stopPrice') or 0))
+                    if amt < 0:  # SHORT - اعكس الترتيب
+                        tp_sorted = list(reversed(tp_sorted))
+                    
+                    for i, tp in enumerate(tp_sorted[:3], 1):
+                        tp_price = tp.get('triggerPrice') or tp.get('stopPrice', 'N/A')
+                        tp_qty = tp.get('origQty') or tp.get('quantity', 'N/A')
+                        
+                        # حساب النسبة من الدخول
+                        try:
+                            if amt > 0:  # LONG
+                                tp_pct = ((float(tp_price) - entry_price) / entry_price) * 100
+                            else:  # SHORT
+                                tp_pct = ((entry_price - float(tp_price)) / entry_price) * 100
+                            tp_pct_str = f" ({tp_pct:+.2f}%)"
+                        except:
+                            tp_pct_str = ""
+                        
+                        msg += f"   {i}. <code>{tp_price}</code>{tp_pct_str}\n"
+                        msg += f"      الكمية: <code>{tp_qty}</code>\n"
+                else:
+                    msg += f"\n⚠️ <b>لا توجد أوامر TP!</b>\n"
+                    missing_count += 1
+
+                # ==================== تفاصيل SL ====================
+                if sl_orders:
+                    msg += f"\n🛡️ <b>أوامر SL:</b>\n"
+                    for sl in sl_orders:
+                        sl_price = sl.get('triggerPrice') or sl.get('stopPrice', 'N/A')
+                        sl_qty = sl.get('origQty') or sl.get('quantity', 'N/A')
+                        
+                        # حساب النسبة من الدخول
+                        try:
+                            if amt > 0:  # LONG
+                                sl_pct = ((float(sl_price) - entry_price) / entry_price) * 100
+                            else:  # SHORT
+                                sl_pct = ((entry_price - float(sl_price)) / entry_price) * 100
+                            sl_pct_str = f" ({sl_pct:+.2f}%)"
+                        except:
+                            sl_pct_str = ""
+                        
+                        msg += f"   <code>{sl_price}</code>{sl_pct_str}\n"
+                        msg += f"   الكمية: <code>{sl_qty}</code>\n"
+                else:
+                    msg += f"\n🚨 <b>لا يوجد SL! - خطر!</b>\n"
+                    missing_count += 1
+
+                # ==================== حالة الحماية ====================
+                if len(tp_orders) >= 3 and len(sl_orders) >= 1:
+                    msg += f"\n✅ <b>الحالة: محمية بالكامل</b>\n"
+                elif len(sl_orders) >= 1:
+                    msg += f"\n⚠️ <b>الحالة: SL موجود، TP ناقص</b>\n"
+                else:
+                    msg += f"\n🚨 <b>الحالة: غير محمية!</b>\n"
+
+                msg += "━━━━━━━━━━━━━━━━\n\n"
+
+            except Exception as e:
+                logger.error(f"❌ خطأ في فحص {pos.get('symbol')}: {e}")
+                msg += f"❌ خطأ في {pos.get('symbol', 'UNKNOWN')}\n\n"
+                continue
+
+        # ==================== ملخص ====================
+        msg += f"📊 <b>الإحصائيات:</b>\n"
+        msg += f"   • صفقات: {len(positions)}\n"
+        msg += f"   • أوامر إجمالية: {total_orders}\n"
+        
+        if missing_count > 0:
+            msg += f"\n⚠️ <b>تحذير:</b> {missing_count} صفقة ناقصة الحماية!\n"
+            msg += f"💡 استخدم <code>🔄 تحديث الأوامر</code> لإصلاحها"
+        else:
+            msg += f"\n✅ <b>جميع الصفقات محمية بشكل صحيح</b>"
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+
+    except Exception as e:
+        logger.error(f"❌ خطأ في _show_algo_orders: {e}")
+        await update.message.reply_text(
+            f"❌ <b>خطأ:</b> {str(e)[:200]}",
+            parse_mode="HTML",
+            reply_markup=main_kb
+        )
+
+
+async def _show_open_positions(update: Update):
+    """عرض الصفقات"""
+    try:
+        positions = core.get_open_positions()
+        if not positions:
+            await update.message.reply_text("📭 <b>لا توجد صفقات مفتوحة</b>", parse_mode="HTML", reply_markup=main_kb)
+            return
+
+        msg = "📊 <b>الصفقات المفتوحة:</b>\n\n"
+        total_profit = 0
+
+        for pos in positions:
+            try:
+                symbol = pos.get("symbol", "UNKNOWN")
+                amt = float(pos.get("positionAmt", 0))
+                entry = float(pos.get("entryPrice", 0))
+                profit = float(pos.get("unrealizedProfit", 0))
+                total_profit += profit
+                side = "🟢 LONG" if amt > 0 else "🔴 SHORT"
+
+                entry_eng = format_number_english(entry)
+                profit_eng = format_number_english(profit, 2)
+
+                has_tp, has_sl, details = core.verify_tp_sl_created(symbol, pos.get("positionSide"))
+
+                if has_tp and has_sl:
+                    order_status = "✅ مفعل"
+                elif has_sl:
+                    order_status = "⚠️ TP مفقود"
+                elif has_tp:
+                    order_status = "⚠️ SL مفقود!"
+                else:
+                    order_status = "❌ لا يوجد!"
+
+                profit_status = "🟢 رابح" if profit > 0 else "🔴 خاسر" if profit < 0 else "⚪ متعادل"
+
+                msg += f"{side} <b>{symbol}</b> {profit_status}\n"
+                msg += f"💰 الدخول: {entry_eng} | 💵 الربح: {profit_eng} USDT\n"
+                msg += f"📊 TP/SL: {order_status}\n—\n"
+
+            except Exception as e:
+                logger.error(f"❌ خطأ: {e}")
+                continue
+
+        total_profit_eng = format_number_english(total_profit, 2)
+        msg += f"\n💰 <b>إجمالي الأرباح:</b> {total_profit_eng} USDT"
+
+        if total_profit < 0:
+            msg += f"\n\n⚠️ <b>ملاحظة:</b> يمكنك استخدام 🛑 إغلاق الصفقات الخاسرة"
+        elif total_profit > 0:
+            msg += f"\n\n💡 <b>ملاحظة:</b> يمكنك استخدام 🔒 قفل الصفقات الرابحة"
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+
+    except Exception as e:
+        logger.error(f"❌ خطأ: {e}")
+        await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
+
+
+async def _show_daily_pnl(update: Update):
+    try:
+        daily_data = core.get_accurate_daily_pnl()
+        msg = core.format_pnl_report(daily_data, "يومي")
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
+
+
+async def _show_weekly_pnl(update: Update):
+    try:
+        weekly_data = core.get_accurate_weekly_pnl()
+        msg = core.format_pnl_report(weekly_data, "أسبوعي")
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
+
+
+async def _show_monthly_pnl(update: Update):
+    try:
+        monthly_data = core.get_accurate_monthly_pnl()
+        msg = core.format_pnl_report(monthly_data, "شهري")
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
+
+
+async def _show_enhanced_performance_report(update: Update):
+    """تقرير الأداء"""
+    try:
+        daily_data = core.get_accurate_daily_pnl()
+        weekly_data = core.get_accurate_weekly_pnl()
+        monthly_data = core.get_accurate_monthly_pnl()
+        positions = core.get_open_positions()
+
+        balance_info = get_full_balance_info()
+        available = balance_info.get('available', 0)
+        wallet = balance_info.get('wallet', 0)
+
+        pnl = daily_data['daily_pnl']
+        daily_trade_count = daily_data['trade_count']
+        weekly_trade_count = weekly_data['trade_count']
+        monthly_trade_count = monthly_data['trade_count']
+        open_positions = len(positions)
+
+        successful_daily = len([t for t in daily_data['today_trades'] if t['income'] > 0])
+        successful_weekly = len([t for t in weekly_data['weekly_trades'] if t['income'] > 0])
+        successful_monthly = len([t for t in monthly_data['monthly_trades'] if t['income'] > 0])
+
+        daily_rate = (successful_daily / daily_trade_count * 100) if daily_trade_count > 0 else 0
+        weekly_rate = (successful_weekly / weekly_trade_count * 100) if weekly_trade_count > 0 else 0
+        monthly_rate = (successful_monthly / monthly_trade_count * 100) if monthly_trade_count > 0 else 0
+
+        msg = (
+            f"📋 <b>تقرير الأداء v3.0</b>\n\n"
+            f"💰 <b>الرصيد:</b>\n"
+            f"   • المتاح: {available:.2f} USDT\n"
+            f"   • الإجمالي: {wallet:.2f} USDT\n\n"
+            f"📊 <b>اليوم:</b>\n"
+            f"   • PnL: {pnl:.2f} USDT\n"
+            f"   • الصفقات: {daily_trade_count}\n"
+            f"   • الناجحة: {successful_daily}\n"
+            f"   • نسبة النجاح: {daily_rate:.1f}%\n\n"
+            f"📈 <b>الأسبوع:</b>\n"
+            f"   • PnL: {weekly_data['weekly_pnl']:.2f} USDT\n"
+            f"   • الصفقات: {weekly_trade_count}\n"
+            f"   • نسبة النجاح: {weekly_rate:.1f}%\n\n"
+            f"📅 <b>الشهر:</b>\n"
+            f"   • PnL: {monthly_data['monthly_pnl']:.2f} USDT\n"
+            f"   • الصفقات: {monthly_trade_count}\n"
+            f"   • نسبة النجاح: {monthly_rate:.1f}%\n\n"
+            f"🔓 <b>الصفقات المفتوحة:</b> {open_positions}/{MAX_OPEN_POSITIONS}\n"
+            f"🚀 <b>TP:</b> {TP_MULTIPLE_LEVELS}\n"
+            f"🛡️ <b>SL:</b> {SL_PERCENT}%\n"
+        )
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
+
+
+def _close_all_positions(update: Update):
+    try:
+        positions = core.get_open_positions()
+        if not positions:
+            run_async_safe(send_message_safe(update, "📭 <b>لا توجد صفقات</b>", reply_markup=main_kb))
+            return
+
+        closed_count = 0
+        total_profit = 0
+
+        for position in positions:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                profit = float(position.get("unrealizedProfit", 0))
+
+                if core.close_position_safe(symbol, position_side):
+                    closed_count += 1
+                    total_profit += profit
+                    remove_open_position(symbol, position_side)
+                    time.sleep(0.5)
+            except:
+                continue
+
+        if closed_count > 0:
+            status = "🟢 ربح" if total_profit > 0 else "🔴 خسارة" if total_profit < 0 else "⚪ تعادل"
+            msg = (f"✅ <b>تم إغلاق {closed_count} صفقة</b>\n\n"
+                   f"💰 <b>PnL:</b> {total_profit:.2f} USDT\n"
+                   f"📊 <b>الحالة:</b> {status}")
+        else:
+            msg = "❌ <b>فشل الإغلاق</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        run_async_safe(send_message_safe(update, "❌ <b>خطأ</b>", reply_markup=main_kb))
+
+
+def _close_profitable_positions(update: Update):
+    try:
+        positions = core.get_open_positions()
+        profitable = [p for p in positions if float(p.get("unrealizedProfit", 0)) > 0]
+
+        if not profitable:
+            run_async_safe(send_message_safe(update, "📭 <b>لا توجد صفقات رابحة</b>", reply_markup=main_kb))
+            return
+
+        closed_count = 0
+        total_profit = 0
+
+        for position in profitable:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                profit = float(position.get("unrealizedProfit", 0))
+
+                if core.close_position_safe(symbol, position_side):
+                    closed_count += 1
+                    total_profit += profit
+                    remove_open_position(symbol, position_side)
+                    time.sleep(0.5)
+            except:
+                continue
+
+        if closed_count > 0:
+            msg = (f"🔒 <b>تم قفل {closed_count} صفقة</b>\n\n"
+                   f"💰 <b>الأرباح:</b> {total_profit:.2f} USDT")
+        else:
+            msg = "❌ <b>فشل</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        run_async_safe(send_message_safe(update, "❌ <b>خطأ</b>", reply_markup=main_kb))
+
+
+def _close_losing_positions(update: Update):
+    try:
+        positions = core.get_open_positions()
+        losing = [p for p in positions if float(p.get("unrealizedProfit", 0)) < 0]
+
+        if not losing:
+            run_async_safe(send_message_safe(update, "📭 <b>لا توجد صفقات خاسرة</b>", reply_markup=main_kb))
+            return
+
+        closed_count = 0
+        total_loss = 0
+
+        for position in losing:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                loss = float(position.get("unrealizedProfit", 0))
+
+                if core.close_position_safe(symbol, position_side):
+                    closed_count += 1
+                    total_loss += loss
+                    remove_open_position(symbol, position_side)
+                    time.sleep(0.5)
+            except:
+                continue
+
+        if closed_count > 0:
+            msg = (f"🛑 <b>تم إغلاق {closed_count} صفقة</b>\n\n"
+                   f"💰 <b>الخسائر:</b> {abs(total_loss):.2f} USDT")
+        else:
+            msg = "❌ <b>فشل</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        run_async_safe(send_message_safe(update, "❌ <b>خطأ</b>", reply_markup=main_kb))
+
+
+def _update_orders(update: Update):
+    try:
+        positions_updated = core.check_and_add_tp_sl_to_existing_positions()
+
+        if positions_updated > 0:
+            msg = f"✅ <b>تم تحديث {positions_updated} صفقة</b>"
+        else:
+            msg = "ℹ️ <b>جميع الصفقات محمية</b>"
+
+        run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
+    except Exception as e:
+        logger.error(f"خطأ: {e}")
+        run_async_safe(send_message_safe(update, "❌ <b>خطأ</b>", reply_markup=main_kb))
+
+
+async def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data.startswith("trade_"):
+        _, symbol, side = data.split("_")
+        execute_trade_manual(update, symbol, side)
+
+    elif data.startswith("new_analysis_"):
+        parts = data.split("_", 2)
+        if len(parts) >= 3:
+            symbol = parts[2]
+            _analyze_smart_detailed(update, symbol)
+
+    elif data == "confirm_close_all":
+        try:
+            await query.edit_message_text("🔄 <b>جاري الإغلاق...</b>", parse_mode="HTML")
+            _close_all_positions(update)
+        except Exception as e:
+            logger.error(f"خطأ: {e}")
+
+    elif data == "cancel_close_all":
+        try:
+            await query.edit_message_text("❌ <b>تم الإلغاء</b>", parse_mode="HTML")
+        except:
+            pass
+
+    elif data == "confirm_close_profitable":
+        try:
+            await query.edit_message_text("🔄 <b>جاري القفل...</b>", parse_mode="HTML")
+            _close_profitable_positions(update)
+        except:
+            pass
+
+    elif data == "cancel_close_profitable":
+        try:
+            await query.edit_message_text("❌ <b>تم الإلغاء</b>", parse_mode="HTML")
+        except:
+            pass
+
+    elif data == "confirm_close_losing":
+        try:
+            await query.edit_message_text("🔄 <b>جاري الإغلاق...</b>", parse_mode="HTML")
+            _close_losing_positions(update)
+        except:
+            pass
+
+    elif data == "cancel_close_losing":
+        try:
+            await query.edit_message_text("❌ <b>تم الإلغاء</b>", parse_mode="HTML")
+        except:
+            pass
+
+
+# ==================== التشغيل ====================
+
+def run_bot():
+    """تشغيل البوت"""
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        application.add_handler(CallbackQueryHandler(button_handler))
+
+        application.add_error_handler(error_handler)
+
+        logger.info("🚀 بدء البوت...")
+        application.run_polling(drop_pending_updates=True)
+
+    except Exception as e:
+        logger.error(f"❌ فشل: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    run_bot()

@@ -1,0 +1,19 @@
+# أسرار - لا تُرفع أبداً
+.env
+*.env
+!.env.example
+
+# بيانات محلية / حالة التشغيل (تتغير باستمرار، لا داعي لتتبعها في git)
+trade_memory.json
+open_positions.json
+profit_history.json
+*.log
+
+# بايثون
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# نظام التشغيل
+.DS_Store
