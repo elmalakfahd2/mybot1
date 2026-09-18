@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.0
+config.py - الإعدادات النهائية v4.1
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
+
+🔧 التعديلات v4.1:
+    - ⚡ إضافة إعدادات البيانات اللحظية (WebSocket)
 
 🔧 التعديلات v4.0:
     - رفع MIN_SCORE_REQUIRED من 60 → 68
@@ -57,8 +60,8 @@ GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
-TRADE_USDT = 20
-LEVERAGE = 5
+TRADE_USDT = 15
+LEVERAGE = 10
 MAX_OPEN_POSITIONS = 3                # ✅ خفض من 6 → 3 (تركيز أفضل)
 
 # ==================== TP المتعدد ====================
@@ -186,3 +189,19 @@ ENABLE_DETAILED_LOGGING = True
 LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
+
+# ==================== ⚡ البيانات اللحظية (WebSocket) v4.1 ====================
+ENABLE_REALTIME_DATA = True            # تفعيل/تعطيل النظام اللحظي
+REALTIME_ADJUSTMENT_ENABLED = True     # استخدام التعديل اللحظي في النقاط
+
+# نطاق التعديل
+REALTIME_MIN_ADJUSTMENT = -5           # أدنى تعديل
+REALTIME_MAX_ADJUSTMENT = 10           # أعلى تعديل
+
+# إعدادات التدفق
+REALTIME_PRESSURE_WINDOW = 30          # نافذة حساب الضغط (ثواني)
+REALTIME_DEPTH_LEVELS = 20             # مستويات دفتر الأوامر
+REALTIME_LIQUIDATION_THRESHOLD = 50000 # أدنى قيمة تصفية لتُعتبر حدثاً مهماً (USDT)
+
+# عدد العملات للاشتراك
+REALTIME_MAX_SUBSCRIPTIONS = 25        # لا تشترك في أكثر من هذا العدد
