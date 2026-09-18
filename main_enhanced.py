@@ -1,13 +1,15 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار النهائي
-# 🔧 التعديلات:
+# 📁 ملف: main_enhanced.py - الإصدار النهائي v4.0
+# 🔧 التعديلات v4.0:
+#    - 🔥 منع الصفقات المتعاكسة في execute_sniper_trade
+#    - 🔥 مزامنة profit_history.json عند البدء
 #    - مراقبة TP/SL دورياً
 #    - عرض الرصيد الصحيح (availableBalance)
 #    - تسجيل النتائج
 #    - إصلاح execute_sniper_trade (تحقق صارم قبل الفتح)
 #    - إضافة cleanup_state_file في main()
-#    - ✅ إشعار فتح الصفقة مع أسعار TP/SL الفعلية
-# 📅 التاريخ: 2024-01-15
+#    - إشعار فتح الصفقة مع أسعار TP/SL الفعلية
+# 📅 التاريخ: 2026-09-18
 # ==================================================
 
 import logging
@@ -66,27 +68,25 @@ _open_trades_tracking = {}
 # ==================== دوال مساعدة ====================
 
 def get_accurate_balance():
-    """
-    🔥 الحصول على الرصيد الصحيح (availableBalance)
-    """
+    """الحصول على الرصيد الصحيح (availableBalance)"""
     try:
         client_obj = core.get_client()
         if not client_obj:
             return 0.0
-        
+
         account = client_obj.futures_account()
-        
+
         for asset in account.get('assets', []):
             if asset.get('asset') == 'USDT':
                 available = float(asset.get('availableBalance', 0))
                 wallet = float(asset.get('walletBalance', 0))
                 unrealized = float(asset.get('unrealizedProfit', 0))
                 margin = float(asset.get('totalPositionInitialMargin', 0))
-                
+
                 logger.debug(f"💰 الرصيد: متاح={available:.2f}, محفظة={wallet:.2f}, هامش={margin:.2f}, PnL={unrealized:.2f}")
-                
+
                 return available
-        
+
         return 0.0
     except Exception as e:
         logger.error(f"خطأ في جلب الرصيد: {e}")
@@ -99,9 +99,9 @@ def get_full_balance_info():
         client_obj = core.get_client()
         if not client_obj:
             return {}
-        
+
         account = client_obj.futures_account()
-        
+
         for asset in account.get('assets', []):
             if asset.get('asset') == 'USDT':
                 return {
@@ -112,7 +112,7 @@ def get_full_balance_info():
                     'maint_margin': float(asset.get('totalMaintMargin', 0)),
                     'cross_wallet': float(asset.get('crossWalletBalance', 0))
                 }
-        
+
         return {}
     except:
         return {}
@@ -142,11 +142,11 @@ def send_startup():
         bot = Bot(token=TELEGRAM_TOKEN)
 
         count = len(core.get_all_futures_symbols())
-        
+
         balance_info = get_full_balance_info()
         available = balance_info.get('available', 0)
         wallet = balance_info.get('wallet', 0)
-        
+
         positions = core.get_open_positions()
 
         daily = core.get_accurate_daily_pnl()
@@ -185,7 +185,7 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v3.0</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.0</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"🎯 <b>نظام:</b> القناص + TP/SL محقق\n"
@@ -196,8 +196,10 @@ def send_startup():
             f"   • كشف السوق: {regime_status}\n"
             f"   • SL ديناميكي: {'✅' if DYNAMIC_SL_ENABLED else '❌'}\n"
             f"   • Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}\n"
+            f"   • Breakeven بعد TP1: ✅\n"
             f"   • التحقق من TP/SL: {'✅' if VERIFY_TP_SL_AFTER_CREATION else '❌'}\n"
-            f"   • فلتر السيولة: {'✅' if ENABLE_VOLUME_FILTER else '❌'}\n\n"
+            f"   • فلتر السيولة: {'✅' if ENABLE_VOLUME_FILTER else '❌'}\n"
+            f"   • منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}\n\n"
             f"📊 <b>الحالة:</b>\n"
             f"   • الأزواج: {count}\n"
             f"   • الرصيد المتاح: {available:.2f} USDT\n"
@@ -241,9 +243,7 @@ def check_trading_pause():
 # ==================== مراقبة TP/SL ====================
 
 def monitor_tp_sl_loop():
-    """
-    🔥 مراقبة TP/SL لكل صفقة كل 60 ثانية
-    """
+    """مراقبة TP/SL لكل صفقة كل 60 ثانية"""
     logger.info("🔍 بدء مراقبة TP/SL...")
 
     global _last_tp_sl_monitor
@@ -353,12 +353,13 @@ def check_closed_trades():
 
 
 def record_closed_trade(trade_data):
-    """تسجيل صفقة مغلقة"""
+    """تسجيل صفقة مغلقة مع exit_price الحقيقي"""
     try:
         if not MEMORY_AVAILABLE:
             return
 
         symbol = trade_data.get('symbol')
+        entry_time_iso = trade_data.get('entry_time_iso') or datetime.now().isoformat()
 
         client_obj = core.get_client()
         if client_obj:
@@ -372,11 +373,12 @@ def record_closed_trade(trade_data):
                 last_income = income[-1]
                 pnl = float(last_income['income'])
 
+                # 🔥 تسجيل مع exit_price الحقيقي
                 memory.record_trade(
                     symbol=symbol,
                     direction=trade_data.get('direction', 'UNKNOWN'),
                     entry_price=trade_data.get('entry_price', 0),
-                    exit_price=0,
+                    exit_price=0,  # سيُجلب تلقائياً
                     quantity=trade_data.get('quantity', 0),
                     pnl=pnl,
                     confidence=trade_data.get('confidence', 0),
@@ -385,11 +387,18 @@ def record_closed_trade(trade_data):
                     groq_recommendation=trade_data.get('groq_recommendation', ''),
                     groq_confidence=trade_data.get('groq_confidence', 0),
                     score_details=trade_data.get('sniper_score', {}),
-                    exit_reason="auto_detected"
+                    exit_reason="auto_detected",
+                    entry_time_iso=entry_time_iso
                 )
 
                 logger.info(f"📝 تسجيل: {symbol} PnL: {pnl:+.4f}")
                 core.record_trade_result(pnl)
+
+                # 🔥 مزامنة profit_history بعد كل صفقة
+                try:
+                    memory.sync_profit_history()
+                except:
+                    pass
 
     except Exception as e:
         logger.error(f"خطأ: {e}")
@@ -399,7 +408,8 @@ def record_closed_trade(trade_data):
 
 def execute_sniper_trade(signal):
     """
-    ✅ تنفيذ صفقة قناص مع تحقق صارم قبل الفتح
+    تنفيذ صفقة قناص مع تحقق صارم قبل الفتح
+    🔥 v4.0: إضافة منع الصفقات المتعاكسة
     """
     try:
         symbol = signal['symbol']
@@ -417,7 +427,7 @@ def execute_sniper_trade(signal):
         analysis = signal.get('analysis', {})
         volume = analysis.get('volume_analysis', {})
         vol_ratio = volume.get('volume_5m_ratio', 0)
-        
+
         if vol_ratio < MIN_VOLUME_FACTOR:
             logger.warning(f"🛑 {symbol}: حجم {vol_ratio}x < {MIN_VOLUME_FACTOR}")
             return False
@@ -425,8 +435,8 @@ def execute_sniper_trade(signal):
         # ==================== 3. التحقق من Groq ====================
         groq_rec = signal.get('groq_recommendation', '')
         groq_conf = signal.get('groq_confidence', 0)
-        
-        if groq_rec == 'رفض' and groq_conf >= 80:
+
+        if groq_rec == 'رفض' and groq_conf >= 70:
             logger.warning(f"🛑 {symbol}: Groq رفض ({groq_conf}%)")
             return False
 
@@ -446,25 +456,35 @@ def execute_sniper_trade(signal):
             logger.warning(f"⚠️ صفقة موجودة على {symbol}")
             return False
 
-        # ==================== 6. قاطع الخسارة اليومية ====================
+        # ==================== 🔥 6. منع الصفقات المتعاكسة ====================
+        if ENABLE_OPPOSITE_DIRECTION_FILTER:
+            for pos in positions:
+                pos_amt = float(pos.get('positionAmt', 0))
+                pos_direction = "BUY" if pos_amt > 0 else "SELL"
+
+                if pos_direction != direction:
+                    logger.warning(f"🛑 {symbol}: اتجاه معاكس لـ {pos['symbol']} ({pos_direction})")
+                    return False
+
+        # ==================== 7. قاطع الخسارة اليومية ====================
         drawdown_ok, drawdown_reason = core.check_daily_drawdown()
         if not drawdown_ok:
             logger.error(f"🛑 {drawdown_reason}")
             return False
 
-        # ==================== 7. فلتر الارتباط ====================
+        # ==================== 8. فلتر الارتباط ====================
         corr_ok, corr_reason = core.check_correlation_exposure(symbol, direction, positions)
         if not corr_ok:
             logger.warning(f"🛑 {symbol}: {corr_reason}")
             return False
 
-        # ==================== 8. فلتر السبريد والسيولة ====================
+        # ==================== 9. فلتر السبريد والسيولة ====================
         liquidity_ok, liquidity_reason = core.check_spread_and_liquidity(symbol, TRADE_USDT)
         if not liquidity_ok:
             logger.warning(f"🛑 {symbol}: {liquidity_reason}")
             return False
 
-        # ==================== 9. التنفيذ ====================
+        # ==================== 10. التنفيذ ====================
         logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ")
 
         if ENABLE_MULTIPLE_TP:
@@ -512,7 +532,8 @@ def execute_sniper_trade(signal):
                     'groq_recommendation': groq_rec,
                     'groq_confidence': groq_conf,
                     'sniper_score': signal.get('score_details', {}),
-                    'opened_at': time.time()
+                    'opened_at': time.time(),
+                    'entry_time_iso': datetime.now().isoformat()
                 }
 
             send_trade_notification(signal, result)
@@ -551,7 +572,7 @@ def send_failed_trade_notification(signal, result):
 
 
 def send_trade_notification(signal, result):
-    """✅ إشعار التنفيذ الناجح مع أسعار TP/SL الفعلية"""
+    """إشعار التنفيذ الناجح مع أسعار TP/SL الفعلية"""
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -561,18 +582,16 @@ def send_trade_notification(signal, result):
         regime = signal.get('market_regime', {})
         mem_score = signal.get('memory_score', {})
         verification = result.get('verification', {})
-        
+
         entry_price = result['entry_price']
         position_side = result['positionSide']
         quantity = result['quantity']
 
-        # ==================== استخراج أسعار TP/SL الفعلية ====================
         tp_results = result.get('tp_results', {})
         tp_orders = tp_results.get('tp_orders', [])
         sl_price = tp_results.get('sl_price')
         sl_percent = tp_results.get('sl_percent', SL_PERCENT)
 
-        # ==================== بناء الرسالة ====================
         msg = (
             f"🎯 <b>تم التنفيذ بنجاح!</b>\n\n"
             f"💰 <b>العملة:</b> {signal['symbol']}\n"
@@ -592,20 +611,17 @@ def send_trade_notification(signal, result):
         if regime and regime.get('regime_ar'):
             msg += f"\n📊 <b>السوق:</b> {regime.get('regime_ar')}\n"
 
-        # ==================== 🎯 الأسعار الفعلية ====================
         msg += f"\n🎯 <b>الأهداف الفعلية:</b>\n"
-        
-        # إضافة أوامر TP
+
         successful_tps = [tp for tp in tp_orders if tp.get('success')]
-        
+
         if successful_tps:
             for tp in successful_tps:
                 tp_price = tp.get('tp_price', 0)
                 tp_percent = tp.get('tp_percent', 0)
                 tp_ratio = tp.get('ratio', 0)
                 tp_qty = tp.get('quantity', 0)
-                
-                # حساب النسبة الفعلية من الدخول
+
                 try:
                     if position_side == "LONG":
                         actual_pct = ((float(tp_price) - entry_price) / entry_price) * 100
@@ -614,7 +630,7 @@ def send_trade_notification(signal, result):
                     pct_str = f"{actual_pct:+.2f}%"
                 except:
                     pct_str = f"{tp_percent:+.1f}%"
-                
+
                 msg += (
                     f"   ✅ <b>TP{tp['level']}:</b> <code>{tp_price}</code>\n"
                     f"      ({pct_str} | {tp_ratio*100:.0f}% كمية: {tp_qty})\n"
@@ -622,9 +638,7 @@ def send_trade_notification(signal, result):
         else:
             msg += f"   ⚠️ لم يتم إنشاء أوامر TP\n"
 
-        # إضافة SL
         if sl_price:
-            # حساب نسبة SL الفعلية من الدخول
             try:
                 if position_side == "LONG":
                     actual_sl_pct = ((float(sl_price) - entry_price) / entry_price) * 100
@@ -641,7 +655,6 @@ def send_trade_notification(signal, result):
         else:
             msg += f"   🚨 <b>لا يوجد SL! - خطر!</b>\n"
 
-        # ==================== التحقق ====================
         tp_count = verification.get('details', {}).get('tp_count', 0)
         sl_count = verification.get('details', {}).get('sl_count', 0)
 
@@ -651,13 +664,14 @@ def send_trade_notification(signal, result):
             f"   • أوامر SL: {sl_count}\n"
             f"   • الحالة: {'✅ محمية بالكامل' if sl_count > 0 else '⚠️ غير كاملة'}\n\n"
             f"🔒 <b>Trailing SL:</b> مفعل\n"
+            f"🔒 <b>Breakeven بعد TP1:</b> ✅\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
 
         async def send_async():
             await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID, 
-                text=msg, 
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg,
                 parse_mode="HTML",
                 disable_web_page_preview=True
             )
@@ -734,9 +748,9 @@ def auto_sniper_scanner():
 def get_system_status():
     """حالة النظام"""
     positions = core.get_open_positions()
-    
+
     balance_info = get_full_balance_info()
-    
+
     daily = core.get_accurate_daily_pnl()
     weekly = core.get_accurate_weekly_pnl()
     monthly = core.get_accurate_monthly_pnl()
@@ -769,7 +783,7 @@ def get_system_status():
         'weekly_pnl': weekly['weekly_pnl'],
         'monthly_pnl': monthly['monthly_pnl'],
         'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
-        'strategy': 'نظام القناص v3.0',
+        'strategy': 'نظام القناص v4.0',
         'groq_available': GROQ_AVAILABLE,
         'memory_available': MEMORY_AVAILABLE,
         'market_regime_available': MARKET_REGIME_AVAILABLE,
@@ -813,9 +827,7 @@ def start_scanner_threads():
 
 
 def main():
-    """
-    ✅ إضافة cleanup_state_file قبل بدء الخيوط
-    """
+    """الدالة الرئيسية"""
     try:
         send_startup()
         time.sleep(3)
@@ -824,14 +836,27 @@ def main():
         logger.info("🧹 مزامنة ملف الصفقات مع Binance...")
         tgbot.cleanup_state_file()
 
+        # 🔥 مزامنة profit_history مع trade_memory
+        if MEMORY_AVAILABLE:
+            try:
+                logger.info("🔄 مزامنة profit_history.json...")
+                memory.sync_profit_history()
+                logger.info("✅ تم مزامنة profit_history.json")
+            except Exception as e:
+                logger.warning(f"⚠️ فشل مزامنة profit_history: {e}")
+
         start_scanner_threads()
 
-        logger.info("🎯 نظام القناص v3.0 مفعل")
+        logger.info("🎯 نظام القناص v4.0 مفعل")
         logger.info(f"⏰ المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🔒 Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}")
+        logger.info(f"🔒 Breakeven بعد TP1: ✅ ({TP_MULTIPLE_LEVELS[0]}%)")
         logger.info(f"📊 SL ديناميكي: {'✅' if DYNAMIC_SL_ENABLED else '❌'}")
         logger.info(f"🔍 مراقبة TP/SL: {'✅' if VERIFY_TP_SL_AFTER_CREATION else '❌'}")
         logger.info(f"📊 فلتر السيولة: {'✅' if ENABLE_VOLUME_FILTER else '❌'} ({MIN_VOLUME_24H_USDT/1e6:.0f}M)")
+        logger.info(f"🛡️ منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}")
+        logger.info(f"🎯 MIN_SCORE: {MIN_SCORE_REQUIRED}")
+        logger.info(f"📈 MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
         logger.info(f"🛑 توقف بعد {MAX_CONSECUTIVE_LOSSES} خسائر")
 
         tgbot.run_bot()
