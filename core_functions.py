@@ -1,9 +1,11 @@
 # ==================================================
-# 📁 ملف: core_functions.py - الإصدار النهائي v4.0
+# 📁 ملف: core_functions.py - الإصدار v4.1.1
+# 🔧 التعديلات v4.1.1:
+#    - 🔥 Cache للرموز (10 دقائق) - يمنع حظر Binance
+#    - 🔥 get_all_futures_symbols محسّن (طلب واحد بدل 528)
 # 🔧 التعديلات v4.0:
-#    - ✅ نقل SL إلى Breakeven فوراً بعد TP1
-#    - ✅ هامش +0.1% للعمولات
-#    - ✅ إصلاح check_daily_drawdown (availableBalance)
+#    - Breakeven بعد TP1 + هامش 0.1%
+#    - إصلاح check_daily_drawdown
 # 📅 التاريخ: 2026-09-18
 # ==================================================
 
@@ -20,6 +22,11 @@ from config import *
 
 logger = logging.getLogger("core")
 _client = None
+
+# ==================== 🔥 Cache للرموز ====================
+_symbols_cache = None
+_symbols_cache_time = 0
+_SYMBOLS_CACHE_DURATION = 600  # 10 دقائق
 
 # ==================== 🔥 Algo Order API ====================
 CONDITIONAL_ORDER_TYPES = {
@@ -207,6 +214,11 @@ def create_binance_client():
     except BinanceAPIException as e:
         _connection_retries += 1
         print(f"❌ خطأ API ({_connection_retries}/{_MAX_RETRIES}): {e}")
+        
+        # 🔥 إذا كان الحظر بسبب weight، انتظر أطول
+        if e.code == -1003:
+            print("🛑 حظر بسبب الوزن - انتظار 60 ثانية...")
+            time.sleep(60)
     except Exception as e:
         _connection_retries += 1
         print(f"❌ خطأ ({_connection_retries}/{_MAX_RETRIES}): {e}")
@@ -298,53 +310,78 @@ def get_open_orders(symbol=None):
         return []
 
 
+# ==================== 🔥 get_all_futures_symbols محسّن ====================
+
 def get_all_futures_symbols():
-    """جميع الرموز مع فلتر السيولة"""
+    """
+    🔥 v4.1.1: محسّن لتقليل استهلاك وزن Binance
+    - Cache لمدة 10 دقائق
+    - طلب واحد لكل التيكرز (بدل 528 طلب)
+    """
+    global _symbols_cache, _symbols_cache_time
+    
     try:
+        current_time = time.time()
+        
+        # ✅ إذا الـ cache صالح، أرجعه مباشرة
+        if _symbols_cache is not None and (current_time - _symbols_cache_time) < _SYMBOLS_CACHE_DURATION:
+            logger.info(f"📊 فلتر السيولة (Cache): {len(_symbols_cache)} عملة")
+            return _symbols_cache
+        
         client_obj = get_client()
         if not client_obj:
+            # إذا الفشل، أعد الـ cache القديم إن وُجد
+            if _symbols_cache:
+                logger.warning("⚠️ فشل الاتصال - استخدام Cache قديم")
+                return _symbols_cache
             return []
-
+        
+        # طلب واحد فقط: exchange info
         info = client_obj.futures_exchange_info()
-
+        
         syms = [
             s["symbol"] for s in info["symbols"]
             if s["status"] == "TRADING"
             and s["quoteAsset"] == "USDT"
             and s["contractType"] == "PERPETUAL"
         ]
-
+        
         if ENABLE_VOLUME_FILTER:
             try:
+                # 🔥 طلب واحد لكل التيكرز (بدل 528 طلب منفصل!)
                 all_tickers = client_obj.futures_ticker()
-                volume_map = {t['symbol']: float(t.get('quoteVolume', 0)) for t in all_tickers}
-            except Exception as e:
-                logger.error(f"⚠️ فشل جلب التيكرز دفعة واحدة: {e}")
-                volume_map = None
-
-            if volume_map is not None:
+                volume_map = {
+                    t['symbol']: float(t.get('quoteVolume', 0))
+                    for t in all_tickers
+                }
                 filtered_syms = [
                     sym for sym in syms
                     if volume_map.get(sym, 0) >= MIN_VOLUME_24H_USDT
                 ]
-            else:
-                filtered_syms = []
-                for sym in syms:
-                    try:
-                        ticker = client_obj.futures_ticker(symbol=sym)
-                        volume_usdt = float(ticker.get('quoteVolume', 0))
-                        if volume_usdt >= MIN_VOLUME_24H_USDT:
-                            filtered_syms.append(sym)
-                    except:
-                        continue
-
-            logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
-            return filtered_syms
-
-        return syms
+            except Exception as e:
+                logger.error(f"⚠️ فشل فلتر الحجم: {e}")
+                filtered_syms = syms
+        else:
+            filtered_syms = syms
+        
+        logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
+        
+        # تحديث Cache
+        _symbols_cache = filtered_syms
+        _symbols_cache_time = current_time
+        
+        return filtered_syms
+        
+    except BinanceAPIException as e:
+        if e.code == -1003:
+            logger.error("🛑 حظر بسبب الوزن - استخدام Cache إن وُجد")
+            if _symbols_cache:
+                return _symbols_cache
+        logger.error(f"خطأ: {e}")
+        return _symbols_cache if _symbols_cache else []
     except Exception as e:
         logger.error(f"خطأ: {e}")
-        return []
+        return _symbols_cache if _symbols_cache else []
 
 
 def get_price(symbol):
@@ -436,7 +473,7 @@ def format_price_for_binance(symbol, price):
         return round(price, 2) if price else None
 
 
-# ==================== 🔥 تحليل دفتر الأوامر ====================
+# ==================== تحليل دفتر الأوامر ====================
 
 def get_order_book_analysis(symbol, depth_levels=20):
     """تحليل دفتر الأوامر: السبريد، العمق، والانحياز"""
@@ -479,7 +516,7 @@ def get_order_book_analysis(symbol, depth_levels=20):
 
 
 def check_spread_and_liquidity(symbol, trade_usdt):
-    """فلتر تنفيذ صارم: يرفض الدخول لو السبريد واسع أو السيولة غير كافية"""
+    """فلتر تنفيذ صارم"""
     try:
         if not ENABLE_ORDER_BOOK_FILTER:
             return True, "فلتر دفتر الأوامر معطل"
@@ -493,18 +530,17 @@ def check_spread_and_liquidity(symbol, trade_usdt):
 
         min_required_depth = trade_usdt * LEVERAGE * MIN_DEPTH_MULTIPLIER
         if ob['total_depth_usdt'] < min_required_depth:
-            return False, f"سيولة ضعيفة في الدفتر: {ob['total_depth_usdt']:.0f} USDT (المطلوب: {min_required_depth:.0f})"
+            return False, f"سيولة ضعيفة: {ob['total_depth_usdt']:.0f} USDT (المطلوب: {min_required_depth:.0f})"
 
-        return True, "سيولة ومطابقة السبريد مقبولة"
+        return True, "سيولة مقبولة"
     except Exception as e:
         logger.error(f"خطأ فحص السيولة: {e}")
-        return True, "خطأ في الفحص - تم التجاوز"
+        return True, "خطأ - تم التجاوز"
 
 
-# ==================== 🔥 Funding Rate + Open Interest ====================
+# ==================== Funding Rate + Open Interest ====================
 
 def get_funding_rate(symbol):
-    """معدل التمويل الحالي"""
     try:
         client_obj = get_client()
         if not client_obj:
@@ -517,7 +553,6 @@ def get_funding_rate(symbol):
 
 
 def get_open_interest_trend(symbol, period='5m', limit=6):
-    """اتجاه الـ Open Interest"""
     try:
         client_obj = get_client()
         if not client_obj:
@@ -535,10 +570,9 @@ def get_open_interest_trend(symbol, period='5m', limit=6):
         return None
 
 
-# ==================== 🔥 الارتباط ====================
+# ==================== الارتباط ====================
 
 def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
-    """معامل ارتباط بيرسون"""
     try:
         klines_a = get_klines(symbol_a, interval, limit=limit)
         klines_b = get_klines(symbol_b, interval, limit=limit)
@@ -572,10 +606,9 @@ def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
 
 
 def check_correlation_exposure(symbol, direction, open_positions):
-    """يرفض فتح صفقة جديدة لو هي فعلياً نفس الرهان على صفقة مفتوحة"""
     try:
         if not ENABLE_CORRELATION_FILTER or not open_positions:
-            return True, "فلتر الارتباط معطل أو لا توجد صفقات مفتوحة"
+            return True, "فلتر الارتباط معطل"
 
         for pos in open_positions:
             other_symbol = pos.get('symbol')
@@ -587,18 +620,17 @@ def check_correlation_exposure(symbol, direction, open_positions):
 
             corr = get_price_correlation(symbol, other_symbol)
             if abs(corr) >= MAX_CORRELATION:
-                return False, f"ارتباط عالٍ ({corr:.2f}) مع صفقة مفتوحة على {other_symbol} بنفس الاتجاه"
+                return False, f"ارتباط عالٍ ({corr:.2f}) مع {other_symbol}"
 
-        return True, "التعرض ضمن الحدود المقبولة"
+        return True, "التعرض ضمن الحدود"
     except Exception as e:
         logger.error(f"خطأ فحص الارتباط: {e}")
-        return True, "خطأ في الفحص - تم التجاوز"
+        return True, "خطأ - تم التجاوز"
 
 
-# ==================== 🔥 قاطع دائرة الخسارة اليومية ====================
+# ==================== قاطع دائرة الخسارة اليومية ====================
 
 def check_daily_drawdown():
-    """استخدام availableBalance الصحيح"""
     try:
         if not ENABLE_DAILY_DRAWDOWN_LIMIT:
             return True, "معطل"
@@ -639,10 +671,9 @@ def check_daily_drawdown():
         return True, "خطأ - تم التجاوز"
 
 
-# ==================== 🔥 التحقق من TP/SL ====================
+# ==================== التحقق من TP/SL ====================
 
 def verify_tp_sl_created(symbol, position_side):
-    """التحقق من وجود TP/SL فعلياً"""
     try:
         open_orders = list(get_open_orders(symbol) or []) + list(get_open_algo_orders(symbol) or [])
 
@@ -675,7 +706,6 @@ def verify_tp_sl_created(symbol, position_side):
 
 
 def create_order_with_retry(order_params, max_retries=None):
-    """إنشاء أمر مع إعادة المحاولة"""
     if order_params.get('type') in CONDITIONAL_ORDER_TYPES:
         return create_algo_order(order_params, max_retries=max_retries)
 
@@ -871,7 +901,7 @@ def close_losing_positions():
         return 0, 0.0
 
 
-# ==================== Trailing SL v4.0 ====================
+# ==================== Trailing SL ====================
 
 _trailing_sl_positions = {}
 _consecutive_losses = 0
@@ -950,9 +980,7 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
 
 
 def update_trailing_sl(symbol, position_side, current_price):
-    """
-    🔥 v4.0: نقل SL إلى Breakeven فوراً بعد TP1
-    """
+    """v4.0: Breakeven بعد TP1"""
     try:
         if not TRAILING_SL_ENABLED:
             return False
@@ -972,7 +1000,6 @@ def update_trailing_sl(symbol, position_side, current_price):
 
         updated = False
 
-        # تحديث أعلى/أدنى سعر
         if position_side == "LONG":
             if current_price > data['highest_price']:
                 data['highest_price'] = current_price
@@ -980,12 +1007,10 @@ def update_trailing_sl(symbol, position_side, current_price):
             if current_price < data['lowest_price']:
                 data['lowest_price'] = current_price
 
-        # ==================== 🔥 Breakeven بعد TP1 ====================
-        # بعد الوصول لـ TP1، ننقل SL إلى Breakeven + هامش
-        tp1_level = TP_MULTIPLE_LEVELS[0]  # 1.2%
-        
+        # Breakeven بعد TP1
+        tp1_level = TP_MULTIPLE_LEVELS[0]
+
         if not data['breakeven_set'] and profit_percent >= tp1_level:
-            # حساب Breakeven + هامش العمولات
             if position_side == "LONG":
                 breakeven_price = entry_price * (1 + BREAKEVEN_OFFSET_PERCENT / 100)
             else:
@@ -995,9 +1020,9 @@ def update_trailing_sl(symbol, position_side, current_price):
                 data['current_sl'] = breakeven_price
                 data['breakeven_set'] = True
                 updated = True
-                logger.info(f"🔒 {symbol} - SL انتقل إلى Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
+                logger.info(f"🔒 {symbol} - Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
 
-        # ==================== Trailing SL بعد Breakeven ====================
+        # Trailing بعد Breakeven
         if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
             if position_side == "LONG":
                 new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
@@ -1188,7 +1213,6 @@ def calculate_tp_price(position_side, entry_price, tp_percent):
 
 def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price,
                               tp_levels, tp_ratios, sl_percent=None):
-    """إنشاء أوامر TP متعددة"""
     try:
         client_obj = get_client()
         if not client_obj:
@@ -1203,7 +1227,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
         close_side = "SELL" if position_side == "LONG" else "BUY"
 
-        # ==================== SL ====================
+        # SL
         if ENABLE_SL:
             sl_price, actual_sl_percent = calculate_dynamic_sl(symbol, entry_price, position_side)
             formatted_sl = format_price_for_binance(symbol, sl_price)
@@ -1230,9 +1254,9 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     results['sl_percent'] = actual_sl_percent
                     logger.info(f"✅ SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
                 else:
-                    logger.error(f"❌ فشل إنشاء SL بعد {TP_SL_MAX_RETRIES} محاولات!")
+                    logger.error(f"❌ فشل إنشاء SL")
 
-        # ==================== TP متعدد ====================
+        # TP متعدد
         for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):
             level_quantity = total_quantity * ratio
             level_quantity = _round_quantity(symbol, level_quantity)
@@ -1272,7 +1296,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     results['total_tp_quantity'] += level_quantity
                     logger.info(f"✅ TP{i+1}: {tp_percent}% @ {formatted_tp}")
                 else:
-                    logger.error(f"❌ فشل TP{i+1} بعد {TP_SL_MAX_RETRIES} محاولات")
+                    logger.error(f"❌ فشل TP{i+1}")
                     results['tp_orders'].append({
                         'level': i + 1,
                         'tp_percent': tp_percent,
@@ -1288,7 +1312,6 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
 def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
                                         tp_levels=None, tp_ratios=None, sl_percent=None):
-    """وضع أمر مع TP متعدد + التحقق الإجباري"""
     try:
         if tp_levels is None:
             tp_levels = TP_MULTIPLE_LEVELS
@@ -1315,7 +1338,6 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
 
         client_obj.futures_change_leverage(symbol=symbol, leverage=int(leverage))
 
-        # ==================== فتح الصفقة ====================
         logger.info(f"🚀 فتح صفقة: {symbol} {side} {total_qty}")
 
         main_order = client_obj.futures_create_order(
@@ -1344,7 +1366,6 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
                 actual_qty = abs(float(pos["positionAmt"]))
                 break
 
-        # ==================== إنشاء TP/SL ====================
         logger.info(f"📊 إنشاء TP/SL...")
 
         tp_results = create_multiple_tp_orders(
@@ -1357,7 +1378,6 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             sl_percent=sl_percent
         )
 
-        # ==================== التحقق الإجباري ====================
         time.sleep(2)
 
         has_tp, has_sl, details = verify_tp_sl_created(symbol, positionSide)
@@ -1591,7 +1611,6 @@ def format_pnl_report(pnl_data, period_type="يومي"):
 
 
 def recreate_missing_tp(symbol, position_side, entry_price, quantity):
-    """إعادة إنشاء أوامر TP لصفقة مفتوحة"""
     try:
         close_side = "SELL" if position_side == "LONG" else "BUY"
         created_any = False
@@ -1637,7 +1656,6 @@ def recreate_missing_tp(symbol, position_side, entry_price, quantity):
 
 
 def check_and_add_tp_sl_to_existing_positions():
-    """التحقق من TP/SL وإعادة الإنشاء إذا لزم"""
     try:
         positions = get_open_positions()
         fixed = 0
@@ -1667,10 +1685,9 @@ def check_and_add_tp_sl_to_existing_positions():
                 )
 
                 if already_past_sl:
-                    logger.error(f"🛑 {symbol} تخطى مستوى SL فعلياً ({current_price} vs {formatted_sl}) - إغلاق فوري")
+                    logger.error(f"🛑 {symbol} تخطى SL - إغلاق فوري")
                     if close_position_safe(symbol, position_side):
                         fixed += 1
-                        logger.info(f"✅ تم إغلاق {symbol} وقائياً (كان بدون حماية)")
                     continue
 
                 close_side = "SELL" if position_side == "LONG" else "BUY"
@@ -1691,9 +1708,9 @@ def check_and_add_tp_sl_to_existing_positions():
                     fixed += 1
                     logger.info(f"✅ تم إعادة إنشاء SL لـ {symbol}")
                 elif CLOSE_ON_TP_SL_FAIL:
-                    logger.error(f"❌ فشل إنشاء SL لـ {symbol} نهائياً - إغلاق وقائي")
+                    logger.error(f"❌ فشل SL لـ {symbol} - إغلاق وقائي")
                     if close_position_safe(symbol, position_side):
-                        logger.info(f"✅ تم إغلاق {symbol} وقائياً بعد فشل SL")
+                        logger.info(f"✅ تم إغلاق {symbol} وقائياً")
 
             elif not has_tp:
                 logger.warning(f"⚠️ {symbol} بدون TP - محاولة إعادة الإنشاء")
@@ -1704,8 +1721,6 @@ def check_and_add_tp_sl_to_existing_positions():
                 if recreate_missing_tp(symbol, position_side, entry_price, quantity):
                     fixed += 1
                     logger.info(f"✅ تم إعادة إنشاء TP لـ {symbol}")
-                else:
-                    logger.error(f"❌ فشل إعادة إنشاء TP لـ {symbol}")
 
         return fixed
     except Exception as e:
@@ -1714,9 +1729,8 @@ def check_and_add_tp_sl_to_existing_positions():
 
 
 if __name__ == "__main__":
-    print("🚀 core_functions.py v4.0")
+    print("🚀 core_functions.py v4.1.1")
     print(f"✅ الاتصال: {'ناجح' if client else 'فشل'}")
     print(f"🔍 التحقق من TP/SL: {'مفعل' if VERIFY_TP_SL_AFTER_CREATION else 'معطل'}")
-    print(f"🔒 إغلاق عند فشل SL: {'مفعل' if CLOSE_ON_TP_SL_FAIL else 'معطل'}")
-    print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'} ({MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
-    print(f"🔒 Breakeven بعد TP1: {TP_MULTIPLE_LEVELS[0]}% + {BREAKEVEN_OFFSET_PERCENT}%")
+    print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'}")
+    print(f"⚡ Cache الرموز: {_SYMBOLS_CACHE_DURATION} ثانية")
