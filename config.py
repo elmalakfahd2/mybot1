@@ -62,7 +62,7 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 # ==================== التداول ====================
 TRADE_USDT = 15
 LEVERAGE = 10
-MAX_OPEN_POSITIONS = 3                # ✅ خفض من 6 → 3 (تركيز أفضل)
+MAX_OPEN_POSITIONS = 5                # ✅ خفض من 6 → 3 (تركيز أفضل)
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
