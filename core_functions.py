@@ -1,13 +1,10 @@
 # ==================================================
-# 📁 ملف: core_functions.py - الإصدار النهائي
-# 🔧 الإصلاحات:
-#    - التحقق الإجباري من TP/SL
-#    - إعادة المحاولة 3 مرات
-#    - إغلاق تلقائي عند الفشل
-#    - فلتر السيولة
-#    - Trailing SL
+# 📁 ملف: core_functions.py - الإصدار النهائي v4.0
+# 🔧 التعديلات v4.0:
+#    - ✅ نقل SL إلى Breakeven فوراً بعد TP1
+#    - ✅ هامش +0.1% للعمولات
 #    - ✅ إصلاح check_daily_drawdown (availableBalance)
-# 📅 التاريخ: 2024-01-15
+# 📅 التاريخ: 2026-09-18
 # ==================================================
 
 import logging
@@ -169,6 +166,10 @@ try:
     DAILY_MAX_LOSS_PERCENT
 except NameError:
     DAILY_MAX_LOSS_PERCENT = 8.0
+try:
+    BREAKEVEN_OFFSET_PERCENT
+except NameError:
+    BREAKEVEN_OFFSET_PERCENT = 0.1
 
 
 # ==================== تهيئة Binance ====================
@@ -303,16 +304,16 @@ def get_all_futures_symbols():
         client_obj = get_client()
         if not client_obj:
             return []
-        
+
         info = client_obj.futures_exchange_info()
-        
+
         syms = [
             s["symbol"] for s in info["symbols"]
             if s["status"] == "TRADING"
             and s["quoteAsset"] == "USDT"
             and s["contractType"] == "PERPETUAL"
         ]
-        
+
         if ENABLE_VOLUME_FILTER:
             try:
                 all_tickers = client_obj.futures_ticker()
@@ -336,10 +337,10 @@ def get_all_futures_symbols():
                             filtered_syms.append(sym)
                     except:
                         continue
-            
+
             logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
             return filtered_syms
-        
+
         return syms
     except Exception as e:
         logger.error(f"خطأ: {e}")
@@ -597,9 +598,7 @@ def check_correlation_exposure(symbol, direction, open_positions):
 # ==================== 🔥 قاطع دائرة الخسارة اليومية ====================
 
 def check_daily_drawdown():
-    """
-    ✅ إصلاح: استخدام availableBalance الصحيح
-    """
+    """استخدام availableBalance الصحيح"""
     try:
         if not ENABLE_DAILY_DRAWDOWN_LIMIT:
             return True, "معطل"
@@ -646,20 +645,20 @@ def verify_tp_sl_created(symbol, position_side):
     """التحقق من وجود TP/SL فعلياً"""
     try:
         open_orders = list(get_open_orders(symbol) or []) + list(get_open_algo_orders(symbol) or [])
-        
+
         if not open_orders:
             return False, False, {
                 'total_orders': 0,
                 'tp_count': 0,
                 'sl_count': 0
             }
-        
+
         tp_orders = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
         sl_orders = [o for o in open_orders if o.get('type') == 'STOP_MARKET']
-        
+
         has_tp = len(tp_orders) > 0
         has_sl = len(sl_orders) > 0
-        
+
         details = {
             'total_orders': len(open_orders),
             'tp_count': len(tp_orders),
@@ -667,9 +666,9 @@ def verify_tp_sl_created(symbol, position_side):
             'tp_orders': tp_orders,
             'sl_orders': sl_orders
         }
-        
+
         return has_tp, has_sl, details
-        
+
     except Exception as e:
         logger.error(f"خطأ في التحقق من TP/SL: {e}")
         return False, False, {}
@@ -682,11 +681,11 @@ def create_order_with_retry(order_params, max_retries=None):
 
     if max_retries is None:
         max_retries = TP_SL_MAX_RETRIES
-    
+
     client_obj = get_client()
     if not client_obj:
         return None
-    
+
     for attempt in range(max_retries):
         try:
             order = client_obj.futures_create_order(**order_params)
@@ -694,18 +693,18 @@ def create_order_with_retry(order_params, max_retries=None):
             return order
         except BinanceAPIException as e:
             logger.warning(f"⚠️ محاولة {attempt+1}/{max_retries} فشلت: {e.code} - {e.message}")
-            
+
             if e.code in [-1111, -1102, -2019]:
                 logger.error(f"❌ خطأ دائم - إيقاف المحاولات")
                 return None
-            
+
             if attempt < max_retries - 1:
                 time.sleep(TP_SL_RETRY_DELAY_SECONDS)
         except Exception as e:
             logger.warning(f"⚠️ محاولة {attempt+1}/{max_retries} فشلت: {e}")
             if attempt < max_retries - 1:
                 time.sleep(TP_SL_RETRY_DELAY_SECONDS)
-    
+
     logger.error(f"❌ فشل جميع المحاولات ({max_retries})")
     return None
 
@@ -872,7 +871,7 @@ def close_losing_positions():
         return 0, 0.0
 
 
-# ==================== Trailing SL ====================
+# ==================== Trailing SL v4.0 ====================
 
 _trailing_sl_positions = {}
 _consecutive_losses = 0
@@ -935,13 +934,13 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
             'positionSide': position_side,
             'timeInForce': 'GTC'
         }
-        
+
         result = create_order_with_retry(order_params)
-        
+
         if result:
             logger.info(f"✅ SL محدث: {formatted_sl}")
             return True
-        
+
         logger.error(f"❌ فشل تحديث SL")
         return False
 
@@ -951,6 +950,9 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
 
 
 def update_trailing_sl(symbol, position_side, current_price):
+    """
+    🔥 v4.0: نقل SL إلى Breakeven فوراً بعد TP1
+    """
     try:
         if not TRAILING_SL_ENABLED:
             return False
@@ -970,6 +972,7 @@ def update_trailing_sl(symbol, position_side, current_price):
 
         updated = False
 
+        # تحديث أعلى/أدنى سعر
         if position_side == "LONG":
             if current_price > data['highest_price']:
                 data['highest_price'] = current_price
@@ -977,13 +980,24 @@ def update_trailing_sl(symbol, position_side, current_price):
             if current_price < data['lowest_price']:
                 data['lowest_price'] = current_price
 
-        if not data['breakeven_set'] and profit_percent >= BREAKEVEN_TRIGGER:
-            if update_sl_order(symbol, position_side, data['current_sl'], entry_price, quantity):
-                data['current_sl'] = entry_price
+        # ==================== 🔥 Breakeven بعد TP1 ====================
+        # بعد الوصول لـ TP1، ننقل SL إلى Breakeven + هامش
+        tp1_level = TP_MULTIPLE_LEVELS[0]  # 1.2%
+        
+        if not data['breakeven_set'] and profit_percent >= tp1_level:
+            # حساب Breakeven + هامش العمولات
+            if position_side == "LONG":
+                breakeven_price = entry_price * (1 + BREAKEVEN_OFFSET_PERCENT / 100)
+            else:
+                breakeven_price = entry_price * (1 - BREAKEVEN_OFFSET_PERCENT / 100)
+
+            if update_sl_order(symbol, position_side, data['current_sl'], breakeven_price, quantity):
+                data['current_sl'] = breakeven_price
                 data['breakeven_set'] = True
                 updated = True
-                logger.info(f"🔒 {symbol} - Breakeven")
+                logger.info(f"🔒 {symbol} - SL انتقل إلى Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
 
+        # ==================== Trailing SL بعد Breakeven ====================
         if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
             if position_side == "LONG":
                 new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
@@ -1119,7 +1133,7 @@ def calculate_dynamic_sl(symbol, entry_price, position_side):
             else:
                 sl_price = entry_price * (1 + SL_PERCENT / 100)
             return sl_price, SL_PERCENT
-        
+
         klines = get_klines(symbol, "5m", limit=20)
         if not klines or len(klines) < 15:
             if position_side == "LONG":
@@ -1127,34 +1141,34 @@ def calculate_dynamic_sl(symbol, entry_price, position_side):
             else:
                 sl_price = entry_price * (1 + SL_PERCENT / 100)
             return sl_price, SL_PERCENT
-        
+
         highs = [float(k[2]) for k in klines]
         lows = [float(k[3]) for k in klines]
         closes = [float(k[4]) for k in klines]
-        
+
         true_ranges = []
         for i in range(1, len(highs)):
             tr1 = highs[i] - lows[i]
             tr2 = abs(highs[i] - closes[i - 1])
             tr3 = abs(lows[i] - closes[i - 1])
             true_ranges.append(max(tr1, tr2, tr3))
-        
+
         if not true_ranges:
             if position_side == "LONG":
                 sl_price = entry_price * (1 - SL_PERCENT / 100)
             else:
                 sl_price = entry_price * (1 + SL_PERCENT / 100)
             return sl_price, SL_PERCENT
-        
+
         atr = sum(true_ranges[-14:]) / 14
         atr_percent = (atr / entry_price) * 100 * SL_ATR_MULTIPLIER
         sl_percent = max(SL_MIN_PERCENT, min(SL_MAX_PERCENT, atr_percent))
-        
+
         if position_side == "LONG":
             sl_price = entry_price * (1 - sl_percent / 100)
         else:
             sl_price = entry_price * (1 + sl_percent / 100)
-        
+
         return sl_price, sl_percent
     except:
         if position_side == "LONG":
@@ -1180,14 +1194,13 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
         if not client_obj:
             return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
 
-        # 🔥 التحقق من مجموع النسب
         ratios_sum = sum(tp_ratios)
         if abs(ratios_sum - 1.0) > 0.01:
             logger.error(f"❌ مجموع نسب TP = {ratios_sum} يجب أن يكون 1.0")
             return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
 
         results = {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
-        
+
         close_side = "SELL" if position_side == "LONG" else "BUY"
 
         # ==================== SL ====================
@@ -1197,7 +1210,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
             if formatted_sl:
                 logger.info(f"📊 محاولة إنشاء SL @ {formatted_sl}")
-                
+
                 sl_params = {
                     'symbol': symbol,
                     'side': close_side,
@@ -1207,9 +1220,9 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     'positionSide': position_side,
                     'timeInForce': 'GTC'
                 }
-                
+
                 sl_order = create_order_with_retry(sl_params)
-                
+
                 if sl_order:
                     results['sl_success'] = True
                     results['sl_order_id'] = sl_order['orderId']
@@ -1233,7 +1246,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
             if formatted_tp:
                 logger.info(f"📊 محاولة إنشاء TP{i+1} @ {formatted_tp}")
-                
+
                 tp_params = {
                     'symbol': symbol,
                     'side': close_side,
@@ -1243,9 +1256,9 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     'positionSide': position_side,
                     'timeInForce': 'GTC'
                 }
-                
+
                 tp_order = create_order_with_retry(tp_params)
-                
+
                 if tp_order:
                     results['tp_orders'].append({
                         'order_id': tp_order['orderId'],
@@ -1304,7 +1317,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
 
         # ==================== فتح الصفقة ====================
         logger.info(f"🚀 فتح صفقة: {symbol} {side} {total_qty}")
-        
+
         main_order = client_obj.futures_create_order(
             symbol=symbol,
             side=side.upper(),
@@ -1318,7 +1331,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             return None
 
         logger.info(f"✅ تم فتح الصفقة: {main_order['orderId']}")
-        
+
         time.sleep(5)
 
         positions = get_open_positions()
@@ -1333,7 +1346,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
 
         # ==================== إنشاء TP/SL ====================
         logger.info(f"📊 إنشاء TP/SL...")
-        
+
         tp_results = create_multiple_tp_orders(
             symbol=symbol,
             position_side=positionSide,
@@ -1344,18 +1357,18 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             sl_percent=sl_percent
         )
 
-        # ==================== 🔥 التحقق الإجباري ====================
+        # ==================== التحقق الإجباري ====================
         time.sleep(2)
-        
+
         has_tp, has_sl, details = verify_tp_sl_created(symbol, positionSide)
-        
+
         logger.info(f"🔍 التحقق: TP={has_tp} ({details.get('tp_count', 0)}), SL={has_sl} ({details.get('sl_count', 0)})")
-        
+
         if VERIFY_TP_SL_AFTER_CREATION and not has_sl:
             logger.error(f"🚨 فشل SL - إغلاق الصفقة فوراً!")
-            
+
             close_position_safe(symbol, positionSide)
-            
+
             return {
                 'symbol': symbol,
                 'side': side,
@@ -1373,7 +1386,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
                 'closed_due_to_failure': True,
                 'failure_reason': 'SL not created'
             }
-        
+
         return {
             "symbol": symbol,
             "side": side,
@@ -1632,19 +1645,19 @@ def check_and_add_tp_sl_to_existing_positions():
         for position in positions:
             symbol = position["symbol"]
             position_side = position["positionSide"]
-            
+
             has_tp, has_sl, details = verify_tp_sl_created(symbol, position_side)
-            
+
             if not has_sl:
                 logger.warning(f"⚠️ {symbol} بدون SL - محاولة إعادة الإنشاء")
-                
+
                 entry_price = float(position["entryPrice"])
                 quantity = abs(float(position["positionAmt"]))
                 current_price = get_price(symbol)
-                
+
                 sl_price, sl_percent = calculate_dynamic_sl(symbol, entry_price, position_side)
                 formatted_sl = format_price_for_binance(symbol, sl_price)
-                
+
                 if not formatted_sl:
                     continue
 
@@ -1661,7 +1674,7 @@ def check_and_add_tp_sl_to_existing_positions():
                     continue
 
                 close_side = "SELL" if position_side == "LONG" else "BUY"
-                
+
                 sl_params = {
                     'symbol': symbol,
                     'side': close_side,
@@ -1671,9 +1684,9 @@ def check_and_add_tp_sl_to_existing_positions():
                     'positionSide': position_side,
                     'timeInForce': 'GTC'
                 }
-                
+
                 sl_order = create_order_with_retry(sl_params)
-                
+
                 if sl_order:
                     fixed += 1
                     logger.info(f"✅ تم إعادة إنشاء SL لـ {symbol}")
@@ -1701,8 +1714,9 @@ def check_and_add_tp_sl_to_existing_positions():
 
 
 if __name__ == "__main__":
-    print("🚀 core_functions.py - النسخة النهائية")
+    print("🚀 core_functions.py v4.0")
     print(f"✅ الاتصال: {'ناجح' if client else 'فشل'}")
     print(f"🔍 التحقق من TP/SL: {'مفعل' if VERIFY_TP_SL_AFTER_CREATION else 'معطل'}")
     print(f"🔒 إغلاق عند فشل SL: {'مفعل' if CLOSE_ON_TP_SL_FAIL else 'معطل'}")
     print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'} ({MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
+    print(f"🔒 Breakeven بعد TP1: {TP_MULTIPLE_LEVELS[0]}% + {BREAKEVEN_OFFSET_PERCENT}%")
