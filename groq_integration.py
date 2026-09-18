@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار المحسن
-🔧 الجديد:
+groq_integration.py - الإصدار v4.1.1
+🔧 التعديلات v4.1.1:
+   - 🔥 إصلاح تكرار اللوجات (إزالة handler المكرر)
+🔧 الإصدار السابق:
    - إرسال بيانات حقيقية كاملة لـ Groq
-   - تحليل أعمق
    - prompt محسن
 """
 
@@ -18,12 +19,8 @@ from config import (
     GROQ_API_BASE_URL, GROQ_SEND_FULL_DATA
 )
 
+# 🔥 لا نضيف handler — root logger في bot_enhanced.py يتولى ذلك
 logger = logging.getLogger("groq_integration")
-if not logger.handlers:
-    ch = logging.StreamHandler()
-    fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(fmt)
-    logger.addHandler(ch)
 logger.setLevel(logging.INFO)
 
 groq_available = False
@@ -157,6 +154,7 @@ def _init_simple_http_client():
         return False
 
 
+# ==================== التهيئة ====================
 if ENABLE_GROQ_ANALYSIS and GROQ_API_KEY:
     logger.info("🔄 تهيئة Groq...")
 
@@ -230,7 +228,6 @@ def parse_groq_response(response_content):
                     'groq_risk_level': groq_data.get('risk_level', 'متوسط')
                 }
 
-        # استخراج نصي
         recommendation = "تحذير"
         confidence = 50
 
@@ -263,58 +260,43 @@ def parse_groq_response(response_content):
 
 
 def build_rich_prompt(signal_data, analysis_data=None):
-    """
-    بناء prompt غني بالبيانات الحقيقية
-    """
+    """بناء prompt غني بالبيانات الحقيقية"""
     try:
         symbol = signal_data.get('symbol', 'UNKNOWN')
         direction = signal_data.get('direction', 'UNKNOWN')
         confidence = signal_data.get('confidence', 0)
         strength = signal_data.get('strength', 0)
         entry_price = signal_data.get('entry_price', 0)
-        
+
         analysis = analysis_data or signal_data.get('analysis', {})
-        
-        # استخراج البيانات
+
         technical = analysis.get('technical_indicators', {})
         volume = analysis.get('volume_analysis', {})
         timeframes = analysis.get('timeframes', {})
         momentum = analysis.get('momentum', {})
         price_action = analysis.get('price_action', {})
-        
-        # RSI
+
         rsi = technical.get('rsi', 0)
-        
-        # MACD
         macd_trend = technical.get('macd_trend', 'محايد')
-        
-        # Volume
         vol_ratio = volume.get('volume_5m_ratio', 0)
         vol_conf = volume.get('volume_confidence', 'غير معروف')
-        
-        # Timeframes
+
         tf_summary = []
         for tf in ['1m', '3m', '5m', '15m']:
             if tf in timeframes:
                 t = timeframes[tf]
                 tf_summary.append(f"{tf}: {t.get('trend', 'محايد')} ({t.get('trend_strength', 0):.1f}/10)")
         tf_text = "\n".join(tf_summary) if tf_summary else "غير متاح"
-        
-        # Momentum
+
         mom_dir = momentum.get('direction', 'محايد')
         mom_strength = momentum.get('strength', 0)
-        
-        # Price Action
+
         candle_type = price_action.get('candle_type', 'غير معروف')
         body_strength = price_action.get('body_strength', 'غير معروف')
-        
-        # الترابط
+
         alignment = signal_data.get('timeframe_alignment', 0)
-        
-        # Volatility
         volatility = technical.get('volatility', 'غير معروف')
-        
-        # بناء الـ prompt
+
         prompt = f"""أنت محلل فني خبير في تداول العملات الرقمية. قم بتحليل الإشارة التالية بعمق:
 
 📊 **بيانات الإشارة:**
@@ -355,7 +337,6 @@ def build_rich_prompt(signal_data, analysis_data=None):
 3. تحليل موجز (2-3 جمل)
 4. الأسباب المنطقية (3-4 نقاط)
 5. مستوى المخاطرة (عالي/متوسط/منخفض)
-6. توصية إضافية (إذا وجدت)
 
 **أجب بصيغة JSON فقط:**
 {{
@@ -363,8 +344,7 @@ def build_rich_prompt(signal_data, analysis_data=None):
   "confidence": رقم من 0 إلى 100,
   "analysis": "تحليل موجز",
   "reasoning": "نقاط الأسباب",
-  "risk_level": "عالي" أو "متوسط" أو "منخفض",
-  "additional_notes": "ملاحظات إضافية"
+  "risk_level": "عالي" أو "متوسط" أو "منخفض"
 }}
 
 JSON فقط، بدون نص إضافي."""
@@ -373,7 +353,7 @@ JSON فقط، بدون نص إضافي."""
 
     except Exception as e:
         logger.error(f"خطأ في بناء prompt: {e}")
-        return f"حلل إشارة {signal_data.get('symbol')} {signal_data.get('direction')} ثقة {signal_data.get('confidence')}%"
+        return f"حلل إشارة {signal_data.get('symbol')} {signal_data.get('direction')}"
 
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
@@ -382,7 +362,6 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
         return None
 
     try:
-        # بناء prompt غني إذا كان GROQ_SEND_FULL_DATA مفعل
         if GROQ_SEND_FULL_DATA:
             prompt = build_rich_prompt(signal_data, analysis_data)
         else:
@@ -449,17 +428,14 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
 
     except Exception as e:
         logger.error(f"❌ خطأ Groq: {e}")
-        logger.error(traceback.format_exc())
         return None
 
 
 def is_groq_available():
-    """التحقق من التوفر"""
     return groq_available and ENABLE_GROQ_ANALYSIS and client is not None
 
 
 def get_groq_status():
-    """الحالة"""
     return {
         'available': groq_available,
         'enabled': ENABLE_GROQ_ANALYSIS,
@@ -476,7 +452,7 @@ enhance_signal_with_groq = analyze_signal_with_groq
 if __name__ == "__main__":
     print("اختبار Groq:")
     print(get_groq_status())
-    
+
     if is_groq_available():
         test_signal = {
             'symbol': 'BTCUSDT',
