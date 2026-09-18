@@ -1,14 +1,14 @@
 # ==================================================
-# 📁 ملف: bot_enhanced.py - الإصدار v4.1.2
+# 📁 ملف: bot_enhanced.py - الإصدار v4.1.3
+# 🔧 التعديلات v4.1.3:
+#    - 🔥 تشغيل الخيوط في thread منفصل (لا يحجب polling)
+#    - 🔥 إصلاح عدم استجابة الأزرار نهائياً
 # 🔧 التعديلات v4.1.2:
-#    - 🔥 إصلاح عدم استجابة الأزرار (post_init)
-#    - تشغيل الخيوط بعد بدء polling
+#    - post_init لتشغيل الخيوط
 # 🔧 التعديلات v4.0:
-#    - إخفاء httpx من اللوجات (أمان)
+#    - إخفاء httpx (أمان)
 #    - منع الصفقات المتعاكسة
 #    - عرض الرصيد الصحيح
-#    - cleanup_state_file
-#    - فحص الأوامر المشروطة
 # 📅 التاريخ: 2026-09-18
 # ==================================================
 
@@ -513,7 +513,7 @@ async def start(update: Update, context: CallbackContext):
     groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
 
     await update.message.reply_text(
-        f"🤖 <b>بوت القناص الذكي v4.1.2</b> - {status}\n\n"
+        f"🤖 <b>بوت القناص الذكي v4.1.3</b> - {status}\n\n"
         f"🎯 <b>الاستراتيجية:</b> Price Action + AI\n"
         f"• تحليل متعدد المؤشرات والفريمات\n"
         f"• فلترة صارمة بالحجم والسيولة\n"
@@ -707,7 +707,7 @@ async def handle_message(update: Update, context: CallbackContext):
         wallet = balance_info.get('wallet', 0)
 
         msg = (
-            f"📊 <b>حالة النظام v4.1.2</b>\n\n"
+            f"📊 <b>حالة النظام v4.1.3</b>\n\n"
             f"🤖 <b>البوت:</b> {bot_status}\n"
             f"🔍 <b>المسح:</b> {auto_scan_status}\n"
             f"🤖 <b>التنفيذ:</b> {auto_trading_status}\n"
@@ -752,7 +752,7 @@ async def handle_message(update: Update, context: CallbackContext):
 
     # ==================== تعليمات ====================
     await update.message.reply_text(
-        "❓ <b>تعليمات البوت v4.1.2:</b>\n\n"
+        "❓ <b>تعليمات البوت v4.1.3:</b>\n\n"
         "• <code>💰 الرصيد</code> - الرصيد الدقيق\n"
         "• <code>📊 الصفقات المفتوحة</code> - الصفقات الحالية\n"
         "• <code>🔎 فحص الأوامر المشروطة</code> - عرض TP/SL الفعلية\n"
@@ -1112,7 +1112,7 @@ async def _show_enhanced_performance_report(update: Update):
         monthly_rate = (successful_monthly / monthly_trade_count * 100) if monthly_trade_count > 0 else 0
 
         msg = (
-            f"📋 <b>تقرير الأداء v4.1.2</b>\n\n"
+            f"📋 <b>تقرير الأداء v4.1.3</b>\n\n"
             f"💰 <b>الرصيد:</b>\n"
             f"   • المتاح: {available:.2f} USDT\n"
             f"   • الإجمالي: {wallet:.2f} USDT\n\n"
@@ -1326,10 +1326,10 @@ async def button_handler(update: Update, context: CallbackContext):
             pass
 
 
-# ==================== التشغيل v4.1.2 ====================
+# ==================== 🔥 التشغيل v4.1.3 ====================
 
 def run_bot():
-    """تشغيل البوت + الخيوط بعد بدء polling"""
+    """تشغيل البوت + الخيوط في thread منفصل (لا يحجب polling)"""
     try:
         try:
             loop = asyncio.get_event_loop()
@@ -1337,18 +1337,23 @@ def run_bot():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        # ==================== 🔥 post_init: تشغيل الخيوط بعد بدء polling ====================
+        # ==================== 🔥 post_init: تشغيل الخيوط في thread منفصل ====================
         async def post_init(application):
-            logger.info("🚀 البوت بدأ — تشغيل الخيوط...")
+            logger.info("🚀 البوت بدأ — تشغيل الخيوط في الخلفية...")
 
-            try:
-                import main_enhanced as auto_main
-                auto_main.start_scanner_threads()
-                logger.info("✅ تم تشغيل كل الخيوط بنجاح")
-            except Exception as e:
-                logger.error(f"❌ فشل تشغيل الخيوط: {e}")
-                import traceback
-                traceback.print_exc()
+            def run_threads_in_background():
+                try:
+                    import main_enhanced as auto_main
+                    auto_main.start_scanner_threads()
+                    logger.info("✅ تم تشغيل كل الخيوط بنجاح")
+                except Exception as e:
+                    logger.error(f"❌ فشل تشغيل الخيوط: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # 🔥 شغّل في thread منفصل — لا يحجب polling
+            threading.Thread(target=run_threads_in_background, daemon=True).start()
+            logger.info("✅ تم إرسال تشغيل الخيوط للخلفية")
 
         application = (
             Application.builder()
@@ -1363,7 +1368,7 @@ def run_bot():
 
         application.add_error_handler(error_handler)
 
-        logger.info("🚀 بدء البوت v4.1.2...")
+        logger.info("🚀 بدء البوت v4.1.3...")
         logger.info("📡 Starting Telegram polling...")
 
         application.run_polling(drop_pending_updates=True)
