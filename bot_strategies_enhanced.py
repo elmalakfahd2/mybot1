@@ -1,11 +1,13 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - الإصدار النهائي
-# 🔧 الإصلاحات:
-#    - إصلاح حساب الحجم (استخدام الشمعة المكتملة)
-#    - إصلاح Groq (نموذج جديد)
-#    - نظام النقاط المحسن
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار النهائي v4.0
+# 🔧 التعديلات v4.0:
+#    - ✅ رفض فوري إذا الحجم < MIN_VOLUME_FACTOR
+#    - ✅ رفض فوري إذا دفتر الأوامر < 4/10
+#    - ✅ رفض فوري إذا RSI = 0
+#    - ✅ Groq فقط للعملات > 45 نقطة
+#    - ✅ "رفض" من Groq = فيتو مباشر
 #    - ✅ إصلاح analyze_volume (return المفقود)
-# 📅 التاريخ: 2024-01-15
+# 📅 التاريخ: 2026-09-18
 # ==================================================
 
 import logging
@@ -297,9 +299,7 @@ class SmartAnalysisEngine:
 
     @staticmethod
     def analyze_volume(symbol):
-        """
-        🔥 إصلاح حرج: استخدام الشمعة المكتملة بدلاً من الحالية
-        """
+        """تحليل الحجم - استخدام الشمعة المكتملة"""
         try:
             klines_5m = core.get_klines(symbol, "5m", limit=35)
             
@@ -312,7 +312,6 @@ class SmartAnalysisEngine:
             
             volumes_5m = [float(k[5]) for k in klines_5m]
             
-            # الشمعة المكتملة = قبل الأخيرة
             if len(volumes_5m) >= 22:
                 completed_volume = volumes_5m[-2]
                 avg_volume = sum(volumes_5m[-22:-2]) / 20
@@ -320,7 +319,6 @@ class SmartAnalysisEngine:
             else:
                 ratio_5m = 1.0
             
-            # حجم 1h
             ratio_1h = 1.0
             try:
                 klines_1h = core.get_klines(symbol, "1h", limit=30)
@@ -332,7 +330,6 @@ class SmartAnalysisEngine:
             except:
                 pass
             
-            # التصنيف
             if ratio_5m > 2.5:
                 confidence = "عالي جداً"
             elif ratio_5m > 1.8:
@@ -367,7 +364,6 @@ class SmartAnalysisEngine:
             if not klines or len(klines) < 3:
                 return {}
 
-            # استخدام الشمعة المكتملة (قبل الأخيرة)
             latest = klines[-2] if len(klines) >= 2 else klines[-1]
             candle = TechnicalIndicators.analyze_candle(
                 float(latest[1]), float(latest[2]), float(latest[3]), float(latest[4])
@@ -392,7 +388,6 @@ class SmartAnalysisEngine:
             if not klines or len(klines) < 15:
                 return {'direction': 'محايد', 'strength': 0, 'consecutive_candles': 0}
 
-            # استخدام الشموع المكتملة (نتخطى الأخيرة)
             closes = [float(k[4]) for k in klines[:-1]]
             return TechnicalIndicators.calculate_momentum(closes, 10)
         except:
@@ -599,10 +594,13 @@ def generate_balanced_recommendation(analysis):
         return {'action': 'HOLD', 'confidence': 0, 'reasons': []}
 
 
-# ==================== نظام النقاط ====================
+# ==================== نظام النقاط v4.0 ====================
 
 def calculate_total_score(signal, analysis):
-    """حساب النقاط الكلية (من 100)"""
+    """
+    حساب النقاط الكلية (من 100)
+    🔥 v4.0: رفض فوري إذا أي فلتر إلزامي فشل
+    """
     try:
         symbol = signal['symbol']
         direction = signal['direction']
@@ -619,10 +617,12 @@ def calculate_total_score(signal, analysis):
             'order_book_points': 0,
             'funding_oi_points': 0,
             'total': 0,
-            'max_total': 100
+            'max_total': 100,
+            'rejected': False,
+            'reject_reason': ''
         }
         
-        # 1. ترابط الفريمات (20)
+        # ==================== 1. ترابط الفريمات (20) ====================
         timeframes = analysis.get('timeframes', {})
         alignment = calculate_enhanced_timeframe_alignment(timeframes)
         
@@ -640,9 +640,16 @@ def calculate_total_score(signal, analysis):
         score += details['timeframe_points']
         logger.info(f"📊 ترابط: {alignment:.1f}/10 → {details['timeframe_points']}/20")
         
-        # 2. الحجم (17)
+        # ==================== 2. الحجم (17) - فلتر إلزامي ====================
         volume = analysis.get('volume_analysis', {})
         vol_ratio = volume.get('volume_5m_ratio', 0)
+        
+        # 🔥 رفض فوري إذا الحجم أقل من الحد
+        if vol_ratio < MIN_VOLUME_FACTOR:
+            logger.warning(f"🛑 {symbol}: حجم {vol_ratio:.2f}x < {MIN_VOLUME_FACTOR} - رفض فوري")
+            details['rejected'] = True
+            details['reject_reason'] = f'حجم منخفض: {vol_ratio:.2f}x < {MIN_VOLUME_FACTOR}'
+            return 0, details
         
         if vol_ratio >= 2.5:
             details['volume_points'] = 17
@@ -662,37 +669,7 @@ def calculate_total_score(signal, analysis):
         score += details['volume_points']
         logger.info(f"📊 حجم: {vol_ratio:.2f}x → {details['volume_points']}/17")
         
-        # 3. Groq (20)
-        if GROQ_AVAILABLE:
-            groq_rec = signal.get('groq_recommendation', '')
-            groq_conf = signal.get('groq_confidence', 0)
-            
-            if groq_rec == "تأكيد":
-                if groq_conf >= 85:
-                    details['groq_points'] = 20
-                elif groq_conf >= 75:
-                    details['groq_points'] = 18
-                elif groq_conf >= 65:
-                    details['groq_points'] = 15
-                elif groq_conf >= 60:
-                    details['groq_points'] = 12
-                elif groq_conf >= 55:
-                    details['groq_points'] = 8
-                else:
-                    details['groq_points'] = 5
-            elif groq_rec == "تحذير":
-                details['groq_points'] = 5
-            elif groq_rec == "رفض":
-                details['groq_points'] = 0
-            else:
-                details['groq_points'] = 10
-        else:
-            details['groq_points'] = 10
-        
-        score += details['groq_points']
-        logger.info(f"📊 Groq: {details['groq_points']}/20")
-        
-        # 4. RSI (12)
+        # ==================== 3. RSI (12) - فلتر إلزامي ====================
         technical = analysis.get('technical_indicators', {})
         rsi = technical.get('rsi', 50)
         
@@ -722,7 +699,7 @@ def calculate_total_score(signal, analysis):
         score += details['rsi_points']
         logger.info(f"📊 RSI: {rsi:.1f} → {details['rsi_points']}/12")
         
-        # 5. Momentum (8)
+        # ==================== 4. Momentum (8) ====================
         momentum = analysis.get('momentum', {})
         mom_strength = momentum.get('strength', 0)
         mom_dir = momentum.get('direction', 'محايد')
@@ -747,7 +724,7 @@ def calculate_total_score(signal, analysis):
         score += details['momentum_points']
         logger.info(f"📊 Momentum: {mom_dir} ({mom_strength:.1f}) → {details['momentum_points']}/8")
         
-        # 6. Price Action (3)
+        # ==================== 5. Price Action (3) ====================
         price_action = analysis.get('price_action', {})
         body_strength = price_action.get('body_strength', '')
         candle_type = price_action.get('candle_type', '')
@@ -766,7 +743,7 @@ def calculate_total_score(signal, analysis):
         score += details['price_action_points']
         logger.info(f"📊 PA: {body_strength} → {details['price_action_points']}/3")
         
-        # 7. حالة السوق (5)
+        # ==================== 6. حالة السوق (5) ====================
         if MARKET_REGIME_AVAILABLE and ENABLE_MARKET_REGIME:
             try:
                 regime = MarketRegime.get_regime()
@@ -795,7 +772,7 @@ def calculate_total_score(signal, analysis):
         score += details['market_points']
         logger.info(f"📊 سوق: {details['market_points']}/5")
         
-        # 8. دفتر الأوامر (10)
+        # ==================== 7. دفتر الأوامر (10) - فلتر إلزامي ====================
         try:
             ob = core.get_order_book_analysis(symbol) if core else None
             if ob:
@@ -822,10 +799,17 @@ def calculate_total_score(signal, analysis):
             logger.warning(f"⚠️ خطأ تحليل دفتر الأوامر: {e}")
             details['order_book_points'] = 3
         
+        # 🔥 رفض فوري إذا دفتر الأوامر أقل من الحد الأدنى
+        if details['order_book_points'] < MIN_ORDER_BOOK_POINTS:
+            logger.warning(f"🛑 {symbol}: دفتر أوامر ضعيف ({details['order_book_points']}/10 < {MIN_ORDER_BOOK_POINTS})")
+            details['rejected'] = True
+            details['reject_reason'] = f'دفتر أوامر ضعيف: {details["order_book_points"]}/10'
+            return 0, details
+        
         score += details['order_book_points']
         logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/10")
         
-        # 9. Funding Rate + Open Interest (5)
+        # ==================== 8. Funding Rate + Open Interest (5) ====================
         try:
             if ENABLE_FUNDING_OI_FILTER and core:
                 funding = core.get_funding_rate(symbol)
@@ -856,7 +840,49 @@ def calculate_total_score(signal, analysis):
         score += details['funding_oi_points']
         logger.info(f"📊 Funding/OI: {details['funding_oi_points']}/5")
         
-        # المجموع
+        # ==================== 9. Groq (20) - بعد تجاوز 45 نقطة فقط ====================
+        if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS:
+            # 🔥 لا تستدعي Groq قبل 45 نقطة
+            if score >= GROQ_MIN_SCORE_BEFORE_CALL:
+                groq_rec = signal.get('groq_recommendation', '')
+                groq_conf = signal.get('groq_confidence', 0)
+                
+                if groq_rec == "تأكيد":
+                    if groq_conf >= 85:
+                        details['groq_points'] = 20
+                    elif groq_conf >= 75:
+                        details['groq_points'] = 18
+                    elif groq_conf >= 65:
+                        details['groq_points'] = 15
+                    elif groq_conf >= 60:
+                        details['groq_points'] = 12
+                    elif groq_conf >= 55:
+                        details['groq_points'] = 8
+                    else:
+                        details['groq_points'] = 5
+                elif groq_rec == "تحذير":
+                    details['groq_points'] = 5
+                elif groq_rec == "رفض":
+                    # 🔥 "رفض" من Groq = فيتو مباشر
+                    if GROQ_REJECT_IS_VETO and groq_conf >= 70:
+                        logger.warning(f"🛑 {symbol}: Groq رفض ({groq_conf}%) - فيتو مباشر")
+                        details['rejected'] = True
+                        details['reject_reason'] = f'Groq رفض ({groq_conf}%)'
+                        return 0, details
+                    details['groq_points'] = 0
+                else:
+                    details['groq_points'] = 10
+            else:
+                # لم يتجاوز 45 نقطة - لا نستدعي Groq
+                details['groq_points'] = 10
+                logger.info(f"⏭️ Groq: تم تخطيه (النقاط {score} < {GROQ_MIN_SCORE_BEFORE_CALL})")
+        else:
+            details['groq_points'] = 10
+        
+        score += details['groq_points']
+        logger.info(f"📊 Groq: {details['groq_points']}/20")
+        
+        # ==================== المجموع ====================
         details['total'] = score
         logger.info(f"🎯 المجموع: {score}/100")
         
@@ -864,7 +890,7 @@ def calculate_total_score(signal, analysis):
         
     except Exception as e:
         logger.error(f"خطأ في حساب النقاط: {e}")
-        return 0, {'total': 0, 'max_total': 100}
+        return 0, {'total': 0, 'max_total': 100, 'rejected': True, 'reject_reason': str(e)}
 
 
 def check_memory_filter(symbol):
@@ -953,20 +979,32 @@ def generate_sniper_signal(symbol):
             "market_regime": regime_data
         }
 
-        if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS:
+        # 🔥 حساب النقاط أولاً (بدون Groq)
+        total_score, score_details = calculate_total_score(signal, analysis)
+        
+        # 🔥 رفض فوري إذا فلتر إلزامي فشل
+        if score_details.get('rejected'):
+            logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")
+            return None
+        
+        # 🔥 استدعاء Groq فقط إذا تجاوز 45 نقطة
+        if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS and total_score >= GROQ_MIN_SCORE_BEFORE_CALL:
             try:
                 groq_result = enhance_signal_with_groq(signal, analysis)
                 if groq_result:
                     signal.update(groq_result)
                     
-                    if groq_result.get('groq_recommendation') == 'رفض' and \
-                       groq_result.get('groq_confidence', 0) >= 80:
-                        return None
+                    # 🔥 "رفض" من Groq = فيتو مباشر
+                    if groq_result.get('groq_recommendation') == 'رفض':
+                        if GROQ_REJECT_IS_VETO and groq_result.get('groq_confidence', 0) >= 70:
+                            logger.warning(f"🛑 {symbol}: Groq رفض ({groq_result.get('groq_confidence', 0)}%) - فيتو")
+                            return None
+                    
+                    # إعادة حساب النقاط مع Groq
+                    total_score, score_details = calculate_total_score(signal, analysis)
             except Exception as e:
                 logger.error(f"Groq: {e}")
 
-        total_score, score_details = calculate_total_score(signal, analysis)
-        
         signal['total_score'] = total_score
         signal['score_details'] = score_details
         signal['auto_executable'] = total_score >= MIN_SCORE_REQUIRED
