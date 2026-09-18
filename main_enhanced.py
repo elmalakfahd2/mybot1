@@ -1,14 +1,10 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار النهائي v4.0
+# 📁 ملف: main_enhanced.py - الإصدار v4.1
+# 🔧 التعديلات v4.1:
+#    - ⚡ تهيئة WebSocket اللحظي عند بدء البوت
 # 🔧 التعديلات v4.0:
-#    - 🔥 منع الصفقات المتعاكسة في execute_sniper_trade
-#    - 🔥 مزامنة profit_history.json عند البدء
-#    - مراقبة TP/SL دورياً
-#    - عرض الرصيد الصحيح (availableBalance)
-#    - تسجيل النتائج
-#    - إصلاح execute_sniper_trade (تحقق صارم قبل الفتح)
-#    - إضافة cleanup_state_file في main()
-#    - إشعار فتح الصفقة مع أسعار TP/SL الفعلية
+#    - منع الصفقات المتعاكسة في execute_sniper_trade
+#    - مزامنة profit_history.json عند البدء
 # 📅 التاريخ: 2026-09-18
 # ==================================================
 
@@ -54,6 +50,16 @@ try:
 except ImportError:
     MARKET_REGIME_AVAILABLE = False
     logger.warning("⚠️ كشف حالة السوق غير متاح")
+
+# ==================== ⚡ البيانات اللحظية ====================
+try:
+    import realtime_data
+    REALTIME_AVAILABLE = True
+    logger.info("✅ realtime_data متاح")
+except ImportError as e:
+    REALTIME_AVAILABLE = False
+    realtime_data = None
+    logger.warning(f"⚠️ realtime_data غير متاح: {e}")
 
 
 _last_auto_scan = 0
@@ -156,6 +162,7 @@ def send_startup():
         groq_status = "✅ نشط" if GROQ_AVAILABLE else "❌ غير متاح"
         memory_status = "✅ نشط" if MEMORY_AVAILABLE else "❌ معطل"
         regime_status = "✅ نشط" if MARKET_REGIME_AVAILABLE else "❌ معطل"
+        realtime_status = "✅ نشط" if REALTIME_AVAILABLE else "❌ معطل"
 
         regime_info = ""
         if MARKET_REGIME_AVAILABLE:
@@ -185,7 +192,7 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.0</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.1</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"🎯 <b>نظام:</b> القناص + TP/SL محقق\n"
@@ -194,6 +201,7 @@ def send_startup():
             f"   • Groq AI: {groq_status}\n"
             f"   • ذاكرة الصفقات: {memory_status}\n"
             f"   • كشف السوق: {regime_status}\n"
+            f"   • ⚡ بيانات لحظية: {realtime_status}\n"
             f"   • SL ديناميكي: {'✅' if DYNAMIC_SL_ENABLED else '❌'}\n"
             f"   • Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}\n"
             f"   • Breakeven بعد TP1: ✅\n"
@@ -373,12 +381,11 @@ def record_closed_trade(trade_data):
                 last_income = income[-1]
                 pnl = float(last_income['income'])
 
-                # 🔥 تسجيل مع exit_price الحقيقي
                 memory.record_trade(
                     symbol=symbol,
                     direction=trade_data.get('direction', 'UNKNOWN'),
                     entry_price=trade_data.get('entry_price', 0),
-                    exit_price=0,  # سيُجلب تلقائياً
+                    exit_price=0,
                     quantity=trade_data.get('quantity', 0),
                     pnl=pnl,
                     confidence=trade_data.get('confidence', 0),
@@ -394,7 +401,6 @@ def record_closed_trade(trade_data):
                 logger.info(f"📝 تسجيل: {symbol} PnL: {pnl:+.4f}")
                 core.record_trade_result(pnl)
 
-                # 🔥 مزامنة profit_history بعد كل صفقة
                 try:
                     memory.sync_profit_history()
                 except:
@@ -409,7 +415,6 @@ def record_closed_trade(trade_data):
 def execute_sniper_trade(signal):
     """
     تنفيذ صفقة قناص مع تحقق صارم قبل الفتح
-    🔥 v4.0: إضافة منع الصفقات المتعاكسة
     """
     try:
         symbol = signal['symbol']
@@ -456,7 +461,7 @@ def execute_sniper_trade(signal):
             logger.warning(f"⚠️ صفقة موجودة على {symbol}")
             return False
 
-        # ==================== 🔥 6. منع الصفقات المتعاكسة ====================
+        # ==================== 6. منع الصفقات المتعاكسة ====================
         if ENABLE_OPPOSITE_DIRECTION_FILTER:
             for pos in positions:
                 pos_amt = float(pos.get('positionAmt', 0))
@@ -572,7 +577,7 @@ def send_failed_trade_notification(signal, result):
 
 
 def send_trade_notification(signal, result):
-    """إشعار التنفيذ الناجح مع أسعار TP/SL الفعلية"""
+    """إشعار التنفيذ الناجح مع أسعار TP/SL الفعلية + البيانات اللحظية"""
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -604,6 +609,10 @@ def send_trade_notification(signal, result):
             f"   • Groq: {signal.get('groq_confidence', 0)}%\n"
             f"   • النقاط: {score.get('total', 0)}/100\n"
         )
+
+        rt_adj = score.get('realtime_adjustment', 0)
+        if rt_adj != 0:
+            msg += f"   • ⚡ لحظي: {rt_adj:+d}\n"
 
         if mem_score and mem_score.get('total_trades', 0) > 0:
             msg += f"   • تاريخ: {mem_score.get('win_rate', 0):.0f}% ({mem_score.get('total_trades', 0)} صفقة)\n"
@@ -771,6 +780,13 @@ def get_system_status():
         except:
             pass
 
+    realtime_info = {}
+    if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
+        try:
+            realtime_info = realtime_data.get_realtime_status()
+        except:
+            pass
+
     return {
         'auto_scan': _auto_scan_enabled,
         'auto_trading': _auto_trading_enabled,
@@ -783,10 +799,12 @@ def get_system_status():
         'weekly_pnl': weekly['weekly_pnl'],
         'monthly_pnl': monthly['monthly_pnl'],
         'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
-        'strategy': 'نظام القناص v4.0',
+        'strategy': 'نظام القناص v4.1',
         'groq_available': GROQ_AVAILABLE,
         'memory_available': MEMORY_AVAILABLE,
         'market_regime_available': MARKET_REGIME_AVAILABLE,
+        'realtime_available': REALTIME_AVAILABLE,
+        'realtime_info': realtime_info,
         'is_paused': is_paused,
         'pause_remaining': pause_remaining,
         'trailing_sl_status': core.get_trailing_sl_status(),
@@ -814,6 +832,32 @@ def toggle_auto_scan():
 
 def start_scanner_threads():
     """تشغيل الخيوط"""
+
+    # ==================== ⚡ تهيئة WebSocket اللحظي ====================
+    if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
+        try:
+            all_symbols = core.get_all_futures_symbols()
+            top_symbols = all_symbols[:min(REALTIME_MAX_SUBSCRIPTIONS, TOP_SYMBOLS_TO_SCAN)]
+
+            if realtime_data.init_realtime(top_symbols):
+                logger.info(f"✅ WebSocket اللحظي مفعل ({len(top_symbols)} عملة)")
+                logger.info("⏳ انتظار 8 ثواني لتجميع البيانات الأولية...")
+                time.sleep(8)
+
+                rt_status = realtime_data.get_realtime_status()
+                logger.info(f"📊 حالة WebSocket: {rt_status}")
+            else:
+                logger.warning("⚠️ فشل تشغيل WebSocket اللحظي")
+        except Exception as e:
+            logger.error(f"❌ خطأ في تهيئة WebSocket: {e}")
+            import traceback
+            traceback.print_exc()
+    elif not ENABLE_REALTIME_DATA:
+        logger.info("ℹ️ البيانات اللحظية معطلة (ENABLE_REALTIME_DATA=False)")
+    elif not REALTIME_AVAILABLE:
+        logger.warning("⚠️ realtime_data غير متاح - تخطي")
+
+    # ==================== تشغيل خيوط المراقبة ====================
     scanner = threading.Thread(target=auto_sniper_scanner, daemon=True)
     scanner.start()
 
@@ -823,7 +867,7 @@ def start_scanner_threads():
     tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True)
     tp_sl_monitor.start()
 
-    logger.info("✅ تم تشغيل 3 خيوط")
+    logger.info("✅ تم تشغيل 3 خيوط مراقبة")
 
 
 def main():
@@ -832,11 +876,11 @@ def main():
         send_startup()
         time.sleep(3)
 
-        # 🔥 تنظيف ملف الصفقات قبل بدء الخيوط
+        # تنظيف ملف الصفقات قبل بدء الخيوط
         logger.info("🧹 مزامنة ملف الصفقات مع Binance...")
         tgbot.cleanup_state_file()
 
-        # 🔥 مزامنة profit_history مع trade_memory
+        # مزامنة profit_history مع trade_memory
         if MEMORY_AVAILABLE:
             try:
                 logger.info("🔄 مزامنة profit_history.json...")
@@ -847,7 +891,7 @@ def main():
 
         start_scanner_threads()
 
-        logger.info("🎯 نظام القناص v4.0 مفعل")
+        logger.info("🎯 نظام القناص v4.1 مفعل")
         logger.info(f"⏰ المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🔒 Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}")
         logger.info(f"🔒 Breakeven بعد TP1: ✅ ({TP_MULTIPLE_LEVELS[0]}%)")
@@ -855,6 +899,7 @@ def main():
         logger.info(f"🔍 مراقبة TP/SL: {'✅' if VERIFY_TP_SL_AFTER_CREATION else '❌'}")
         logger.info(f"📊 فلتر السيولة: {'✅' if ENABLE_VOLUME_FILTER else '❌'} ({MIN_VOLUME_24H_USDT/1e6:.0f}M)")
         logger.info(f"🛡️ منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}")
+        logger.info(f"⚡ بيانات لحظية: {'✅' if (REALTIME_AVAILABLE and ENABLE_REALTIME_DATA) else '❌'}")
         logger.info(f"🎯 MIN_SCORE: {MIN_SCORE_REQUIRED}")
         logger.info(f"📈 MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
         logger.info(f"🛑 توقف بعد {MAX_CONSECUTIVE_LOSSES} خسائر")
