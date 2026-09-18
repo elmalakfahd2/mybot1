@@ -1,15 +1,14 @@
 # ==================================================
-# 📁 ملف: bot_enhanced.py - الإصدار النهائي v4.0
+# 📁 ملف: bot_enhanced.py - الإصدار v4.1.2
+# 🔧 التعديلات v4.1.2:
+#    - 🔥 إصلاح عدم استجابة الأزرار (post_init)
+#    - تشغيل الخيوط بعد بدء polling
 # 🔧 التعديلات v4.0:
-#    - 🔥 إخفاء httpx من اللوجات (أمان - إخفاء التوكن)
-#    - 🔥 منع الصفقات المتعاكسة في التنفيذ اليدوي
-#    - عرض الرصيد الصحيح (availableBalance)
-#    - إصلاح إرسال الرسائل
-#    - إضافة run_async_safe (إصلاح Event loop is closed)
-#    - إضافة error_handler لـ Telegram
-#    - إضافة cleanup_state_file لمزامنة الصفقات
-#    - إضافة زر فحص الأوامر المشروطة (Algo Orders)
-#    - إظهار أسعار TP/SL الفعلية في التنفيذ اليدوي
+#    - إخفاء httpx من اللوجات (أمان)
+#    - منع الصفقات المتعاكسة
+#    - عرض الرصيد الصحيح
+#    - cleanup_state_file
+#    - فحص الأوامر المشروطة
 # 📅 التاريخ: 2026-09-18
 # ==================================================
 
@@ -344,7 +343,7 @@ async def send_direct_message(text: str, parse_mode="HTML", reply_markup=None):
         logger.error(f"❌ فشل الإرسال المباشر: {e}")
 
 
-# ==================== 🔥 التنفيذ اليدوي v4.0 ====================
+# ==================== التنفيذ اليدوي v4.0 ====================
 
 def execute_trade_manual(update: Update, symbol: str, side: str):
     """تنفيذ صفقة يدوية مع منع الصفقات المتعاكسة"""
@@ -363,22 +362,21 @@ def execute_trade_manual(update: Update, symbol: str, side: str):
                 run_async_safe(send_message_safe(update, f"⚠️ يوجد صفقة مفتوحة لـ {symbol}", reply_markup=main_kb))
                 return
 
-        # ==================== 🔥 منع الصفقات المتعاكسة ====================
+        # منع الصفقات المتعاكسة
         if ENABLE_OPPOSITE_DIRECTION_FILTER:
             for pos in current_positions:
                 pos_amt = float(pos.get('positionAmt', 0))
                 pos_direction = "BUY" if pos_amt > 0 else "SELL"
-                
+
                 if pos_direction != side.upper():
                     run_async_safe(send_message_safe(
                         update,
                         f"🛑 <b>ممنوع!</b>\n\n"
                         f"يوجد صفقة <b>{pos_direction}</b> مفتوحة على <b>{pos['symbol']}</b>\n"
-                        f"لا يمكن فتح صفقة <b>{side}</b> معاكسة في نفس السوق\n\n"
-                        f"💡 <i>هذا الفلتر يمنع الرهانات المتعاكسة التي تلغي بعضها</i>",
+                        f"لا يمكن فتح صفقة <b>{side}</b> معاكسة",
                         reply_markup=main_kb
                     ))
-                    logger.warning(f"🛑 رفض {side} {symbol}: اتجاه معاكس لـ {pos['symbol']} ({pos_direction})")
+                    logger.warning(f"🛑 رفض {side} {symbol}: اتجاه معاكس لـ {pos['symbol']}")
                     return
 
         run_async_safe(send_message_safe(update, f"🔄 جاري تنفيذ {side} {symbol}...", reply_markup=main_kb))
@@ -389,7 +387,6 @@ def execute_trade_manual(update: Update, symbol: str, side: str):
             result = core.place_market_order_with_tp_sl(symbol, side, TRADE_USDT, LEVERAGE)
 
         if result:
-            # التحقق من فشل TP/SL
             if result.get('closed_due_to_failure'):
                 msg = (f"⚠️ <b>فشل إنشاء TP/SL</b>\n\n"
                        f"💰 <b>العملة:</b> {symbol}\n"
@@ -516,7 +513,7 @@ async def start(update: Update, context: CallbackContext):
     groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
 
     await update.message.reply_text(
-        f"🤖 <b>بوت القناص الذكي v4.0</b> - {status}\n\n"
+        f"🤖 <b>بوت القناص الذكي v4.1.2</b> - {status}\n\n"
         f"🎯 <b>الاستراتيجية:</b> Price Action + AI\n"
         f"• تحليل متعدد المؤشرات والفريمات\n"
         f"• فلترة صارمة بالحجم والسيولة\n"
@@ -548,6 +545,8 @@ async def handle_message(update: Update, context: CallbackContext):
     text = (update.message.text or "").strip()
     global _bot_running
 
+    logger.info(f"📨 رسالة مستلمة: '{text}'")
+
     # ==================== الرصيد ====================
     if text == "💰 الرصيد":
         try:
@@ -573,6 +572,7 @@ async def handle_message(update: Update, context: CallbackContext):
                 )
 
                 await update.message.reply_text(msg, parse_mode="HTML", reply_markup=main_kb)
+                logger.info(f"✅ تم إرسال الرصيد")
                 return
         except Exception as e:
             logger.error(f"خطأ: {e}")
@@ -707,7 +707,7 @@ async def handle_message(update: Update, context: CallbackContext):
         wallet = balance_info.get('wallet', 0)
 
         msg = (
-            f"📊 <b>حالة النظام v4.0</b>\n\n"
+            f"📊 <b>حالة النظام v4.1.2</b>\n\n"
             f"🤖 <b>البوت:</b> {bot_status}\n"
             f"🔍 <b>المسح:</b> {auto_scan_status}\n"
             f"🤖 <b>التنفيذ:</b> {auto_trading_status}\n"
@@ -752,7 +752,7 @@ async def handle_message(update: Update, context: CallbackContext):
 
     # ==================== تعليمات ====================
     await update.message.reply_text(
-        "❓ <b>تعليمات البوت v4.0:</b>\n\n"
+        "❓ <b>تعليمات البوت v4.1.2:</b>\n\n"
         "• <code>💰 الرصيد</code> - الرصيد الدقيق\n"
         "• <code>📊 الصفقات المفتوحة</code> - الصفقات الحالية\n"
         "• <code>🔎 فحص الأوامر المشروطة</code> - عرض TP/SL الفعلية\n"
@@ -1112,7 +1112,7 @@ async def _show_enhanced_performance_report(update: Update):
         monthly_rate = (successful_monthly / monthly_trade_count * 100) if monthly_trade_count > 0 else 0
 
         msg = (
-            f"📋 <b>تقرير الأداء v4.0</b>\n\n"
+            f"📋 <b>تقرير الأداء v4.1.2</b>\n\n"
             f"💰 <b>الرصيد:</b>\n"
             f"   • المتاح: {available:.2f} USDT\n"
             f"   • الإجمالي: {wallet:.2f} USDT\n\n"
@@ -1326,10 +1326,10 @@ async def button_handler(update: Update, context: CallbackContext):
             pass
 
 
-# ==================== التشغيل ====================
+# ==================== التشغيل v4.1.2 ====================
 
 def run_bot():
-    """تشغيل البوت"""
+    """تشغيل البوت + الخيوط بعد بدء polling"""
     try:
         try:
             loop = asyncio.get_event_loop()
@@ -1337,7 +1337,25 @@ def run_bot():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
+        # ==================== 🔥 post_init: تشغيل الخيوط بعد بدء polling ====================
+        async def post_init(application):
+            logger.info("🚀 البوت بدأ — تشغيل الخيوط...")
+
+            try:
+                import main_enhanced as auto_main
+                auto_main.start_scanner_threads()
+                logger.info("✅ تم تشغيل كل الخيوط بنجاح")
+            except Exception as e:
+                logger.error(f"❌ فشل تشغيل الخيوط: {e}")
+                import traceback
+                traceback.print_exc()
+
+        application = (
+            Application.builder()
+            .token(TELEGRAM_TOKEN)
+            .post_init(post_init)
+            .build()
+        )
 
         application.add_handler(CommandHandler("start", start))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -1345,7 +1363,9 @@ def run_bot():
 
         application.add_error_handler(error_handler)
 
-        logger.info("🚀 بدء البوت v4.0...")
+        logger.info("🚀 بدء البوت v4.1.2...")
+        logger.info("📡 Starting Telegram polling...")
+
         application.run_polling(drop_pending_updates=True)
 
     except Exception as e:
