@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية
-🔒 هذا الملف آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
-    كل الأسرار (مفاتيح Binance, Telegram, Groq) تُقرأ من environment variables.
+config.py - الإعدادات النهائية v4.0
+🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-    للتشغيل محليًا:
-        1. انسخ .env.example باسم .env
-        2. حط قيمك الحقيقية جوه .env
-        3. شغّل: pip install python-dotenv (موجودة بالفعل في requirements.txt)
+🔧 التعديلات v4.0:
+    - رفع MIN_SCORE_REQUIRED من 60 → 68
+    - رفع MIN_CONFIDENCE_AUTO من 55 → 60
+    - رفع MIN_SIGNAL_STRENGTH من 5 → 6
+    - خفض MAX_OPEN_POSITIONS من 6 → 3
+    - خفض MAX_CORRELATION من 0.65 → 0.55
+    - إضافة فلتر RSI إلزامي
+    - إضافة فلتر دفتر الأوامر إلزامي
+    - إضافة فلتر الحجم إلزامي
+    - إضافة Breakeven بعد TP1
 
-    على Railway:
-        حط نفس المتغيرات (بدون ملف .env) في تبويب Variables الخاص بالمشروع.
-
-📅 آخر تعديل: إصلاح TP/SL + SL أوسع + تحويل الأسرار لـ env vars
+📅 آخر تعديل: 2026-09-18
 """
 
 import os
 
-# تحميل ملف .env محليًا إذا كان موجودًا (على Railway المتغيرات بتيجي من النظام مباشرة)
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -53,47 +54,49 @@ TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 # ==================== Groq AI ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 
-USE_TESTNET = _get_bool("USE_TESTNET", default=True)  # ✅ الافتراضي Testnet للأمان، فعّلها False فقط لما تكون متأكد
+USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
 TRADE_USDT = 20
-LEVERAGE = 5                          # ✅ خفض من 10 → 5 (أمان أكبر)
-MAX_OPEN_POSITIONS = 6                # ✅ رفع من 3 → 6 (فرص أكثر)
+LEVERAGE = 5
+MAX_OPEN_POSITIONS = 3                # ✅ خفض من 6 → 3 (تركيز أفضل)
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.0, 2.0, 3.0]  # ✅ رفع من [0.5, 0.7, 1.0] (أرباح أوضح)
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]  # نفس النسب (مجموعها 1.0)
-SL_PERCENT = 2.0                       # ✅ رفع من 0.4 → 2.0 (حماية أكبر)
-TP_PERCENT = 1.0                       # ✅ رفع من 0.5 → 1.0
+TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]  # ✅ رفع TP1 من 1.0 → 1.2 (أعلى من SL)
+TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
+SL_PERCENT = 2.0
+TP_PERCENT = 1.2                       # ✅ رفع من 1.0 → 1.2
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.5                # ✅ رفع من 1.5 → 2.5 (SL يتكيف مع التقلب)
-SL_MIN_PERCENT = 1.5                   # ✅ رفع من 0.3 → 1.5 (حد أدنى آمن)
-SL_MAX_PERCENT = 3.0                   # ✅ رفع من 0.8 → 3.0 (حد أقصى محترم)
+SL_ATR_MULTIPLIER = 2.5
+SL_MIN_PERCENT = 1.5
+SL_MAX_PERCENT = 3.0
 
 # ==================== 🔥 إصلاح TP/SL ====================
-VERIFY_TP_SL_AFTER_CREATION = True    # التحقق الإجباري
-TP_SL_MAX_RETRIES = 3                  # إعادة المحاولة
-CLOSE_ON_TP_SL_FAIL = True             # إغلاق عند فشل
-TP_SL_RETRY_DELAY_SECONDS = 1          # تأخير بين المحاولات
-MONITOR_TP_SL_INTERVAL = 60            # مراقبة كل 60 ثانية
+VERIFY_TP_SL_AFTER_CREATION = True
+TP_SL_MAX_RETRIES = 3
+CLOSE_ON_TP_SL_FAIL = True
+TP_SL_RETRY_DELAY_SECONDS = 1
+MONITOR_TP_SL_INTERVAL = 60
 
 # ==================== 🔥 فلتر السيولة ====================
 ENABLE_VOLUME_FILTER = True
-MIN_VOLUME_24H_USDT = 50000000         # 50 مليون USDT
-MIN_MARKET_CAP_RANK = 200              # ضمن أفضل 200 عملة
+MIN_VOLUME_24H_USDT = 50000000
+MIN_MARKET_CAP_RANK = 200
 
 # ==================== شروط الدخول ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 1.2
+MIN_VOLUME_FACTOR = 1.2                # ✅ إلزامي الآن (رفض فوري)
 MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 55
-MIN_SIGNAL_STRENGTH = 5
+MIN_CONFIDENCE_AUTO = 60               # ✅ رفع من 55 → 60
+MIN_SIGNAL_STRENGTH = 6                # ✅ رفع من 5 → 6
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 60
+MIN_SCORE_REQUIRED = 68                # ✅ رفع من 60 → 68
+MIN_ORDER_BOOK_POINTS = 4              # ✅ جديد: حد أدنى لدفتر الأوامر
+MIN_RSI_POINTS = 3                     # ✅ جديد: حد أدنى لنقاط RSI
 
 SCORE_WEIGHTS = {
     'timeframe_alignment': 20,
@@ -119,17 +122,21 @@ FUNDING_RATE_EXTREME_PERCENT = 0.05
 
 # ==================== 🔥 فلتر الارتباط بين العملات ====================
 ENABLE_CORRELATION_FILTER = True
-MAX_CORRELATION = 0.65                # ✅ خفض من 0.75 → 0.65 (تنويع أفضل مع 6 صفقات)
+MAX_CORRELATION = 0.55                 # ✅ خفض من 0.65 → 0.55
+
+# ==================== 🔥 منع الصفقات المتعاكسة ====================
+ENABLE_OPPOSITE_DIRECTION_FILTER = True  # ✅ جديد
 
 # ==================== 🔥 قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 5.0          # ✅ خفض من 8.0 → 5.0 (حماية أقوى مع 6 صفقات)
+DAILY_MAX_LOSS_PERCENT = 5.0
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 1.0              # ✅ رفع من 0.3 → 1.0 (يبدأ بعد ربح 1%)
-TRAILING_SL_DISTANCE = 0.5             # ✅ رفع من 0.15 → 0.5 (مسافة أوسع)
-BREAKEVEN_TRIGGER = 0.8                # ✅ رفع من 0.25 → 0.8 (Breakeven بعد ربح 0.8%)
+TRAILING_SL_TRIGGER = 1.0
+TRAILING_SL_DISTANCE = 0.5
+BREAKEVEN_TRIGGER = 1.2                # ✅ رفع من 0.8 → 1.2 (بعد TP1)
+BREAKEVEN_OFFSET_PERCENT = 0.1         # ✅ جديد: هامش العمولات
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
@@ -140,6 +147,7 @@ ENABLE_TRADE_MEMORY = True
 MEMORY_MIN_TRADES_FOR_SCORE = 3
 MEMORY_MIN_WIN_RATE = 30
 MEMORY_MAX_CONSECUTIVE_LOSSES = 3
+COMMISSION_RATE = 0.0004               # ✅ جديد: 0.04% لكل جانب
 
 # ==================== كشف حالة السوق ====================
 ENABLE_MARKET_REGIME = True
@@ -153,8 +161,8 @@ GOOD_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 
 # ==================== المسح ====================
-AUTO_SCAN_INTERVAL = 900               # 15 دقيقة
-TOP_SYMBOLS_TO_SCAN = 20               # ✅ خفض من 50 → 20 (توفير Groq)
+AUTO_SCAN_INTERVAL = 900
+TOP_SYMBOLS_TO_SCAN = 20
 COOLDOWN_MINUTES = 5
 
 # ==================== الفريمات ====================
@@ -167,6 +175,8 @@ ENABLE_GROQ_ANALYSIS = True
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_SEND_FULL_DATA = True
+GROQ_MIN_SCORE_BEFORE_CALL = 45        # ✅ جديد: لا تستدعي Groq قبل 45 نقطة
+GROQ_REJECT_IS_VETO = True             # ✅ جديد: "رفض" من Groq = فيتو مباشر
 
 # ==================== التنفيذ ====================
 ENABLE_AUTO_EXECUTION = True
