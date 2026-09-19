@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.1
+config.py - الإعدادات النهائية v4.1.5
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v4.1:
-    - ⚡ إضافة إعدادات البيانات اللحظية (WebSocket)
+🔧 التعديلات v4.1.5 (المرحلة 1 - تخفيف تدريجي):
+    - خفض MIN_VOLUME_FACTOR من 1.2 → 0.9
+    - خفض MIN_ORDER_BOOK_POINTS من 4 → 0
+    - خفض MIN_SCORE_REQUIRED من 65 → 62
+    - خفض MIN_CONFIDENCE_AUTO من 60 → 55
+    - رفع MAX_OPEN_POSITIONS من 3 → 5
+    - رفع MAX_CORRELATION من 0.55 → 0.75
+    - تعطيل ENABLE_CORRELATION_FILTER مؤقتاً
+    - تعطيل ENABLE_OPPOSITE_DIRECTION_FILTER مؤقتاً
 
-🔧 التعديلات v4.0:
-    - رفع MIN_SCORE_REQUIRED من 60 → 68
-    - رفع MIN_CONFIDENCE_AUTO من 55 → 60
-    - رفع MIN_SIGNAL_STRENGTH من 5 → 6
-    - خفض MAX_OPEN_POSITIONS من 6 → 3
-    - خفض MAX_CORRELATION من 0.65 → 0.55
-    - إضافة فلتر RSI إلزامي
-    - إضافة فلتر دفتر الأوامر إلزامي
-    - إضافة فلتر الحجم إلزامي
-    - إضافة Breakeven بعد TP1
+🔧 التعديلات السابقة:
+    - v4.1: WebSocket (OBI, Pressure, Liquidations)
+    - v4.1.4: تمييز الصفقات اليدوية
+    - v4.0: Breakeven بعد TP1 + حساب العمولات
 
-📅 آخر تعديل: 2026-09-18
+📅 آخر تعديل: 2026-09-19
 """
 
 import os
@@ -60,16 +61,16 @@ GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
-TRADE_USDT = 15
-LEVERAGE = 10
-MAX_OPEN_POSITIONS = 5                # ✅ خفض من 6 → 3 (تركيز أفضل)
+TRADE_USDT = 20
+LEVERAGE = 5
+MAX_OPEN_POSITIONS = 5                 # ✅ v4.1.5: من 3 → 5
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]  # ✅ رفع TP1 من 1.0 → 1.2 (أعلى من SL)
+TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]
 TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
 SL_PERCENT = 2.0
-TP_PERCENT = 1.2                       # ✅ رفع من 1.0 → 1.2
+TP_PERCENT = 1.2
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
@@ -77,29 +78,29 @@ SL_ATR_MULTIPLIER = 2.5
 SL_MIN_PERCENT = 1.5
 SL_MAX_PERCENT = 3.0
 
-# ==================== 🔥 إصلاح TP/SL ====================
+# ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
 TP_SL_MAX_RETRIES = 3
 CLOSE_ON_TP_SL_FAIL = True
 TP_SL_RETRY_DELAY_SECONDS = 1
 MONITOR_TP_SL_INTERVAL = 60
 
-# ==================== 🔥 فلتر السيولة ====================
+# ==================== فلتر السيولة ====================
 ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول ====================
+# ==================== شروط الدخول (v4.1.5 - مخففة) ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 1.2                # ✅ إلزامي الآن (رفض فوري)
+MIN_VOLUME_FACTOR = 0.9                # ✅ v4.1.5: من 1.2 → 0.9
 MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 60               # ✅ رفع من 55 → 60
-MIN_SIGNAL_STRENGTH = 6                # ✅ رفع من 5 → 6
+MIN_CONFIDENCE_AUTO = 55               # ✅ v4.1.5: من 60 → 55
+MIN_SIGNAL_STRENGTH = 5                # ✅ v4.1.5: من 6 → 5
 
-# ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 68                # ✅ رفع من 60 → 68
-MIN_ORDER_BOOK_POINTS = 4              # ✅ جديد: حد أدنى لدفتر الأوامر
-MIN_RSI_POINTS = 3                     # ✅ جديد: حد أدنى لنقاط RSI
+# ==================== نظام النقاط (v4.1.5 - مخفف) ====================
+MIN_SCORE_REQUIRED = 62                # ✅ v4.1.5: من 65 → 62
+MIN_ORDER_BOOK_POINTS = 0              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
+MIN_RSI_POINTS = 0                     # ✅ v4.1.5: من 3 → 0 (تعطيل الفلتر)
 
 SCORE_WEIGHTS = {
     'timeframe_alignment': 20,
@@ -114,32 +115,32 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== 🔥 فلتر دفتر الأوامر والتنفيذ ====================
-ENABLE_ORDER_BOOK_FILTER = True
+# ==================== فلتر دفتر الأوامر والتنفيذ ====================
+ENABLE_ORDER_BOOK_FILTER = True        # يبقى True للـ spread/depth، لكن النقاط صفر
 MAX_SPREAD_PERCENT = 0.15
 MIN_DEPTH_MULTIPLIER = 10
 
-# ==================== 🔥 فلتر Funding Rate + Open Interest ====================
+# ==================== فلتر Funding Rate + Open Interest ====================
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== 🔥 فلتر الارتباط بين العملات ====================
-ENABLE_CORRELATION_FILTER = True
-MAX_CORRELATION = 0.55                 # ✅ خفض من 0.65 → 0.55
+# ==================== فلتر الارتباط (v4.1.5 - معطل مؤقتاً) ====================
+ENABLE_CORRELATION_FILTER = False      # ✅ v4.1.5: من True → False (مؤقتاً)
+MAX_CORRELATION = 0.75                 # ✅ v4.1.5: من 0.55 → 0.75
 
-# ==================== 🔥 منع الصفقات المتعاكسة ====================
-ENABLE_OPPOSITE_DIRECTION_FILTER = True  # ✅ جديد
+# ==================== منع الصفقات المتعاكسة (v4.1.5 - معطل مؤقتاً) ====================
+ENABLE_OPPOSITE_DIRECTION_FILTER = False  # ✅ v4.1.5: من True → False (مؤقتاً)
 
-# ==================== 🔥 قاطع الخسارة اليومية ====================
+# ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 5.0
+DAILY_MAX_LOSS_PERCENT = 5.0           # يبقى 5% (خسارة محققة فقط)
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
 TRAILING_SL_TRIGGER = 1.0
 TRAILING_SL_DISTANCE = 0.5
-BREAKEVEN_TRIGGER = 1.2                # ✅ رفع من 0.8 → 1.2 (بعد TP1)
-BREAKEVEN_OFFSET_PERCENT = 0.1         # ✅ جديد: هامش العمولات
+BREAKEVEN_TRIGGER = 1.2
+BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
@@ -150,7 +151,7 @@ ENABLE_TRADE_MEMORY = True
 MEMORY_MIN_TRADES_FOR_SCORE = 3
 MEMORY_MIN_WIN_RATE = 30
 MEMORY_MAX_CONSECUTIVE_LOSSES = 3
-COMMISSION_RATE = 0.0004               # ✅ جديد: 0.04% لكل جانب
+COMMISSION_RATE = 0.0004
 
 # ==================== كشف حالة السوق ====================
 ENABLE_MARKET_REGIME = True
@@ -178,8 +179,8 @@ ENABLE_GROQ_ANALYSIS = True
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 45        # ✅ جديد: لا تستدعي Groq قبل 45 نقطة
-GROQ_REJECT_IS_VETO = True             # ✅ جديد: "رفض" من Groq = فيتو مباشر
+GROQ_MIN_SCORE_BEFORE_CALL = 45
+GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
 ENABLE_AUTO_EXECUTION = True
@@ -191,17 +192,17 @@ REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
 # ==================== ⚡ البيانات اللحظية (WebSocket) v4.1 ====================
-ENABLE_REALTIME_DATA = True            # تفعيل/تعطيل النظام اللحظي
-REALTIME_ADJUSTMENT_ENABLED = True     # استخدام التعديل اللحظي في النقاط
+ENABLE_REALTIME_DATA = True
+REALTIME_ADJUSTMENT_ENABLED = True
 
 # نطاق التعديل
-REALTIME_MIN_ADJUSTMENT = -5           # أدنى تعديل
-REALTIME_MAX_ADJUSTMENT = 10           # أعلى تعديل
+REALTIME_MIN_ADJUSTMENT = -5
+REALTIME_MAX_ADJUSTMENT = 10
 
 # إعدادات التدفق
-REALTIME_PRESSURE_WINDOW = 30          # نافذة حساب الضغط (ثواني)
-REALTIME_DEPTH_LEVELS = 20             # مستويات دفتر الأوامر
-REALTIME_LIQUIDATION_THRESHOLD = 50000 # أدنى قيمة تصفية لتُعتبر حدثاً مهماً (USDT)
+REALTIME_PRESSURE_WINDOW = 30
+REALTIME_DEPTH_LEVELS = 20
+REALTIME_LIQUIDATION_THRESHOLD = 50000
 
 # عدد العملات للاشتراك
-REALTIME_MAX_SUBSCRIPTIONS = 25        # لا تشترك في أكثر من هذا العدد
+REALTIME_MAX_SUBSCRIPTIONS = 25
