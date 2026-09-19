@@ -1,11 +1,11 @@
 # ==================================================
-# ًں“پ ظ…ظ„ظپ: core_functions.py - ط§ظ„ط¥طµط¯ط§ط± v4.1.4
-# ًں”§ ط§ظ„طھط¹ط¯ظٹظ„ط§طھ v4.1.4:
-#    - ًں”¥ check_and_add_tp_sl_to_existing_positions ظٹطھط¬ط§ظ‡ظ„ ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط©
-#    - ًں”¥ Cache ط§ظ„ط±ظ…ظˆط² (10 ط¯ظ‚ط§ط¦ظ‚)
-# ًں”§ ط§ظ„طھط¹ط¯ظٹظ„ط§طھ v4.0:
-#    - Breakeven ط¨ط¹ط¯ TP1 + ظ‡ط§ظ…ط´ 0.1%
-# ًں“… ط§ظ„طھط§ط±ظٹط®: 2026-09-19
+# 📁 ملف: core_functions.py - الإصدار v4.1.4
+# 🔧 التعديلات v4.1.4:
+#    - 🔥 check_and_add_tp_sl_to_existing_positions يتجاهل الصفقات اليدوية
+#    - 🔥 Cache الرموز (10 دقائق)
+# 🔧 التعديلات v4.0:
+#    - Breakeven بعد TP1 + هامش 0.1%
+# 📅 التاريخ: 2026-09-19
 # ==================================================
 
 import logging
@@ -24,12 +24,12 @@ from config import *
 logger = logging.getLogger("core")
 _client = None
 
-# ==================== ًں”¥ Cache ظ„ظ„ط±ظ…ظˆط² ====================
+# ==================== 🔥 Cache للرموز ====================
 _symbols_cache = None
 _symbols_cache_time = 0
-_SYMBOLS_CACHE_DURATION = 600  # 10 ط¯ظ‚ط§ط¦ظ‚
+_SYMBOLS_CACHE_DURATION = 600  # 10 دقائق
 
-# ==================== ًں”¥ Algo Order API ====================
+# ==================== 🔥 Algo Order API ====================
 CONDITIONAL_ORDER_TYPES = {
     'STOP_MARKET', 'TAKE_PROFIT_MARKET', 'STOP', 'TAKE_PROFIT', 'TRAILING_STOP_MARKET'
 }
@@ -39,7 +39,7 @@ _FUTURES_BASE_URL = "https://testnet.binancefuture.com" if 'USE_TESTNET' in glob
 
 
 def _algo_signed_request(method, path, params=None):
-    """ط·ظ„ط¨ ظ…ظˆظ‚ظ‘ط¹ ظ…ط¨ط§ط´ط±ط© ظ„ظ€ Algo Order API"""
+    """طلب موقّع مباشرة لـ Algo Order API"""
     params = dict(params or {})
     params['timestamp'] = int(time.time() * 1000)
     params.setdefault('recvWindow', 10000)
@@ -65,7 +65,7 @@ def _algo_signed_request(method, path, params=None):
 
 
 def create_algo_order(order_params, max_retries=None):
-    """ط¥ظ†ط´ط§ط، ط£ظ…ط± ط´ط±ط·ظٹ ط¹ط¨ط± Algo Order API ط§ظ„ط¬ط¯ظٹط¯"""
+    """إنشاء أمر شرطي عبر Algo Order API الجديد"""
     if max_retries is None:
         max_retries = TP_SL_MAX_RETRIES
 
@@ -83,42 +83,42 @@ def create_algo_order(order_params, max_retries=None):
             status_code, data = _algo_signed_request('post', '/fapi/v1/algoOrder', params)
 
             if status_code == 200 and 'algoId' in data:
-                logger.info(f"âœ… ط£ظ…ط± Algo ظ†ط§ط¬ط­ (ظ…ط­ط§ظˆظ„ط© {attempt+1}) - algoId={data['algoId']}")
+                logger.info(f"✅ أمر Algo ناجح (محاولة {attempt+1}) - algoId={data['algoId']}")
                 data['orderId'] = data['algoId']
                 return data
 
             code = data.get('code')
             msg = data.get('msg', str(data))
-            logger.warning(f"âڑ ï¸ڈ Algo ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {code} - {msg}")
+            logger.warning(f"⚠️ Algo محاولة {attempt+1}/{max_retries} فشلت: {code} - {msg}")
 
             if code in [-1111, -1102, -2019]:
-                logger.error("â‌Œ ط®ط·ط£ ط¯ط§ط¦ظ… - ط¥ظٹظ‚ط§ظپ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ")
+                logger.error("❌ خطأ دائم - إيقاف المحاولات")
                 return None
 
         except Exception as e:
-            logger.warning(f"âڑ ï¸ڈ Algo ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e}")
+            logger.warning(f"⚠️ Algo محاولة {attempt+1}/{max_retries} فشلت: {e}")
 
         if attempt < max_retries - 1:
             time.sleep(TP_SL_RETRY_DELAY_SECONDS)
 
-    logger.error(f"â‌Œ ظپط´ظ„ ط¬ظ…ظٹط¹ ظ…ط­ط§ظˆظ„ط§طھ Algo Order ({max_retries})")
+    logger.error(f"❌ فشل جميع محاولات Algo Order ({max_retries})")
     return None
 
 
 def cancel_algo_order(symbol, algo_id):
-    """ط¥ظ„ط؛ط§ط، ط£ظ…ط± ط´ط±ط·ظٹ ط¹ط¨ط± DELETE /fapi/v1/algoOrder"""
+    """إلغاء أمر شرطي عبر DELETE /fapi/v1/algoOrder"""
     try:
         status_code, data = _algo_signed_request(
             'delete', '/fapi/v1/algoOrder', {'algoId': algo_id}
         )
         return status_code == 200
     except Exception as e:
-        logger.warning(f"âڑ ï¸ڈ ظپط´ظ„ ط¥ظ„ط؛ط§ط، Algo Order {algo_id}: {e}")
+        logger.warning(f"⚠️ فشل إلغاء Algo Order {algo_id}: {e}")
         return False
 
 
 def get_open_algo_orders(symbol=None):
-    """ط§ظ„ط£ظˆط§ظ…ط± ط§ظ„ط´ط±ط·ظٹط© ط§ظ„ظ…ظپطھظˆط­ط©"""
+    """الأوامر الشرطية المفتوحة"""
     try:
         params = {'symbol': symbol} if symbol else {}
         status_code, data = _algo_signed_request('get', '/fapi/v1/openAlgoOrders', params)
@@ -129,7 +129,7 @@ def get_open_algo_orders(symbol=None):
             return data
         return []
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپظٹ ط¬ظ„ط¨ Algo Orders ط§ظ„ظ…ظپطھظˆط­ط©: {e}")
+        logger.error(f"خطأ في جلب Algo Orders المفتوحة: {e}")
         return []
 
 
@@ -180,13 +180,13 @@ except NameError:
     BREAKEVEN_OFFSET_PERCENT = 0.1
 
 
-# ==================== طھظ‡ظٹط¦ط© Binance ====================
+# ==================== تهيئة Binance ====================
 
 def create_binance_client():
     global _client, _connection_retries
 
     try:
-        print("ًںڑ€ ظ…ط­ط§ظˆظ„ط© ط§ظ„ط§طھطµط§ظ„ ط¨ظ€ Binance Futures...")
+        print("🚀 محاولة الاتصال بـ Binance Futures...")
 
         if USE_TESTNET:
             client_obj = Client(
@@ -204,27 +204,27 @@ def create_binance_client():
             client_obj.futures_ping()
             server_time = client_obj.futures_time()
             if server_time:
-                print(f"âœ… ط§طھطµط§ظ„ ظ†ط§ط¬ط­ - {server_time['serverTime']}")
+                print(f"✅ اتصال ناجح - {server_time['serverTime']}")
                 _client = client_obj
                 _connection_retries = 0
                 return client_obj
         except Exception as e:
-            print(f"â‌Œ ط®ط·ط£ ط§ط®طھط¨ط§ط±: {e}")
+            print(f"❌ خطأ اختبار: {e}")
             raise
 
     except BinanceAPIException as e:
         _connection_retries += 1
-        print(f"â‌Œ ط®ط·ط£ API ({_connection_retries}/{_MAX_RETRIES}): {e}")
+        print(f"❌ خطأ API ({_connection_retries}/{_MAX_RETRIES}): {e}")
 
         if e.code == -1003:
-            print("ًں›‘ ط­ط¸ط± ط¨ط³ط¨ط¨ ط§ظ„ظˆط²ظ† - ط§ظ†طھط¸ط§ط± 60 ط«ط§ظ†ظٹط©...")
+            print("🛑 حظر بسبب الوزن - انتظار 60 ثانية...")
             time.sleep(60)
     except Exception as e:
         _connection_retries += 1
-        print(f"â‌Œ ط®ط·ط£ ({_connection_retries}/{_MAX_RETRIES}): {e}")
+        print(f"❌ خطأ ({_connection_retries}/{_MAX_RETRIES}): {e}")
 
     if _connection_retries < _MAX_RETRIES:
-        print("ًں”„ ط¥ط¹ط§ط¯ط© ط§ظ„ظ…ط­ط§ظˆظ„ط©...")
+        print("🔄 إعادة المحاولة...")
         time.sleep(5)
         return create_binance_client()
 
@@ -253,7 +253,7 @@ def get_client():
 client = get_client()
 
 
-# ==================== ط§ظ„ط­ط³ط§ط¨ ====================
+# ==================== الحساب ====================
 
 def get_account_mode():
     try:
@@ -293,7 +293,7 @@ def get_open_positions():
                 continue
         return positions
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return []
 
 
@@ -306,16 +306,16 @@ def get_open_orders(symbol=None):
             return client_obj.futures_get_open_orders(symbol=symbol)
         return client_obj.futures_get_open_orders()
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return []
 
 
-# ==================== get_all_futures_symbols ظ…ط­ط³ظ‘ظ† ====================
+# ==================== get_all_futures_symbols محسّن ====================
 
 def get_all_futures_symbols():
     """
-    ًں”¥ Cache ظ„ظ…ط¯ط© 10 ط¯ظ‚ط§ط¦ظ‚
-    ط·ظ„ط¨ ظˆط§ط­ط¯ ظ„ظƒظ„ ط§ظ„طھظٹظƒط±ط² (ط¨ط¯ظ„ 528 ط·ظ„ط¨)
+    🔥 Cache لمدة 10 دقائق
+    طلب واحد لكل التيكرز (بدل 528 طلب)
     """
     global _symbols_cache, _symbols_cache_time
 
@@ -323,13 +323,13 @@ def get_all_futures_symbols():
         current_time = time.time()
 
         if _symbols_cache is not None and (current_time - _symbols_cache_time) < _SYMBOLS_CACHE_DURATION:
-            logger.info(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط© (Cache): {len(_symbols_cache)} ط¹ظ…ظ„ط©")
+            logger.info(f"📊 فلتر السيولة (Cache): {len(_symbols_cache)} عملة")
             return _symbols_cache
 
         client_obj = get_client()
         if not client_obj:
             if _symbols_cache:
-                logger.warning("âڑ ï¸ڈ ظپط´ظ„ ط§ظ„ط§طھطµط§ظ„ - ط§ط³طھط®ط¯ط§ظ… Cache ظ‚ط¯ظٹظ…")
+                logger.warning("⚠️ فشل الاتصال - استخدام Cache قديم")
                 return _symbols_cache
             return []
 
@@ -354,12 +354,12 @@ def get_all_futures_symbols():
                     if volume_map.get(sym, 0) >= MIN_VOLUME_24H_USDT
                 ]
             except Exception as e:
-                logger.error(f"âڑ ï¸ڈ ظپط´ظ„ ظپظ„طھط± ط§ظ„ط­ط¬ظ…: {e}")
+                logger.error(f"⚠️ فشل فلتر الحجم: {e}")
                 filtered_syms = syms
         else:
             filtered_syms = syms
 
-        logger.info(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط©: {len(filtered_syms)}/{len(syms)} ط¹ظ…ظ„ط© (ط­ط¯ ط£ط¯ظ†ظ‰: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
+        logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
 
         _symbols_cache = filtered_syms
         _symbols_cache_time = current_time
@@ -368,13 +368,13 @@ def get_all_futures_symbols():
 
     except BinanceAPIException as e:
         if e.code == -1003:
-            logger.error("ًں›‘ ط­ط¸ط± ط¨ط³ط¨ط¨ ط§ظ„ظˆط²ظ† - ط§ط³طھط®ط¯ط§ظ… Cache ط¥ظ† ظˆظڈط¬ط¯")
+            logger.error("🛑 حظر بسبب الوزن - استخدام Cache إن وُجد")
             if _symbols_cache:
                 return _symbols_cache
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return _symbols_cache if _symbols_cache else []
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return _symbols_cache if _symbols_cache else []
 
 
@@ -467,7 +467,7 @@ def format_price_for_binance(symbol, price):
         return round(price, 2) if price else None
 
 
-# ==================== طھط­ظ„ظٹظ„ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ====================
+# ==================== تحليل دفتر الأوامر ====================
 
 def get_order_book_analysis(symbol, depth_levels=20):
     try:
@@ -504,30 +504,30 @@ def get_order_book_analysis(symbol, depth_levels=20):
             'best_ask': best_ask
         }
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپظٹ طھط­ظ„ظٹظ„ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ظ„ظ€ {symbol}: {e}")
+        logger.error(f"خطأ في تحليل دفتر الأوامر لـ {symbol}: {e}")
         return None
 
 
 def check_spread_and_liquidity(symbol, trade_usdt):
     try:
         if not ENABLE_ORDER_BOOK_FILTER:
-            return True, "ظپظ„طھط± ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ظ…ط¹ط·ظ„"
+            return True, "فلتر دفتر الأوامر معطل"
 
         ob = get_order_book_analysis(symbol)
         if not ob:
-            return False, "طھط¹ط°ط± ط¬ظ„ط¨ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط±"
+            return False, "تعذر جلب دفتر الأوامر"
 
         if ob['spread_percent'] > MAX_SPREAD_PERCENT:
-            return False, f"ط³ط¨ط±ظٹط¯ ظˆط§ط³ط¹: {ob['spread_percent']:.3f}% (ط§ظ„ط­ط¯: {MAX_SPREAD_PERCENT}%)"
+            return False, f"سبريد واسع: {ob['spread_percent']:.3f}% (الحد: {MAX_SPREAD_PERCENT}%)"
 
         min_required_depth = trade_usdt * LEVERAGE * MIN_DEPTH_MULTIPLIER
         if ob['total_depth_usdt'] < min_required_depth:
-            return False, f"ط³ظٹظˆظ„ط© ط¶ط¹ظٹظپط©: {ob['total_depth_usdt']:.0f} USDT (ط§ظ„ظ…ط·ظ„ظˆط¨: {min_required_depth:.0f})"
+            return False, f"سيولة ضعيفة: {ob['total_depth_usdt']:.0f} USDT (المطلوب: {min_required_depth:.0f})"
 
-        return True, "ط³ظٹظˆظ„ط© ظ…ظ‚ط¨ظˆظ„ط©"
+        return True, "سيولة مقبولة"
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط³ظٹظˆظ„ط©: {e}")
-        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
+        logger.error(f"خطأ فحص السيولة: {e}")
+        return True, "خطأ - تم التجاوز"
 
 
 # ==================== Funding Rate + Open Interest ====================
@@ -540,7 +540,7 @@ def get_funding_rate(symbol):
         data = client_obj.futures_mark_price(symbol=symbol)
         return float(data.get('lastFundingRate', 0)) * 100
     except Exception as e:
-        logger.error(f"ط®ط·ط£ funding rate ظ„ظ€ {symbol}: {e}")
+        logger.error(f"خطأ funding rate لـ {symbol}: {e}")
         return None
 
 
@@ -558,11 +558,11 @@ def get_open_interest_trend(symbol, period='5m', limit=6):
             return None
         return round(((newest - oldest) / oldest) * 100, 3)
     except Exception as e:
-        logger.error(f"ط®ط·ط£ Open Interest ظ„ظ€ {symbol}: {e}")
+        logger.error(f"خطأ Open Interest لـ {symbol}: {e}")
         return None
 
 
-# ==================== ط§ظ„ط§ط±طھط¨ط§ط· ====================
+# ==================== الارتباط ====================
 
 def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
     try:
@@ -593,14 +593,14 @@ def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
             return 0.0
         return round(cov / (std_a * std_b), 3)
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ط­ط³ط§ط¨ ط§ظ„ط§ط±طھط¨ط§ط· {symbol_a}/{symbol_b}: {e}")
+        logger.error(f"خطأ حساب الارتباط {symbol_a}/{symbol_b}: {e}")
         return 0.0
 
 
 def check_correlation_exposure(symbol, direction, open_positions):
     try:
         if not ENABLE_CORRELATION_FILTER or not open_positions:
-            return True, "ظپظ„طھط± ط§ظ„ط§ط±طھط¨ط§ط· ظ…ط¹ط·ظ„"
+            return True, "فلتر الارتباط معطل"
 
         for pos in open_positions:
             other_symbol = pos.get('symbol')
@@ -612,24 +612,24 @@ def check_correlation_exposure(symbol, direction, open_positions):
 
             corr = get_price_correlation(symbol, other_symbol)
             if abs(corr) >= MAX_CORRELATION:
-                return False, f"ط§ط±طھط¨ط§ط· ط¹ط§ظ„ظچ ({corr:.2f}) ظ…ط¹ {other_symbol}"
+                return False, f"ارتباط عالٍ ({corr:.2f}) مع {other_symbol}"
 
-        return True, "ط§ظ„طھط¹ط±ط¶ ط¶ظ…ظ† ط§ظ„ط­ط¯ظˆط¯"
+        return True, "التعرض ضمن الحدود"
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط§ط±طھط¨ط§ط·: {e}")
-        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
+        logger.error(f"خطأ فحص الارتباط: {e}")
+        return True, "خطأ - تم التجاوز"
 
 
-# ==================== ظ‚ط§ط·ط¹ ط¯ط§ط¦ط±ط© ط§ظ„ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…ظٹط© ====================
+# ==================== قاطع دائرة الخسارة اليومية ====================
 
 def check_daily_drawdown():
     try:
         if not ENABLE_DAILY_DRAWDOWN_LIMIT:
-            return True, "ظ…ط¹ط·ظ„"
+            return True, "معطل"
 
         client_obj = get_client()
         if not client_obj:
-            return True, "ظ„ط§ ظٹظˆط¬ط¯ ط§طھطµط§ظ„"
+            return True, "لا يوجد اتصال"
 
         account = client_obj.futures_account()
         balance = 0.0
@@ -639,31 +639,31 @@ def check_daily_drawdown():
                 break
 
         if balance <= 0:
-            return True, "ط±طµظٹط¯ ط؛ظٹط± ظ…طھط§ط­"
+            return True, "رصيد غير متاح"
 
         try:
             import trade_memory
             today_pnl = trade_memory.get_today_pnl()
         except Exception as e:
-            logger.warning(f"âڑ ï¸ڈ طھط¹ط°ط± ط¬ظ„ط¨ PnL ط§ظ„ظٹظˆظ…: {e}")
-            return True, "طھط¹ط°ط± ط¬ظ„ط¨ ط§ظ„ط¨ظٹط§ظ†ط§طھ"
+            logger.warning(f"⚠️ تعذر جلب PnL اليوم: {e}")
+            return True, "تعذر جلب البيانات"
 
         if today_pnl >= 0:
-            return True, f"ط±ط¨ط­ ط§ظ„ظٹظˆظ…: {today_pnl:.2f}"
+            return True, f"ربح اليوم: {today_pnl:.2f}"
 
         loss_percent = (abs(today_pnl) / balance) * 100
 
         if loss_percent >= DAILY_MAX_LOSS_PERCENT:
-            return False, f"ًں›‘ ط®ط³ط§ط±ط© ظٹظˆظ…ظٹط© {loss_percent:.2f}% (ط§ظ„ط­ط¯: {DAILY_MAX_LOSS_PERCENT}%)"
+            return False, f"🛑 خسارة يومية {loss_percent:.2f}% (الحد: {DAILY_MAX_LOSS_PERCENT}%)"
 
-        return True, f"ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…: {loss_percent:.2f}%"
+        return True, f"خسارة اليوم: {loss_percent:.2f}%"
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…ظٹط©: {e}")
-        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
+        logger.error(f"خطأ فحص الخسارة اليومية: {e}")
+        return True, "خطأ - تم التجاوز"
 
 
-# ==================== ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL ====================
+# ==================== التحقق من TP/SL ====================
 
 def verify_tp_sl_created(symbol, position_side):
     try:
@@ -693,7 +693,7 @@ def verify_tp_sl_created(symbol, position_side):
         return has_tp, has_sl, details
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپظٹ ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL: {e}")
+        logger.error(f"خطأ في التحقق من TP/SL: {e}")
         return False, False, {}
 
 
@@ -711,27 +711,27 @@ def create_order_with_retry(order_params, max_retries=None):
     for attempt in range(max_retries):
         try:
             order = client_obj.futures_create_order(**order_params)
-            logger.info(f"âœ… ط£ظ…ط± ظ†ط§ط¬ط­ (ظ…ط­ط§ظˆظ„ط© {attempt+1})")
+            logger.info(f"✅ أمر ناجح (محاولة {attempt+1})")
             return order
         except BinanceAPIException as e:
-            logger.warning(f"âڑ ï¸ڈ ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e.code} - {e.message}")
+            logger.warning(f"⚠️ محاولة {attempt+1}/{max_retries} فشلت: {e.code} - {e.message}")
 
             if e.code in [-1111, -1102, -2019]:
-                logger.error(f"â‌Œ ط®ط·ط£ ط¯ط§ط¦ظ… - ط¥ظٹظ‚ط§ظپ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ")
+                logger.error(f"❌ خطأ دائم - إيقاف المحاولات")
                 return None
 
             if attempt < max_retries - 1:
                 time.sleep(TP_SL_RETRY_DELAY_SECONDS)
         except Exception as e:
-            logger.warning(f"âڑ ï¸ڈ ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e}")
+            logger.warning(f"⚠️ محاولة {attempt+1}/{max_retries} فشلت: {e}")
             if attempt < max_retries - 1:
                 time.sleep(TP_SL_RETRY_DELAY_SECONDS)
 
-    logger.error(f"â‌Œ ظپط´ظ„ ط¬ظ…ظٹط¹ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ ({max_retries})")
+    logger.error(f"❌ فشل جميع المحاولات ({max_retries})")
     return None
 
 
-# ==================== ط¥ط؛ظ„ط§ظ‚ ط§ظ„طµظپظ‚ط§طھ ====================
+# ==================== إغلاق الصفقات ====================
 
 def close_position_safe(symbol, position_side):
     try:
@@ -747,7 +747,7 @@ def close_position_safe(symbol, position_side):
                 break
 
         if not position:
-            logger.error(f"ظ„ط§ طµظپظ‚ط©: {symbol} {position_side}")
+            logger.error(f"لا صفقة: {symbol} {position_side}")
             return False
 
         quantity = abs(float(position["positionAmt"]))
@@ -782,7 +782,7 @@ def close_position_safe(symbol, position_side):
                 positionSide=position_side,
                 reduceOnly="true"
             )
-            logger.info(f"âœ… ط¥ط؛ظ„ط§ظ‚: {symbol} {position_side}")
+            logger.info(f"✅ إغلاق: {symbol} {position_side}")
             remove_trailing_sl_tracking(symbol, position_side)
             return True
         except BinanceAPIException as e:
@@ -802,7 +802,7 @@ def close_position_safe(symbol, position_side):
             return False
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ط¥ط؛ظ„ط§ظ‚: {e}")
+        logger.error(f"خطأ إغلاق: {e}")
         return False
 
 
@@ -924,7 +924,7 @@ def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=Non
             'created_at': time.time()
         }
 
-        logger.info(f"âœ… Trailing SL: {symbol} {position_side}")
+        logger.info(f"✅ Trailing SL: {symbol} {position_side}")
         return True
     except:
         return False
@@ -960,19 +960,19 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
         result = create_order_with_retry(order_params)
 
         if result:
-            logger.info(f"âœ… SL ظ…ط­ط¯ط«: {formatted_sl}")
+            logger.info(f"✅ SL محدث: {formatted_sl}")
             return True
 
-        logger.error(f"â‌Œ ظپط´ظ„ طھط­ط¯ظٹط« SL")
+        logger.error(f"❌ فشل تحديث SL")
         return False
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return False
 
 
 def update_trailing_sl(symbol, position_side, current_price):
-    """v4.0: Breakeven ط¨ط¹ط¯ TP1"""
+    """v4.0: Breakeven بعد TP1"""
     try:
         if not TRAILING_SL_ENABLED:
             return False
@@ -999,7 +999,7 @@ def update_trailing_sl(symbol, position_side, current_price):
             if current_price < data['lowest_price']:
                 data['lowest_price'] = current_price
 
-        # Breakeven ط¨ط¹ط¯ TP1
+        # Breakeven بعد TP1
         tp1_level = TP_MULTIPLE_LEVELS[0]
 
         if not data['breakeven_set'] and profit_percent >= tp1_level:
@@ -1012,9 +1012,9 @@ def update_trailing_sl(symbol, position_side, current_price):
                 data['current_sl'] = breakeven_price
                 data['breakeven_set'] = True
                 updated = True
-                logger.info(f"ًں”’ {symbol} - Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
+                logger.info(f"🔒 {symbol} - Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
 
-        # Trailing ط¨ط¹ط¯ Breakeven
+        # Trailing بعد Breakeven
         if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
             if position_side == "LONG":
                 new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
@@ -1093,7 +1093,7 @@ def get_trailing_sl_status():
         return {'active_positions': 0, 'positions': {}}
 
 
-# ==================== ط§ظ„ط­ظ…ط§ظٹط© ====================
+# ==================== الحماية ====================
 
 def record_trade_result(profit):
     global _consecutive_losses, _pause_until
@@ -1101,15 +1101,15 @@ def record_trade_result(profit):
     try:
         if profit < 0:
             _consecutive_losses += 1
-            logger.warning(f"âڑ ï¸ڈ ط®ط³ط§ط±ط©: {_consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
+            logger.warning(f"⚠️ خسارة: {_consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
 
             if _consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
                 _pause_until = time.time() + (PAUSE_DURATION_MINUTES * 60)
-                logger.warning(f"ًں›‘ طھظˆظ‚ظپ {PAUSE_DURATION_MINUTES} ط¯ظ‚ظٹظ‚ط©")
+                logger.warning(f"🛑 توقف {PAUSE_DURATION_MINUTES} دقيقة")
                 return True
         else:
             if _consecutive_losses > 0:
-                logger.info("âœ… ط±ط¨ط­ - ط¥ط¹ط§ط¯ط© طھط¹ظٹظٹظ†")
+                logger.info("✅ ربح - إعادة تعيين")
             _consecutive_losses = 0
 
         return False
@@ -1127,7 +1127,7 @@ def is_trading_paused():
         current_time = time.time()
         if current_time >= _pause_until:
             _pause_until = 0
-            logger.info("âœ… ط§ظ†طھظ‡ظ‰ ط§ظ„طھظˆظ‚ظپ")
+            logger.info("✅ انتهى التوقف")
             return False, 0
         else:
             remaining = int((_pause_until - current_time) / 60)
@@ -1140,7 +1140,7 @@ def get_consecutive_losses():
     return _consecutive_losses
 
 
-# ==================== SL ط¯ظٹظ†ط§ظ…ظٹظƒظٹ ====================
+# ==================== SL ديناميكي ====================
 
 def calculate_dynamic_sl(symbol, entry_price, position_side):
     try:
@@ -1195,7 +1195,7 @@ def calculate_dynamic_sl(symbol, entry_price, position_side):
         return sl_price, SL_PERCENT
 
 
-# ==================== TP ط§ظ„ظ…طھط¹ط¯ط¯ ====================
+# ==================== TP المتعدد ====================
 
 def calculate_tp_price(position_side, entry_price, tp_percent):
     if position_side == "LONG":
@@ -1212,7 +1212,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
         ratios_sum = sum(tp_ratios)
         if abs(ratios_sum - 1.0) > 0.01:
-            logger.error(f"â‌Œ ظ…ط¬ظ…ظˆط¹ ظ†ط³ط¨ TP = {ratios_sum} ظٹط¬ط¨ ط£ظ† ظٹظƒظˆظ† 1.0")
+            logger.error(f"❌ مجموع نسب TP = {ratios_sum} يجب أن يكون 1.0")
             return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
 
         results = {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
@@ -1225,7 +1225,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
             formatted_sl = format_price_for_binance(symbol, sl_price)
 
             if formatted_sl:
-                logger.info(f"ًں“ٹ ظ…ط­ط§ظˆظ„ط© ط¥ظ†ط´ط§ط، SL @ {formatted_sl}")
+                logger.info(f"📊 محاولة إنشاء SL @ {formatted_sl}")
 
                 sl_params = {
                     'symbol': symbol,
@@ -1244,24 +1244,24 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     results['sl_order_id'] = sl_order['orderId']
                     results['sl_price'] = formatted_sl
                     results['sl_percent'] = actual_sl_percent
-                    logger.info(f"âœ… SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
+                    logger.info(f"✅ SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
                 else:
-                    logger.error(f"â‌Œ ظپط´ظ„ ط¥ظ†ط´ط§ط، SL")
+                    logger.error(f"❌ فشل إنشاء SL")
 
-        # TP ظ…طھط¹ط¯ط¯
+        # TP متعدد
         for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):
             level_quantity = total_quantity * ratio
             level_quantity = _round_quantity(symbol, level_quantity)
 
             if level_quantity <= 0:
-                logger.warning(f"âڑ ï¸ڈ TP{i+1}: ظƒظ…ظٹط© طµظپط±ظٹط©")
+                logger.warning(f"⚠️ TP{i+1}: كمية صفرية")
                 continue
 
             tp_price = calculate_tp_price(position_side, entry_price, tp_percent)
             formatted_tp = format_price_for_binance(symbol, tp_price)
 
             if formatted_tp:
-                logger.info(f"ًں“ٹ ظ…ط­ط§ظˆظ„ط© ط¥ظ†ط´ط§ط، TP{i+1} @ {formatted_tp}")
+                logger.info(f"📊 محاولة إنشاء TP{i+1} @ {formatted_tp}")
 
                 tp_params = {
                     'symbol': symbol,
@@ -1286,9 +1286,9 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                         'success': True
                     })
                     results['total_tp_quantity'] += level_quantity
-                    logger.info(f"âœ… TP{i+1}: {tp_percent}% @ {formatted_tp}")
+                    logger.info(f"✅ TP{i+1}: {tp_percent}% @ {formatted_tp}")
                 else:
-                    logger.error(f"â‌Œ ظپط´ظ„ TP{i+1}")
+                    logger.error(f"❌ فشل TP{i+1}")
                     results['tp_orders'].append({
                         'level': i + 1,
                         'tp_percent': tp_percent,
@@ -1298,7 +1298,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
         return results
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
 
 
@@ -1318,19 +1318,19 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
 
         price = get_price(symbol)
         if not price:
-            logger.error(f"ظ„ط§ ظٹظ…ظƒظ† ط§ظ„ط­طµظˆظ„ ط¹ظ„ظ‰ ط³ط¹ط± {symbol}")
+            logger.error(f"لا يمكن الحصول على سعر {symbol}")
             return None
 
         notional = float(amount_usdt) * float(leverage)
         total_qty = _round_quantity(symbol, notional / price)
 
         if total_qty <= 0:
-            logger.error(f"ظƒظ…ظٹط© ط؛ظٹط± طµط§ظ„ط­ط©: {total_qty}")
+            logger.error(f"كمية غير صالحة: {total_qty}")
             return None
 
         client_obj.futures_change_leverage(symbol=symbol, leverage=int(leverage))
 
-        logger.info(f"ًںڑ€ ظپطھط­ طµظپظ‚ط©: {symbol} {side} {total_qty}")
+        logger.info(f"🚀 فتح صفقة: {symbol} {side} {total_qty}")
 
         main_order = client_obj.futures_create_order(
             symbol=symbol,
@@ -1341,10 +1341,10 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
         )
 
         if not main_order:
-            logger.error("â‌Œ ظپط´ظ„ ظپطھط­ ط§ظ„طµظپظ‚ط©")
+            logger.error("❌ فشل فتح الصفقة")
             return None
 
-        logger.info(f"âœ… طھظ… ظپطھط­ ط§ظ„طµظپظ‚ط©: {main_order['orderId']}")
+        logger.info(f"✅ تم فتح الصفقة: {main_order['orderId']}")
 
         time.sleep(5)
 
@@ -1358,7 +1358,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
                 actual_qty = abs(float(pos["positionAmt"]))
                 break
 
-        logger.info(f"ًں“ٹ ط¥ظ†ط´ط§ط، TP/SL...")
+        logger.info(f"📊 إنشاء TP/SL...")
 
         tp_results = create_multiple_tp_orders(
             symbol=symbol,
@@ -1374,10 +1374,10 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
 
         has_tp, has_sl, details = verify_tp_sl_created(symbol, positionSide)
 
-        logger.info(f"ًں”چ ط§ظ„طھط­ظ‚ظ‚: TP={has_tp} ({details.get('tp_count', 0)}), SL={has_sl} ({details.get('sl_count', 0)})")
+        logger.info(f"🔍 التحقق: TP={has_tp} ({details.get('tp_count', 0)}), SL={has_sl} ({details.get('sl_count', 0)})")
 
         if VERIFY_TP_SL_AFTER_CREATION and not has_sl:
-            logger.error(f"ًںڑ¨ ظپط´ظ„ SL - ط¥ط؛ظ„ط§ظ‚ ط§ظ„طµظپظ‚ط© ظپظˆط±ط§ظ‹!")
+            logger.error(f"🚨 فشل SL - إغلاق الصفقة فوراً!")
 
             close_position_safe(symbol, positionSide)
 
@@ -1418,7 +1418,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
         }
 
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return None
 
 
@@ -1426,13 +1426,13 @@ def place_market_order_with_tp_sl(symbol, side, amount_usdt, leverage):
     return place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage)
 
 
-# ==================== ط§ظ„ط£ط±ط¨ط§ط­ ====================
+# ==================== الأرباح ====================
 
 def get_accurate_daily_pnl():
     try:
         client_obj = get_client()
         if not client_obj:
-            return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'ط®ط·ط£'}
+            return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'خطأ'}
 
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + timedelta(days=1)
@@ -1464,10 +1464,10 @@ def get_accurate_daily_pnl():
             'daily_pnl': daily_pnl,
             'today_trades': today_trades,
             'trade_count': len(today_trades),
-            'data_quality': 'ظ…طµط­ط­'
+            'data_quality': 'مصحح'
         }
     except:
-        return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'ط®ط·ط£'}
+        return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'خطأ'}
 
 
 def get_accurate_weekly_pnl():
@@ -1475,7 +1475,7 @@ def get_accurate_weekly_pnl():
         client_obj = get_client()
         if not client_obj:
             return {'weekly_pnl': 0.0, 'weekly_trades': [], 'trade_count': 0,
-                    'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'ط®ط·ط£'}
+                    'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'خطأ'}
 
         today = datetime.now()
         start = today - timedelta(days=today.weekday())
@@ -1512,11 +1512,11 @@ def get_accurate_weekly_pnl():
             'week_start': start.strftime("%Y-%m-%d"),
             'week_end': end.strftime("%Y-%m-%d"),
             'week_number': today.isocalendar()[1],
-            'data_quality': 'ظ…طµط­ط­'
+            'data_quality': 'مصحح'
         }
     except:
         return {'weekly_pnl': 0.0, 'weekly_trades': [], 'trade_count': 0,
-                'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'ط®ط·ط£'}
+                'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'خطأ'}
 
 
 def get_accurate_monthly_pnl():
@@ -1525,7 +1525,7 @@ def get_accurate_monthly_pnl():
         if not client_obj:
             return {'monthly_pnl': 0.0, 'monthly_trades': [], 'trade_count': 0,
                     'month_start': 'N/A', 'month_end': 'N/A', 'month_name': 'Unknown',
-                    'data_quality': 'ط®ط·ط£', 'avg_trade_pnl': 0}
+                    'data_quality': 'خطأ', 'avg_trade_pnl': 0}
 
         today = datetime.now()
         start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -1567,39 +1567,39 @@ def get_accurate_monthly_pnl():
             'month_start': start.strftime("%Y-%m-%d"),
             'month_end': end.strftime("%Y-%m-%d"),
             'month_name': today.strftime("%B"),
-            'data_quality': 'ظ…طµط­ط­',
+            'data_quality': 'مصحح',
             'avg_trade_pnl': avg
         }
     except:
         return {'monthly_pnl': 0.0, 'monthly_trades': [], 'trade_count': 0,
                 'month_start': 'N/A', 'month_end': 'N/A', 'month_name': 'Unknown',
-                'data_quality': 'ط®ط·ط£', 'avg_trade_pnl': 0}
+                'data_quality': 'خطأ', 'avg_trade_pnl': 0}
 
 
-def format_pnl_report(pnl_data, period_type="ظٹظˆظ…ظٹ"):
+def format_pnl_report(pnl_data, period_type="يومي"):
     try:
-        if period_type == "ظٹظˆظ…ظٹ":
+        if period_type == "يومي":
             pnl = pnl_data.get('daily_pnl', 0)
             count = pnl_data.get('trade_count', 0)
-            title = f"ًں“… ط§ظ„ظٹظˆظ… - {datetime.now().strftime('%Y-%m-%d')}"
-        elif period_type == "ط£ط³ط¨ظˆط¹ظٹ":
+            title = f"📅 اليوم - {datetime.now().strftime('%Y-%m-%d')}"
+        elif period_type == "أسبوعي":
             pnl = pnl_data.get('weekly_pnl', 0)
             count = pnl_data.get('trade_count', 0)
-            title = f"ًں“ٹ ط§ظ„ط£ط³ط¨ظˆط¹ {pnl_data.get('week_number', 0)}"
+            title = f"📊 الأسبوع {pnl_data.get('week_number', 0)}"
         else:
             pnl = pnl_data.get('monthly_pnl', 0)
             count = pnl_data.get('trade_count', 0)
-            title = f"ًں“ˆ {pnl_data.get('month_name', 'Unknown')}"
+            title = f"📈 {pnl_data.get('month_name', 'Unknown')}"
 
-        emoji = "ًںں¢" if pnl > 0 else "ًں”´" if pnl < 0 else "âڑھ"
-        status = "ط±ط¨ط­" if pnl > 0 else "ط®ط³ط§ط±ط©" if pnl < 0 else "طھط¹ط§ط¯ظ„"
+        emoji = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
+        status = "ربح" if pnl > 0 else "خسارة" if pnl < 0 else "تعادل"
 
         return (f"{title}\n\n"
-                f"{emoji} <b>ط§ظ„ط£ط±ط¨ط§ط­:</b> {pnl:.2f} USDT\n"
-                f"ًں“ٹ <b>ط§ظ„طµظپظ‚ط§طھ:</b> {count}\n"
-                f"ًں’¹ <b>ط§ظ„ط­ط§ظ„ط©:</b> {status}")
+                f"{emoji} <b>الأرباح:</b> {pnl:.2f} USDT\n"
+                f"📊 <b>الصفقات:</b> {count}\n"
+                f"💹 <b>الحالة:</b> {status}")
     except:
-        return "â‌Œ ط®ط·ط£"
+        return "❌ خطأ"
 
 
 def recreate_missing_tp(symbol, position_side, entry_price, quantity):
@@ -1637,27 +1637,27 @@ def recreate_missing_tp(symbol, position_side, entry_price, quantity):
             tp_order = create_order_with_retry(tp_params)
             if tp_order:
                 created_any = True
-                logger.info(f"âœ… TP{i+1} ظ„ظ€ {symbol} @ {formatted_tp}")
+                logger.info(f"✅ TP{i+1} لـ {symbol} @ {formatted_tp}")
             else:
-                logger.error(f"â‌Œ ظپط´ظ„ TP{i+1} ظ„ظ€ {symbol}")
+                logger.error(f"❌ فشل TP{i+1} لـ {symbol}")
 
         return created_any
     except Exception as e:
-        logger.error(f"ط®ط·ط£ ظپظٹ ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، TP ظ„ظ€ {symbol}: {e}")
+        logger.error(f"خطأ في إعادة إنشاء TP لـ {symbol}: {e}")
         return False
 
 
 def check_and_add_tp_sl_to_existing_positions():
     """
-    ًں”¥ v4.1.4: ط¥طµظ„ط§ط­ TP/SL ظ„طµظپظ‚ط§طھ ط§ظ„ط¨ظˆطھ ظپظ‚ط·
-    ظٹطھط¬ط§ظ‡ظ„ ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط© طھظ…ط§ظ…ط§ظ‹
+    🔥 v4.1.4: إصلاح TP/SL لصفقات البوت فقط
+    يتجاهل الصفقات اليدوية تماماً
     """
     try:
-        # ًں”¥ ظ†ط£ط®ط° ظپظ‚ط· ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظ…ط³ط¬ظ„ط© ظپظٹ open_positions.json
+        # 🔥 نأخذ فقط الصفقات المسجلة في open_positions.json
         state_file = "open_positions.json"
 
         if not os.path.exists(state_file):
-            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ ظ…ط³ط¬ظ„ط©")
+            logger.info("ℹ️ لا توجد صفقات بوت مسجلة")
             return 0
 
         with open(state_file, "r", encoding="utf-8") as f:
@@ -1670,7 +1670,7 @@ def check_and_add_tp_sl_to_existing_positions():
         }
 
         if not bot_owned_keys:
-            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ")
+            logger.info("ℹ️ لا توجد صفقات بوت")
             return 0
 
         all_positions = get_open_positions()
@@ -1680,10 +1680,10 @@ def check_and_add_tp_sl_to_existing_positions():
         ]
 
         if not bot_positions:
-            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ ظ…ظپطھظˆط­ط©")
+            logger.info("ℹ️ لا توجد صفقات بوت مفتوحة")
             return 0
 
-        logger.info(f"ًں”§ ظپط­طµ {len(bot_positions)} طµظپظ‚ط© ط¨ظˆطھ (طھط¬ط§ظ‡ظ„ {len(all_positions) - len(bot_positions)} طµظپظ‚ط© ظٹط¯ظˆظٹط©)")
+        logger.info(f"🔧 فحص {len(bot_positions)} صفقة بوت (تجاهل {len(all_positions) - len(bot_positions)} صفقة يدوية)")
 
         fixed = 0
 
@@ -1694,7 +1694,7 @@ def check_and_add_tp_sl_to_existing_positions():
             has_tp, has_sl, details = verify_tp_sl_created(symbol, position_side)
 
             if not has_sl:
-                logger.warning(f"âڑ ï¸ڈ {symbol} ط¨ط¯ظˆظ† SL (طµظپظ‚ط© ط¨ظˆطھ) - ظ…ط­ط§ظˆظ„ط© ط¥ط¹ط§ط¯ط© ط§ظ„ط¥ظ†ط´ط§ط،")
+                logger.warning(f"⚠️ {symbol} بدون SL (صفقة بوت) - محاولة إعادة الإنشاء")
 
                 entry_price = float(position["entryPrice"])
                 quantity = abs(float(position["positionAmt"]))
@@ -1712,7 +1712,7 @@ def check_and_add_tp_sl_to_existing_positions():
                 )
 
                 if already_past_sl:
-                    logger.error(f"ًں›‘ {symbol} طھط®ط·ظ‰ SL - ط¥ط؛ظ„ط§ظ‚ ظپظˆط±ظٹ")
+                    logger.error(f"🛑 {symbol} تخطى SL - إغلاق فوري")
                     if close_position_safe(symbol, position_side):
                         fixed += 1
                     continue
@@ -1733,32 +1733,32 @@ def check_and_add_tp_sl_to_existing_positions():
 
                 if sl_order:
                     fixed += 1
-                    logger.info(f"âœ… طھظ… ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، SL ظ„ظ€ {symbol}")
+                    logger.info(f"✅ تم إعادة إنشاء SL لـ {symbol}")
                 elif CLOSE_ON_TP_SL_FAIL:
-                    logger.error(f"â‌Œ ظپط´ظ„ SL ظ„ظ€ {symbol} - ط¥ط؛ظ„ط§ظ‚ ظˆظ‚ط§ط¦ظٹ")
+                    logger.error(f"❌ فشل SL لـ {symbol} - إغلاق وقائي")
                     if close_position_safe(symbol, position_side):
-                        logger.info(f"âœ… طھظ… ط¥ط؛ظ„ط§ظ‚ {symbol} ظˆظ‚ط§ط¦ظٹط§ظ‹")
+                        logger.info(f"✅ تم إغلاق {symbol} وقائياً")
 
             elif not has_tp:
-                logger.warning(f"âڑ ï¸ڈ {symbol} ط¨ط¯ظˆظ† TP (طµظپظ‚ط© ط¨ظˆطھ) - ظ…ط­ط§ظˆظ„ط© ط¥ط¹ط§ط¯ط© ط§ظ„ط¥ظ†ط´ط§ط،")
+                logger.warning(f"⚠️ {symbol} بدون TP (صفقة بوت) - محاولة إعادة الإنشاء")
 
                 entry_price = float(position["entryPrice"])
                 quantity = abs(float(position["positionAmt"]))
 
                 if recreate_missing_tp(symbol, position_side, entry_price, quantity):
                     fixed += 1
-                    logger.info(f"âœ… طھظ… ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، TP ظ„ظ€ {symbol}")
+                    logger.info(f"✅ تم إعادة إنشاء TP لـ {symbol}")
 
         return fixed
     except Exception as e:
-        logger.error(f"ط®ط·ط£: {e}")
+        logger.error(f"خطأ: {e}")
         return 0
 
 
 if __name__ == "__main__":
-    print("ًںڑ€ core_functions.py v4.1.4")
-    print(f"âœ… ط§ظ„ط§طھطµط§ظ„: {'ظ†ط§ط¬ط­' if client else 'ظپط´ظ„'}")
-    print(f"ًں”چ ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL: {'ظ…ظپط¹ظ„' if VERIFY_TP_SL_AFTER_CREATION else 'ظ…ط¹ط·ظ„'}")
-    print(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط©: {'ظ…ظپط¹ظ„' if ENABLE_VOLUME_FILTER else 'ظ…ط¹ط·ظ„'}")
-    print(f"âڑ، Cache ط§ظ„ط±ظ…ظˆط²: {_SYMBOLS_CACHE_DURATION} ط«ط§ظ†ظٹط©")
-    print(f"ًں”¥ طھظ…ظٹظٹط² ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط©: âœ…")
+    print("🚀 core_functions.py v4.1.4")
+    print(f"✅ الاتصال: {'ناجح' if client else 'فشل'}")
+    print(f"🔍 التحقق من TP/SL: {'مفعل' if VERIFY_TP_SL_AFTER_CREATION else 'معطل'}")
+    print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'}")
+    print(f"⚡ Cache الرموز: {_SYMBOLS_CACHE_DURATION} ثانية")
+    print(f"🔥 تمييز الصفقات اليدوية: ✅")
