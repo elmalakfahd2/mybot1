@@ -192,7 +192,7 @@ REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
 # ==================== ⚡ البيانات اللحظية (WebSocket) v4.1 ====================
-ENABLE_REALTIME_DATA = True
+ENABLE_REALTIME_DATA = False
 REALTIME_ADJUSTMENT_ENABLED = True
 
 # نطاق التعديل
