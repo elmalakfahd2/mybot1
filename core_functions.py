@@ -1,11 +1,11 @@
 # ==================================================
-# 📁 ملف: core_functions.py - الإصدار v4.1.4
-# 🔧 التعديلات v4.1.4:
-#    - 🔥 check_and_add_tp_sl_to_existing_positions يتجاهل الصفقات اليدوية
-#    - 🔥 Cache الرموز (10 دقائق)
-# 🔧 التعديلات v4.0:
-#    - Breakeven بعد TP1 + هامش 0.1%
-# 📅 التاريخ: 2026-09-19
+# ًں“پ ظ…ظ„ظپ: core_functions.py - ط§ظ„ط¥طµط¯ط§ط± v4.1.4
+# ًں”§ ط§ظ„طھط¹ط¯ظٹظ„ط§طھ v4.1.4:
+#    - ًں”¥ check_and_add_tp_sl_to_existing_positions ظٹطھط¬ط§ظ‡ظ„ ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط©
+#    - ًں”¥ Cache ط§ظ„ط±ظ…ظˆط² (10 ط¯ظ‚ط§ط¦ظ‚)
+# ًں”§ ط§ظ„طھط¹ط¯ظٹظ„ط§طھ v4.0:
+#    - Breakeven ط¨ط¹ط¯ TP1 + ظ‡ط§ظ…ط´ 0.1%
+# ًں“… ط§ظ„طھط§ط±ظٹط®: 2026-09-19
 # ==================================================
 
 import logging
@@ -24,12 +24,12 @@ from config import *
 logger = logging.getLogger("core")
 _client = None
 
-# ==================== 🔥 Cache للرموز ====================
+# ==================== ًں”¥ Cache ظ„ظ„ط±ظ…ظˆط² ====================
 _symbols_cache = None
 _symbols_cache_time = 0
-_SYMBOLS_CACHE_DURATION = 600  # 10 دقائق
+_SYMBOLS_CACHE_DURATION = 600  # 10 ط¯ظ‚ط§ط¦ظ‚
 
-# ==================== 🔥 Algo Order API ====================
+# ==================== ًں”¥ Algo Order API ====================
 CONDITIONAL_ORDER_TYPES = {
     'STOP_MARKET', 'TAKE_PROFIT_MARKET', 'STOP', 'TAKE_PROFIT', 'TRAILING_STOP_MARKET'
 }
@@ -39,7 +39,7 @@ _FUTURES_BASE_URL = "https://testnet.binancefuture.com" if 'USE_TESTNET' in glob
 
 
 def _algo_signed_request(method, path, params=None):
-    """طلب موقّع مباشرة لـ Algo Order API"""
+    """ط·ظ„ط¨ ظ…ظˆظ‚ظ‘ط¹ ظ…ط¨ط§ط´ط±ط© ظ„ظ€ Algo Order API"""
     params = dict(params or {})
     params['timestamp'] = int(time.time() * 1000)
     params.setdefault('recvWindow', 10000)
@@ -65,7 +65,7 @@ def _algo_signed_request(method, path, params=None):
 
 
 def create_algo_order(order_params, max_retries=None):
-    """إنشاء أمر شرطي عبر Algo Order API الجديد"""
+    """ط¥ظ†ط´ط§ط، ط£ظ…ط± ط´ط±ط·ظٹ ط¹ط¨ط± Algo Order API ط§ظ„ط¬ط¯ظٹط¯"""
     if max_retries is None:
         max_retries = TP_SL_MAX_RETRIES
 
@@ -83,42 +83,42 @@ def create_algo_order(order_params, max_retries=None):
             status_code, data = _algo_signed_request('post', '/fapi/v1/algoOrder', params)
 
             if status_code == 200 and 'algoId' in data:
-                logger.info(f"✅ أمر Algo ناجح (محاولة {attempt+1}) - algoId={data['algoId']}")
+                logger.info(f"âœ… ط£ظ…ط± Algo ظ†ط§ط¬ط­ (ظ…ط­ط§ظˆظ„ط© {attempt+1}) - algoId={data['algoId']}")
                 data['orderId'] = data['algoId']
                 return data
 
             code = data.get('code')
             msg = data.get('msg', str(data))
-            logger.warning(f"⚠️ Algo محاولة {attempt+1}/{max_retries} فشلت: {code} - {msg}")
+            logger.warning(f"âڑ ï¸ڈ Algo ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {code} - {msg}")
 
             if code in [-1111, -1102, -2019]:
-                logger.error("❌ خطأ دائم - إيقاف المحاولات")
+                logger.error("â‌Œ ط®ط·ط£ ط¯ط§ط¦ظ… - ط¥ظٹظ‚ط§ظپ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ")
                 return None
 
         except Exception as e:
-            logger.warning(f"⚠️ Algo محاولة {attempt+1}/{max_retries} فشلت: {e}")
+            logger.warning(f"âڑ ï¸ڈ Algo ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e}")
 
         if attempt < max_retries - 1:
             time.sleep(TP_SL_RETRY_DELAY_SECONDS)
 
-    logger.error(f"❌ فشل جميع محاولات Algo Order ({max_retries})")
+    logger.error(f"â‌Œ ظپط´ظ„ ط¬ظ…ظٹط¹ ظ…ط­ط§ظˆظ„ط§طھ Algo Order ({max_retries})")
     return None
 
 
 def cancel_algo_order(symbol, algo_id):
-    """إلغاء أمر شرطي عبر DELETE /fapi/v1/algoOrder"""
+    """ط¥ظ„ط؛ط§ط، ط£ظ…ط± ط´ط±ط·ظٹ ط¹ط¨ط± DELETE /fapi/v1/algoOrder"""
     try:
         status_code, data = _algo_signed_request(
             'delete', '/fapi/v1/algoOrder', {'algoId': algo_id}
         )
         return status_code == 200
     except Exception as e:
-        logger.warning(f"⚠️ فشل إلغاء Algo Order {algo_id}: {e}")
+        logger.warning(f"âڑ ï¸ڈ ظپط´ظ„ ط¥ظ„ط؛ط§ط، Algo Order {algo_id}: {e}")
         return False
 
 
 def get_open_algo_orders(symbol=None):
-    """الأوامر الشرطية المفتوحة"""
+    """ط§ظ„ط£ظˆط§ظ…ط± ط§ظ„ط´ط±ط·ظٹط© ط§ظ„ظ…ظپطھظˆط­ط©"""
     try:
         params = {'symbol': symbol} if symbol else {}
         status_code, data = _algo_signed_request('get', '/fapi/v1/openAlgoOrders', params)
@@ -129,7 +129,7 @@ def get_open_algo_orders(symbol=None):
             return data
         return []
     except Exception as e:
-        logger.error(f"خطأ في جلب Algo Orders المفتوحة: {e}")
+        logger.error(f"ط®ط·ط£ ظپظٹ ط¬ظ„ط¨ Algo Orders ط§ظ„ظ…ظپطھظˆط­ط©: {e}")
         return []
 
 
@@ -180,13 +180,13 @@ except NameError:
     BREAKEVEN_OFFSET_PERCENT = 0.1
 
 
-# ==================== تهيئة Binance ====================
+# ==================== طھظ‡ظٹط¦ط© Binance ====================
 
 def create_binance_client():
     global _client, _connection_retries
 
     try:
-        print("🚀 محاولة الاتصال بـ Binance Futures...")
+        print("ًںڑ€ ظ…ط­ط§ظˆظ„ط© ط§ظ„ط§طھطµط§ظ„ ط¨ظ€ Binance Futures...")
 
         if USE_TESTNET:
             client_obj = Client(
@@ -204,27 +204,27 @@ def create_binance_client():
             client_obj.futures_ping()
             server_time = client_obj.futures_time()
             if server_time:
-                print(f"✅ اتصال ناجح - {server_time['serverTime']}")
+                print(f"âœ… ط§طھطµط§ظ„ ظ†ط§ط¬ط­ - {server_time['serverTime']}")
                 _client = client_obj
                 _connection_retries = 0
                 return client_obj
         except Exception as e:
-            print(f"❌ خطأ اختبار: {e}")
+            print(f"â‌Œ ط®ط·ط£ ط§ط®طھط¨ط§ط±: {e}")
             raise
 
     except BinanceAPIException as e:
         _connection_retries += 1
-        print(f"❌ خطأ API ({_connection_retries}/{_MAX_RETRIES}): {e}")
+        print(f"â‌Œ ط®ط·ط£ API ({_connection_retries}/{_MAX_RETRIES}): {e}")
 
         if e.code == -1003:
-            print("🛑 حظر بسبب الوزن - انتظار 60 ثانية...")
+            print("ًں›‘ ط­ط¸ط± ط¨ط³ط¨ط¨ ط§ظ„ظˆط²ظ† - ط§ظ†طھط¸ط§ط± 60 ط«ط§ظ†ظٹط©...")
             time.sleep(60)
     except Exception as e:
         _connection_retries += 1
-        print(f"❌ خطأ ({_connection_retries}/{_MAX_RETRIES}): {e}")
+        print(f"â‌Œ ط®ط·ط£ ({_connection_retries}/{_MAX_RETRIES}): {e}")
 
     if _connection_retries < _MAX_RETRIES:
-        print("🔄 إعادة المحاولة...")
+        print("ًں”„ ط¥ط¹ط§ط¯ط© ط§ظ„ظ…ط­ط§ظˆظ„ط©...")
         time.sleep(5)
         return create_binance_client()
 
@@ -253,7 +253,7 @@ def get_client():
 client = get_client()
 
 
-# ==================== الحساب ====================
+# ==================== ط§ظ„ط­ط³ط§ط¨ ====================
 
 def get_account_mode():
     try:
@@ -293,7 +293,7 @@ def get_open_positions():
                 continue
         return positions
     except Exception as e:
-        logger.error(f"خطأ: {e}")
+        logger.error(f"ط®ط·ط£: {e}")
         return []
 
 
@@ -306,16 +306,16 @@ def get_open_orders(symbol=None):
             return client_obj.futures_get_open_orders(symbol=symbol)
         return client_obj.futures_get_open_orders()
     except Exception as e:
-        logger.error(f"خطأ: {e}")
+        logger.error(f"ط®ط·ط£: {e}")
         return []
 
 
-# ==================== get_all_futures_symbols محسّن ====================
+# ==================== get_all_futures_symbols ظ…ط­ط³ظ‘ظ† ====================
 
 def get_all_futures_symbols():
     """
-    🔥 Cache لمدة 10 دقائق
-    طلب واحد لكل التيكرز (بدل 528 طلب)
+    ًں”¥ Cache ظ„ظ…ط¯ط© 10 ط¯ظ‚ط§ط¦ظ‚
+    ط·ظ„ط¨ ظˆط§ط­ط¯ ظ„ظƒظ„ ط§ظ„طھظٹظƒط±ط² (ط¨ط¯ظ„ 528 ط·ظ„ط¨)
     """
     global _symbols_cache, _symbols_cache_time
 
@@ -323,13 +323,13 @@ def get_all_futures_symbols():
         current_time = time.time()
 
         if _symbols_cache is not None and (current_time - _symbols_cache_time) < _SYMBOLS_CACHE_DURATION:
-            logger.info(f"📊 فلتر السيولة (Cache): {len(_symbols_cache)} عملة")
+            logger.info(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط© (Cache): {len(_symbols_cache)} ط¹ظ…ظ„ط©")
             return _symbols_cache
 
         client_obj = get_client()
         if not client_obj:
             if _symbols_cache:
-                logger.warning("⚠️ فشل الاتصال - استخدام Cache قديم")
+                logger.warning("âڑ ï¸ڈ ظپط´ظ„ ط§ظ„ط§طھطµط§ظ„ - ط§ط³طھط®ط¯ط§ظ… Cache ظ‚ط¯ظٹظ…")
                 return _symbols_cache
             return []
 
@@ -354,12 +354,12 @@ def get_all_futures_symbols():
                     if volume_map.get(sym, 0) >= MIN_VOLUME_24H_USDT
                 ]
             except Exception as e:
-                logger.error(f"⚠️ فشل فلتر الحجم: {e}")
+                logger.error(f"âڑ ï¸ڈ ظپط´ظ„ ظپظ„طھط± ط§ظ„ط­ط¬ظ…: {e}")
                 filtered_syms = syms
         else:
             filtered_syms = syms
 
-        logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
+        logger.info(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط©: {len(filtered_syms)}/{len(syms)} ط¹ظ…ظ„ط© (ط­ط¯ ط£ط¯ظ†ظ‰: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
 
         _symbols_cache = filtered_syms
         _symbols_cache_time = current_time
@@ -368,13 +368,13 @@ def get_all_futures_symbols():
 
     except BinanceAPIException as e:
         if e.code == -1003:
-            logger.error("🛑 حظر بسبب الوزن - استخدام Cache إن وُجد")
+            logger.error("ًں›‘ ط­ط¸ط± ط¨ط³ط¨ط¨ ط§ظ„ظˆط²ظ† - ط§ط³طھط®ط¯ط§ظ… Cache ط¥ظ† ظˆظڈط¬ط¯")
             if _symbols_cache:
                 return _symbols_cache
-        logger.error(f"خطأ: {e}")
+        logger.error(f"ط®ط·ط£: {e}")
         return _symbols_cache if _symbols_cache else []
     except Exception as e:
-        logger.error(f"خطأ: {e}")
+        logger.error(f"ط®ط·ط£: {e}")
         return _symbols_cache if _symbols_cache else []
 
 
@@ -467,7 +467,7 @@ def format_price_for_binance(symbol, price):
         return round(price, 2) if price else None
 
 
-# ==================== تحليل دفتر الأوامر ====================
+# ==================== طھط­ظ„ظٹظ„ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ====================
 
 def get_order_book_analysis(symbol, depth_levels=20):
     try:
@@ -504,30 +504,30 @@ def get_order_book_analysis(symbol, depth_levels=20):
             'best_ask': best_ask
         }
     except Exception as e:
-        logger.error(f"خطأ في تحليل دفتر الأوامر لـ {symbol}: {e}")
+        logger.error(f"ط®ط·ط£ ظپظٹ طھط­ظ„ظٹظ„ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ظ„ظ€ {symbol}: {e}")
         return None
 
 
 def check_spread_and_liquidity(symbol, trade_usdt):
     try:
         if not ENABLE_ORDER_BOOK_FILTER:
-            return True, "فلتر دفتر الأوامر معطل"
+            return True, "ظپظ„طھط± ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط± ظ…ط¹ط·ظ„"
 
         ob = get_order_book_analysis(symbol)
         if not ob:
-            return False, "تعذر جلب دفتر الأوامر"
+            return False, "طھط¹ط°ط± ط¬ظ„ط¨ ط¯ظپطھط± ط§ظ„ط£ظˆط§ظ…ط±"
 
         if ob['spread_percent'] > MAX_SPREAD_PERCENT:
-            return False, f"سبريد واسع: {ob['spread_percent']:.3f}% (الحد: {MAX_SPREAD_PERCENT}%)"
+            return False, f"ط³ط¨ط±ظٹط¯ ظˆط§ط³ط¹: {ob['spread_percent']:.3f}% (ط§ظ„ط­ط¯: {MAX_SPREAD_PERCENT}%)"
 
         min_required_depth = trade_usdt * LEVERAGE * MIN_DEPTH_MULTIPLIER
         if ob['total_depth_usdt'] < min_required_depth:
-            return False, f"سيولة ضعيفة: {ob['total_depth_usdt']:.0f} USDT (المطلوب: {min_required_depth:.0f})"
+            return False, f"ط³ظٹظˆظ„ط© ط¶ط¹ظٹظپط©: {ob['total_depth_usdt']:.0f} USDT (ط§ظ„ظ…ط·ظ„ظˆط¨: {min_required_depth:.0f})"
 
-        return True, "سيولة مقبولة"
+        return True, "ط³ظٹظˆظ„ط© ظ…ظ‚ط¨ظˆظ„ط©"
     except Exception as e:
-        logger.error(f"خطأ فحص السيولة: {e}")
-        return True, "خطأ - تم التجاوز"
+        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط³ظٹظˆظ„ط©: {e}")
+        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
 
 
 # ==================== Funding Rate + Open Interest ====================
@@ -540,7 +540,7 @@ def get_funding_rate(symbol):
         data = client_obj.futures_mark_price(symbol=symbol)
         return float(data.get('lastFundingRate', 0)) * 100
     except Exception as e:
-        logger.error(f"خطأ funding rate لـ {symbol}: {e}")
+        logger.error(f"ط®ط·ط£ funding rate ظ„ظ€ {symbol}: {e}")
         return None
 
 
@@ -558,11 +558,11 @@ def get_open_interest_trend(symbol, period='5m', limit=6):
             return None
         return round(((newest - oldest) / oldest) * 100, 3)
     except Exception as e:
-        logger.error(f"خطأ Open Interest لـ {symbol}: {e}")
+        logger.error(f"ط®ط·ط£ Open Interest ظ„ظ€ {symbol}: {e}")
         return None
 
 
-# ==================== الارتباط ====================
+# ==================== ط§ظ„ط§ط±طھط¨ط§ط· ====================
 
 def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
     try:
@@ -593,14 +593,14 @@ def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
             return 0.0
         return round(cov / (std_a * std_b), 3)
     except Exception as e:
-        logger.error(f"خطأ حساب الارتباط {symbol_a}/{symbol_b}: {e}")
+        logger.error(f"ط®ط·ط£ ط­ط³ط§ط¨ ط§ظ„ط§ط±طھط¨ط§ط· {symbol_a}/{symbol_b}: {e}")
         return 0.0
 
 
 def check_correlation_exposure(symbol, direction, open_positions):
     try:
         if not ENABLE_CORRELATION_FILTER or not open_positions:
-            return True, "فلتر الارتباط معطل"
+            return True, "ظپظ„طھط± ط§ظ„ط§ط±طھط¨ط§ط· ظ…ط¹ط·ظ„"
 
         for pos in open_positions:
             other_symbol = pos.get('symbol')
@@ -612,24 +612,24 @@ def check_correlation_exposure(symbol, direction, open_positions):
 
             corr = get_price_correlation(symbol, other_symbol)
             if abs(corr) >= MAX_CORRELATION:
-                return False, f"ارتباط عالٍ ({corr:.2f}) مع {other_symbol}"
+                return False, f"ط§ط±طھط¨ط§ط· ط¹ط§ظ„ظچ ({corr:.2f}) ظ…ط¹ {other_symbol}"
 
-        return True, "التعرض ضمن الحدود"
+        return True, "ط§ظ„طھط¹ط±ط¶ ط¶ظ…ظ† ط§ظ„ط­ط¯ظˆط¯"
     except Exception as e:
-        logger.error(f"خطأ فحص الارتباط: {e}")
-        return True, "خطأ - تم التجاوز"
+        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط§ط±طھط¨ط§ط·: {e}")
+        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
 
 
-# ==================== قاطع دائرة الخسارة اليومية ====================
+# ==================== ظ‚ط§ط·ط¹ ط¯ط§ط¦ط±ط© ط§ظ„ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…ظٹط© ====================
 
 def check_daily_drawdown():
     try:
         if not ENABLE_DAILY_DRAWDOWN_LIMIT:
-            return True, "معطل"
+            return True, "ظ…ط¹ط·ظ„"
 
         client_obj = get_client()
         if not client_obj:
-            return True, "لا يوجد اتصال"
+            return True, "ظ„ط§ ظٹظˆط¬ط¯ ط§طھطµط§ظ„"
 
         account = client_obj.futures_account()
         balance = 0.0
@@ -639,16 +639,1126 @@ def check_daily_drawdown():
                 break
 
         if balance <= 0:
-            return True, "رصيد غير متاح"
+            return True, "ط±طµظٹط¯ ط؛ظٹط± ظ…طھط§ط­"
 
         try:
             import trade_memory
             today_pnl = trade_memory.get_today_pnl()
         except Exception as e:
-            logger.warning(f"⚠️ تعذر جلب PnL اليوم: {e}")
-            return True, "تعذر جلب البيانات"
+            logger.warning(f"âڑ ï¸ڈ طھط¹ط°ط± ط¬ظ„ط¨ PnL ط§ظ„ظٹظˆظ…: {e}")
+            return True, "طھط¹ط°ط± ط¬ظ„ط¨ ط§ظ„ط¨ظٹط§ظ†ط§طھ"
 
         if today_pnl >= 0:
-            return True, f"ربح اليوم: {today_pnl:.2f}"
+            return True, f"ط±ط¨ط­ ط§ظ„ظٹظˆظ…: {today_pnl:.2f}"
 
-        loss_percent = (abs
+        loss_percent = (abs(today_pnl) / balance) * 100
+
+        if loss_percent >= DAILY_MAX_LOSS_PERCENT:
+            return False, f"ًں›‘ ط®ط³ط§ط±ط© ظٹظˆظ…ظٹط© {loss_percent:.2f}% (ط§ظ„ط­ط¯: {DAILY_MAX_LOSS_PERCENT}%)"
+
+        return True, f"ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…: {loss_percent:.2f}%"
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£ ظپط­طµ ط§ظ„ط®ط³ط§ط±ط© ط§ظ„ظٹظˆظ…ظٹط©: {e}")
+        return True, "ط®ط·ط£ - طھظ… ط§ظ„طھط¬ط§ظˆط²"
+
+
+# ==================== ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL ====================
+
+def verify_tp_sl_created(symbol, position_side):
+    try:
+        open_orders = list(get_open_orders(symbol) or []) + list(get_open_algo_orders(symbol) or [])
+
+        if not open_orders:
+            return False, False, {
+                'total_orders': 0,
+                'tp_count': 0,
+                'sl_count': 0
+            }
+
+        tp_orders = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
+        sl_orders = [o for o in open_orders if o.get('type') == 'STOP_MARKET']
+
+        has_tp = len(tp_orders) > 0
+        has_sl = len(sl_orders) > 0
+
+        details = {
+            'total_orders': len(open_orders),
+            'tp_count': len(tp_orders),
+            'sl_count': len(sl_orders),
+            'tp_orders': tp_orders,
+            'sl_orders': sl_orders
+        }
+
+        return has_tp, has_sl, details
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£ ظپظٹ ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL: {e}")
+        return False, False, {}
+
+
+def create_order_with_retry(order_params, max_retries=None):
+    if order_params.get('type') in CONDITIONAL_ORDER_TYPES:
+        return create_algo_order(order_params, max_retries=max_retries)
+
+    if max_retries is None:
+        max_retries = TP_SL_MAX_RETRIES
+
+    client_obj = get_client()
+    if not client_obj:
+        return None
+
+    for attempt in range(max_retries):
+        try:
+            order = client_obj.futures_create_order(**order_params)
+            logger.info(f"âœ… ط£ظ…ط± ظ†ط§ط¬ط­ (ظ…ط­ط§ظˆظ„ط© {attempt+1})")
+            return order
+        except BinanceAPIException as e:
+            logger.warning(f"âڑ ï¸ڈ ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e.code} - {e.message}")
+
+            if e.code in [-1111, -1102, -2019]:
+                logger.error(f"â‌Œ ط®ط·ط£ ط¯ط§ط¦ظ… - ط¥ظٹظ‚ط§ظپ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ")
+                return None
+
+            if attempt < max_retries - 1:
+                time.sleep(TP_SL_RETRY_DELAY_SECONDS)
+        except Exception as e:
+            logger.warning(f"âڑ ï¸ڈ ظ…ط­ط§ظˆظ„ط© {attempt+1}/{max_retries} ظپط´ظ„طھ: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(TP_SL_RETRY_DELAY_SECONDS)
+
+    logger.error(f"â‌Œ ظپط´ظ„ ط¬ظ…ظٹط¹ ط§ظ„ظ…ط­ط§ظˆظ„ط§طھ ({max_retries})")
+    return None
+
+
+# ==================== ط¥ط؛ظ„ط§ظ‚ ط§ظ„طµظپظ‚ط§طھ ====================
+
+def close_position_safe(symbol, position_side):
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return False
+
+        positions = get_open_positions()
+        position = None
+        for pos in positions:
+            if pos["symbol"] == symbol and pos["positionSide"] == position_side:
+                position = pos
+                break
+
+        if not position:
+            logger.error(f"ظ„ط§ طµظپظ‚ط©: {symbol} {position_side}")
+            return False
+
+        quantity = abs(float(position["positionAmt"]))
+        if quantity <= 0:
+            return False
+
+        close_side = "SELL" if position_side == "LONG" else "BUY"
+
+        try:
+            open_orders = get_open_orders(symbol)
+            for order in open_orders:
+                try:
+                    client_obj.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                except:
+                    pass
+        except:
+            pass
+
+        try:
+            algo_orders = get_open_algo_orders(symbol)
+            for order in algo_orders:
+                cancel_algo_order(symbol, order.get('algoId', order.get('orderId')))
+        except:
+            pass
+
+        try:
+            client_obj.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                type="MARKET",
+                quantity=quantity,
+                positionSide=position_side,
+                reduceOnly="true"
+            )
+            logger.info(f"âœ… ط¥ط؛ظ„ط§ظ‚: {symbol} {position_side}")
+            remove_trailing_sl_tracking(symbol, position_side)
+            return True
+        except BinanceAPIException as e:
+            if e.code == -4061:
+                try:
+                    client_obj.futures_create_order(
+                        symbol=symbol,
+                        side=close_side,
+                        type="MARKET",
+                        quantity=quantity,
+                        positionSide=position_side
+                    )
+                    remove_trailing_sl_tracking(symbol, position_side)
+                    return True
+                except:
+                    return False
+            return False
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£ ط¥ط؛ظ„ط§ظ‚: {e}")
+        return False
+
+
+def close_all_positions():
+    try:
+        positions = get_open_positions()
+        if not positions:
+            return 0, 0.0
+
+        closed = 0
+        total_pnl = 0.0
+
+        for position in positions:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                pnl = float(position.get("unrealizedProfit", 0))
+
+                if close_position_safe(symbol, position_side):
+                    closed += 1
+                    total_pnl += pnl
+                    record_trade_result(pnl)
+                    time.sleep(0.3)
+            except:
+                continue
+
+        return closed, total_pnl
+    except:
+        return 0, 0.0
+
+
+def close_profitable_positions():
+    try:
+        positions = get_open_positions()
+        profitable = [p for p in positions if float(p.get("unrealizedProfit", 0)) > 0]
+
+        if not profitable:
+            return 0, 0.0
+
+        closed = 0
+        total_profit = 0.0
+
+        for position in profitable:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                profit = float(position.get("unrealizedProfit", 0))
+
+                if close_position_safe(symbol, position_side):
+                    closed += 1
+                    total_profit += profit
+                    time.sleep(0.3)
+            except:
+                continue
+
+        return closed, total_profit
+    except:
+        return 0, 0.0
+
+
+def close_losing_positions():
+    try:
+        positions = get_open_positions()
+        losing = [p for p in positions if float(p.get("unrealizedProfit", 0)) < 0]
+
+        if not losing:
+            return 0, 0.0
+
+        closed = 0
+        total_loss = 0.0
+
+        for position in losing:
+            try:
+                symbol = position.get("symbol")
+                position_side = position.get("positionSide")
+                loss = float(position.get("unrealizedProfit", 0))
+
+                if close_position_safe(symbol, position_side):
+                    closed += 1
+                    total_loss += loss
+                    record_trade_result(loss)
+                    time.sleep(0.3)
+            except:
+                continue
+
+        return closed, total_loss
+    except:
+        return 0, 0.0
+
+
+# ==================== Trailing SL ====================
+
+_trailing_sl_positions = {}
+_consecutive_losses = 0
+_pause_until = 0
+
+
+def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=None):
+    try:
+        key = f"{symbol}_{position_side}"
+
+        if sl_price is None:
+            if position_side == "LONG":
+                sl_price = entry_price * (1 - SL_PERCENT / 100)
+            else:
+                sl_price = entry_price * (1 + SL_PERCENT / 100)
+
+        _trailing_sl_positions[key] = {
+            'symbol': symbol,
+            'position_side': position_side,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'initial_sl': sl_price,
+            'current_sl': sl_price,
+            'highest_price': entry_price,
+            'lowest_price': entry_price,
+            'breakeven_set': False,
+            'trailing_active': False,
+            'created_at': time.time()
+        }
+
+        logger.info(f"âœ… Trailing SL: {symbol} {position_side}")
+        return True
+    except:
+        return False
+
+
+def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return False
+
+        algo_orders = get_open_algo_orders(symbol)
+        for order in algo_orders:
+            if order.get('type') == 'STOP_MARKET':
+                cancel_algo_order(symbol, order.get('algoId', order.get('orderId')))
+
+        close_side = "SELL" if position_side == "LONG" else "BUY"
+        formatted_sl = format_price_for_binance(symbol, new_sl)
+
+        if not formatted_sl:
+            return False
+
+        order_params = {
+            'symbol': symbol,
+            'side': close_side,
+            'type': 'STOP_MARKET',
+            'quantity': quantity,
+            'stopPrice': formatted_sl,
+            'positionSide': position_side,
+            'timeInForce': 'GTC'
+        }
+
+        result = create_order_with_retry(order_params)
+
+        if result:
+            logger.info(f"âœ… SL ظ…ط­ط¯ط«: {formatted_sl}")
+            return True
+
+        logger.error(f"â‌Œ ظپط´ظ„ طھط­ط¯ظٹط« SL")
+        return False
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£: {e}")
+        return False
+
+
+def update_trailing_sl(symbol, position_side, current_price):
+    """v4.0: Breakeven ط¨ط¹ط¯ TP1"""
+    try:
+        if not TRAILING_SL_ENABLED:
+            return False
+
+        key = f"{symbol}_{position_side}"
+        if key not in _trailing_sl_positions:
+            return False
+
+        data = _trailing_sl_positions[key]
+        entry_price = data['entry_price']
+        quantity = data['quantity']
+
+        if position_side == "LONG":
+            profit_percent = ((current_price - entry_price) / entry_price) * 100
+        else:
+            profit_percent = ((entry_price - current_price) / entry_price) * 100
+
+        updated = False
+
+        if position_side == "LONG":
+            if current_price > data['highest_price']:
+                data['highest_price'] = current_price
+        else:
+            if current_price < data['lowest_price']:
+                data['lowest_price'] = current_price
+
+        # Breakeven ط¨ط¹ط¯ TP1
+        tp1_level = TP_MULTIPLE_LEVELS[0]
+
+        if not data['breakeven_set'] and profit_percent >= tp1_level:
+            if position_side == "LONG":
+                breakeven_price = entry_price * (1 + BREAKEVEN_OFFSET_PERCENT / 100)
+            else:
+                breakeven_price = entry_price * (1 - BREAKEVEN_OFFSET_PERCENT / 100)
+
+            if update_sl_order(symbol, position_side, data['current_sl'], breakeven_price, quantity):
+                data['current_sl'] = breakeven_price
+                data['breakeven_set'] = True
+                updated = True
+                logger.info(f"ًں”’ {symbol} - Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
+
+        # Trailing ط¨ط¹ط¯ Breakeven
+        if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
+            if position_side == "LONG":
+                new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
+                if new_sl > data['current_sl']:
+                    if update_sl_order(symbol, position_side, data['current_sl'], new_sl, quantity):
+                        data['current_sl'] = new_sl
+                        data['trailing_active'] = True
+                        updated = True
+            else:
+                new_sl = data['lowest_price'] * (1 + TRAILING_SL_DISTANCE / 100)
+                if new_sl < data['current_sl']:
+                    if update_sl_order(symbol, position_side, data['current_sl'], new_sl, quantity):
+                        data['current_sl'] = new_sl
+                        data['trailing_active'] = True
+                        updated = True
+
+        return updated
+    except:
+        return False
+
+
+def remove_trailing_sl_tracking(symbol, position_side=None):
+    try:
+        if position_side:
+            key = f"{symbol}_{position_side}"
+            if key in _trailing_sl_positions:
+                del _trailing_sl_positions[key]
+        else:
+            keys = [k for k in _trailing_sl_positions if k.startswith(f"{symbol}_")]
+            for key in keys:
+                del _trailing_sl_positions[key]
+        return True
+    except:
+        return False
+
+
+def monitor_trailing_sl():
+    try:
+        if not TRAILING_SL_ENABLED:
+            return 0
+
+        positions = get_open_positions()
+        updated = 0
+
+        for position in positions:
+            symbol = position['symbol']
+            position_side = position['positionSide']
+            current_price = get_price(symbol)
+
+            if current_price:
+                if update_trailing_sl(symbol, position_side, current_price):
+                    updated += 1
+
+        return updated
+    except:
+        return 0
+
+
+def get_trailing_sl_status():
+    try:
+        return {
+            'active_positions': len(_trailing_sl_positions),
+            'positions': {
+                key: {
+                    'symbol': data['symbol'],
+                    'position_side': data['position_side'],
+                    'entry_price': data['entry_price'],
+                    'current_sl': data['current_sl'],
+                    'breakeven_set': data['breakeven_set'],
+                    'trailing_active': data['trailing_active']
+                }
+                for key, data in _trailing_sl_positions.items()
+            }
+        }
+    except:
+        return {'active_positions': 0, 'positions': {}}
+
+
+# ==================== ط§ظ„ط­ظ…ط§ظٹط© ====================
+
+def record_trade_result(profit):
+    global _consecutive_losses, _pause_until
+
+    try:
+        if profit < 0:
+            _consecutive_losses += 1
+            logger.warning(f"âڑ ï¸ڈ ط®ط³ط§ط±ط©: {_consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
+
+            if _consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                _pause_until = time.time() + (PAUSE_DURATION_MINUTES * 60)
+                logger.warning(f"ًں›‘ طھظˆظ‚ظپ {PAUSE_DURATION_MINUTES} ط¯ظ‚ظٹظ‚ط©")
+                return True
+        else:
+            if _consecutive_losses > 0:
+                logger.info("âœ… ط±ط¨ط­ - ط¥ط¹ط§ط¯ط© طھط¹ظٹظٹظ†")
+            _consecutive_losses = 0
+
+        return False
+    except:
+        return False
+
+
+def is_trading_paused():
+    global _pause_until
+
+    try:
+        if _pause_until == 0:
+            return False, 0
+
+        current_time = time.time()
+        if current_time >= _pause_until:
+            _pause_until = 0
+            logger.info("âœ… ط§ظ†طھظ‡ظ‰ ط§ظ„طھظˆظ‚ظپ")
+            return False, 0
+        else:
+            remaining = int((_pause_until - current_time) / 60)
+            return True, remaining
+    except:
+        return False, 0
+
+
+def get_consecutive_losses():
+    return _consecutive_losses
+
+
+# ==================== SL ط¯ظٹظ†ط§ظ…ظٹظƒظٹ ====================
+
+def calculate_dynamic_sl(symbol, entry_price, position_side):
+    try:
+        if not DYNAMIC_SL_ENABLED:
+            if position_side == "LONG":
+                sl_price = entry_price * (1 - SL_PERCENT / 100)
+            else:
+                sl_price = entry_price * (1 + SL_PERCENT / 100)
+            return sl_price, SL_PERCENT
+
+        klines = get_klines(symbol, "5m", limit=20)
+        if not klines or len(klines) < 15:
+            if position_side == "LONG":
+                sl_price = entry_price * (1 - SL_PERCENT / 100)
+            else:
+                sl_price = entry_price * (1 + SL_PERCENT / 100)
+            return sl_price, SL_PERCENT
+
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+
+        true_ranges = []
+        for i in range(1, len(highs)):
+            tr1 = highs[i] - lows[i]
+            tr2 = abs(highs[i] - closes[i - 1])
+            tr3 = abs(lows[i] - closes[i - 1])
+            true_ranges.append(max(tr1, tr2, tr3))
+
+        if not true_ranges:
+            if position_side == "LONG":
+                sl_price = entry_price * (1 - SL_PERCENT / 100)
+            else:
+                sl_price = entry_price * (1 + SL_PERCENT / 100)
+            return sl_price, SL_PERCENT
+
+        atr = sum(true_ranges[-14:]) / 14
+        atr_percent = (atr / entry_price) * 100 * SL_ATR_MULTIPLIER
+        sl_percent = max(SL_MIN_PERCENT, min(SL_MAX_PERCENT, atr_percent))
+
+        if position_side == "LONG":
+            sl_price = entry_price * (1 - sl_percent / 100)
+        else:
+            sl_price = entry_price * (1 + sl_percent / 100)
+
+        return sl_price, sl_percent
+    except:
+        if position_side == "LONG":
+            sl_price = entry_price * (1 - SL_PERCENT / 100)
+        else:
+            sl_price = entry_price * (1 + SL_PERCENT / 100)
+        return sl_price, SL_PERCENT
+
+
+# ==================== TP ط§ظ„ظ…طھط¹ط¯ط¯ ====================
+
+def calculate_tp_price(position_side, entry_price, tp_percent):
+    if position_side == "LONG":
+        return entry_price * (1 + tp_percent / 100)
+    return entry_price * (1 - tp_percent / 100)
+
+
+def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price,
+                              tp_levels, tp_ratios, sl_percent=None):
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+
+        ratios_sum = sum(tp_ratios)
+        if abs(ratios_sum - 1.0) > 0.01:
+            logger.error(f"â‌Œ ظ…ط¬ظ…ظˆط¹ ظ†ط³ط¨ TP = {ratios_sum} ظٹط¬ط¨ ط£ظ† ظٹظƒظˆظ† 1.0")
+            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+
+        results = {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+
+        close_side = "SELL" if position_side == "LONG" else "BUY"
+
+        # SL
+        if ENABLE_SL:
+            sl_price, actual_sl_percent = calculate_dynamic_sl(symbol, entry_price, position_side)
+            formatted_sl = format_price_for_binance(symbol, sl_price)
+
+            if formatted_sl:
+                logger.info(f"ًں“ٹ ظ…ط­ط§ظˆظ„ط© ط¥ظ†ط´ط§ط، SL @ {formatted_sl}")
+
+                sl_params = {
+                    'symbol': symbol,
+                    'side': close_side,
+                    'type': 'STOP_MARKET',
+                    'quantity': total_quantity,
+                    'stopPrice': formatted_sl,
+                    'positionSide': position_side,
+                    'timeInForce': 'GTC'
+                }
+
+                sl_order = create_order_with_retry(sl_params)
+
+                if sl_order:
+                    results['sl_success'] = True
+                    results['sl_order_id'] = sl_order['orderId']
+                    results['sl_price'] = formatted_sl
+                    results['sl_percent'] = actual_sl_percent
+                    logger.info(f"âœ… SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
+                else:
+                    logger.error(f"â‌Œ ظپط´ظ„ ط¥ظ†ط´ط§ط، SL")
+
+        # TP ظ…طھط¹ط¯ط¯
+        for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):
+            level_quantity = total_quantity * ratio
+            level_quantity = _round_quantity(symbol, level_quantity)
+
+            if level_quantity <= 0:
+                logger.warning(f"âڑ ï¸ڈ TP{i+1}: ظƒظ…ظٹط© طµظپط±ظٹط©")
+                continue
+
+            tp_price = calculate_tp_price(position_side, entry_price, tp_percent)
+            formatted_tp = format_price_for_binance(symbol, tp_price)
+
+            if formatted_tp:
+                logger.info(f"ًں“ٹ ظ…ط­ط§ظˆظ„ط© ط¥ظ†ط´ط§ط، TP{i+1} @ {formatted_tp}")
+
+                tp_params = {
+                    'symbol': symbol,
+                    'side': close_side,
+                    'type': 'TAKE_PROFIT_MARKET',
+                    'quantity': level_quantity,
+                    'stopPrice': formatted_tp,
+                    'positionSide': position_side,
+                    'timeInForce': 'GTC'
+                }
+
+                tp_order = create_order_with_retry(tp_params)
+
+                if tp_order:
+                    results['tp_orders'].append({
+                        'order_id': tp_order['orderId'],
+                        'level': i + 1,
+                        'tp_percent': tp_percent,
+                        'tp_price': formatted_tp,
+                        'quantity': level_quantity,
+                        'ratio': ratio,
+                        'success': True
+                    })
+                    results['total_tp_quantity'] += level_quantity
+                    logger.info(f"âœ… TP{i+1}: {tp_percent}% @ {formatted_tp}")
+                else:
+                    logger.error(f"â‌Œ ظپط´ظ„ TP{i+1}")
+                    results['tp_orders'].append({
+                        'level': i + 1,
+                        'tp_percent': tp_percent,
+                        'success': False
+                    })
+
+        return results
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£: {e}")
+        return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+
+
+def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
+                                        tp_levels=None, tp_ratios=None, sl_percent=None):
+    try:
+        if tp_levels is None:
+            tp_levels = TP_MULTIPLE_LEVELS
+        if tp_ratios is None:
+            tp_ratios = TP_QUANTITY_RATIOS
+
+        client_obj = get_client()
+        if not client_obj:
+            return None
+
+        positionSide = "LONG" if side.upper() == "BUY" else "SHORT"
+
+        price = get_price(symbol)
+        if not price:
+            logger.error(f"ظ„ط§ ظٹظ…ظƒظ† ط§ظ„ط­طµظˆظ„ ط¹ظ„ظ‰ ط³ط¹ط± {symbol}")
+            return None
+
+        notional = float(amount_usdt) * float(leverage)
+        total_qty = _round_quantity(symbol, notional / price)
+
+        if total_qty <= 0:
+            logger.error(f"ظƒظ…ظٹط© ط؛ظٹط± طµط§ظ„ط­ط©: {total_qty}")
+            return None
+
+        client_obj.futures_change_leverage(symbol=symbol, leverage=int(leverage))
+
+        logger.info(f"ًںڑ€ ظپطھط­ طµظپظ‚ط©: {symbol} {side} {total_qty}")
+
+        main_order = client_obj.futures_create_order(
+            symbol=symbol,
+            side=side.upper(),
+            type="MARKET",
+            quantity=total_qty,
+            positionSide=positionSide
+        )
+
+        if not main_order:
+            logger.error("â‌Œ ظپط´ظ„ ظپطھط­ ط§ظ„طµظپظ‚ط©")
+            return None
+
+        logger.info(f"âœ… طھظ… ظپطھط­ ط§ظ„طµظپظ‚ط©: {main_order['orderId']}")
+
+        time.sleep(5)
+
+        positions = get_open_positions()
+        entry_price = price
+        actual_qty = total_qty
+
+        for pos in positions:
+            if pos["symbol"] == symbol and pos["positionSide"] == positionSide:
+                entry_price = float(pos["entryPrice"])
+                actual_qty = abs(float(pos["positionAmt"]))
+                break
+
+        logger.info(f"ًں“ٹ ط¥ظ†ط´ط§ط، TP/SL...")
+
+        tp_results = create_multiple_tp_orders(
+            symbol=symbol,
+            position_side=positionSide,
+            total_quantity=actual_qty,
+            entry_price=entry_price,
+            tp_levels=tp_levels,
+            tp_ratios=tp_ratios,
+            sl_percent=sl_percent
+        )
+
+        time.sleep(2)
+
+        has_tp, has_sl, details = verify_tp_sl_created(symbol, positionSide)
+
+        logger.info(f"ًں”چ ط§ظ„طھط­ظ‚ظ‚: TP={has_tp} ({details.get('tp_count', 0)}), SL={has_sl} ({details.get('sl_count', 0)})")
+
+        if VERIFY_TP_SL_AFTER_CREATION and not has_sl:
+            logger.error(f"ًںڑ¨ ظپط´ظ„ SL - ط¥ط؛ظ„ط§ظ‚ ط§ظ„طµظپظ‚ط© ظپظˆط±ط§ظ‹!")
+
+            close_position_safe(symbol, positionSide)
+
+            return {
+                'symbol': symbol,
+                'side': side,
+                'entry_price': entry_price,
+                'quantity': actual_qty,
+                'positionSide': positionSide,
+                'order_id': main_order['orderId'],
+                'multiple_tp': True,
+                'tp_results': tp_results,
+                'verification': {
+                    'has_tp': has_tp,
+                    'has_sl': has_sl,
+                    'details': details
+                },
+                'closed_due_to_failure': True,
+                'failure_reason': 'SL not created'
+            }
+
+        return {
+            "symbol": symbol,
+            "side": side,
+            "entry_price": entry_price,
+            "quantity": actual_qty,
+            "positionSide": positionSide,
+            "order_id": main_order["orderId"],
+            "multiple_tp": True,
+            "tp_results": tp_results,
+            "tp_levels": tp_levels,
+            "tp_ratios": tp_ratios,
+            "verification": {
+                "has_tp": has_tp,
+                "has_sl": has_sl,
+                "details": details
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"ط®ط·ط£: {e}")
+        return None
+
+
+def place_market_order_with_tp_sl(symbol, side, amount_usdt, leverage):
+    return place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage)
+
+
+# ==================== ط§ظ„ط£ط±ط¨ط§ط­ ====================
+
+def get_accurate_daily_pnl():
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'ط®ط·ط£'}
+
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow = today + timedelta(days=1)
+
+        income = client_obj.futures_income_history(incomeType="REALIZED_PNL", limit=1000)
+
+        daily_pnl = 0.0
+        today_trades = []
+        unique = set()
+
+        for item in income:
+            if item['incomeType'] == 'REALIZED_PNL':
+                trade_time = datetime.fromtimestamp(int(item['time']) / 1000)
+                if today <= trade_time < tomorrow:
+                    amount = float(item['income'])
+                    key = f"{item.get('symbol')}_{item['time']}_{amount:.6f}"
+
+                    if key not in unique:
+                        unique.add(key)
+                        daily_pnl += amount
+                        if abs(amount) >= 0.05:
+                            today_trades.append({
+                                'symbol': item.get('symbol', 'N/A'),
+                                'income': amount,
+                                'time': item['time']
+                            })
+
+        return {
+            'daily_pnl': daily_pnl,
+            'today_trades': today_trades,
+            'trade_count': len(today_trades),
+            'data_quality': 'ظ…طµط­ط­'
+        }
+    except:
+        return {'daily_pnl': 0.0, 'today_trades': [], 'trade_count': 0, 'data_quality': 'ط®ط·ط£'}
+
+
+def get_accurate_weekly_pnl():
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return {'weekly_pnl': 0.0, 'weekly_trades': [], 'trade_count': 0,
+                    'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'ط®ط·ط£'}
+
+        today = datetime.now()
+        start = today - timedelta(days=today.weekday())
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        income = client_obj.futures_income_history(incomeType="REALIZED_PNL", limit=1000)
+
+        weekly_pnl = 0.0
+        weekly_trades = []
+        unique = set()
+
+        for item in income:
+            if item['incomeType'] == 'REALIZED_PNL':
+                trade_time = datetime.fromtimestamp(int(item['time']) / 1000)
+                if start <= trade_time <= end:
+                    amount = float(item['income'])
+                    key = f"{item.get('symbol')}_{item['time']}_{amount:.6f}"
+
+                    if key not in unique:
+                        unique.add(key)
+                        weekly_pnl += amount
+                        if abs(amount) >= 0.05:
+                            weekly_trades.append({
+                                'symbol': item.get('symbol', 'N/A'),
+                                'income': amount,
+                                'time': item['time']
+                            })
+
+        return {
+            'weekly_pnl': weekly_pnl,
+            'weekly_trades': weekly_trades,
+            'trade_count': len(weekly_trades),
+            'week_start': start.strftime("%Y-%m-%d"),
+            'week_end': end.strftime("%Y-%m-%d"),
+            'week_number': today.isocalendar()[1],
+            'data_quality': 'ظ…طµط­ط­'
+        }
+    except:
+        return {'weekly_pnl': 0.0, 'weekly_trades': [], 'trade_count': 0,
+                'week_start': 'N/A', 'week_end': 'N/A', 'week_number': 0, 'data_quality': 'ط®ط·ط£'}
+
+
+def get_accurate_monthly_pnl():
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return {'monthly_pnl': 0.0, 'monthly_trades': [], 'trade_count': 0,
+                    'month_start': 'N/A', 'month_end': 'N/A', 'month_name': 'Unknown',
+                    'data_quality': 'ط®ط·ط£', 'avg_trade_pnl': 0}
+
+        today = datetime.now()
+        start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        if today.month == 12:
+            end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(seconds=1)
+        else:
+            end = today.replace(month=today.month + 1, day=1) - timedelta(seconds=1)
+
+        income = client_obj.futures_income_history(incomeType="REALIZED_PNL", limit=1000)
+
+        monthly_pnl = 0.0
+        monthly_trades = []
+        unique = set()
+
+        for item in income:
+            if item['incomeType'] == 'REALIZED_PNL':
+                trade_time = datetime.fromtimestamp(int(item['time']) / 1000)
+                if start <= trade_time <= end:
+                    amount = float(item['income'])
+                    key = f"{item.get('symbol')}_{item['time']}_{amount:.6f}"
+
+                    if key not in unique:
+                        unique.add(key)
+                        monthly_pnl += amount
+                        if abs(amount) >= 0.05:
+                            monthly_trades.append({
+                                'symbol': item.get('symbol', 'N/A'),
+                                'income': amount,
+                                'time': item['time']
+                            })
+
+        avg = monthly_pnl / len(monthly_trades) if monthly_trades else 0
+
+        return {
+            'monthly_pnl': monthly_pnl,
+            'monthly_trades': monthly_trades,
+            'trade_count': len(monthly_trades),
+            'month_start': start.strftime("%Y-%m-%d"),
+            'month_end': end.strftime("%Y-%m-%d"),
+            'month_name': today.strftime("%B"),
+            'data_quality': 'ظ…طµط­ط­',
+            'avg_trade_pnl': avg
+        }
+    except:
+        return {'monthly_pnl': 0.0, 'monthly_trades': [], 'trade_count': 0,
+                'month_start': 'N/A', 'month_end': 'N/A', 'month_name': 'Unknown',
+                'data_quality': 'ط®ط·ط£', 'avg_trade_pnl': 0}
+
+
+def format_pnl_report(pnl_data, period_type="ظٹظˆظ…ظٹ"):
+    try:
+        if period_type == "ظٹظˆظ…ظٹ":
+            pnl = pnl_data.get('daily_pnl', 0)
+            count = pnl_data.get('trade_count', 0)
+            title = f"ًں“… ط§ظ„ظٹظˆظ… - {datetime.now().strftime('%Y-%m-%d')}"
+        elif period_type == "ط£ط³ط¨ظˆط¹ظٹ":
+            pnl = pnl_data.get('weekly_pnl', 0)
+            count = pnl_data.get('trade_count', 0)
+            title = f"ًں“ٹ ط§ظ„ط£ط³ط¨ظˆط¹ {pnl_data.get('week_number', 0)}"
+        else:
+            pnl = pnl_data.get('monthly_pnl', 0)
+            count = pnl_data.get('trade_count', 0)
+            title = f"ًں“ˆ {pnl_data.get('month_name', 'Unknown')}"
+
+        emoji = "ًںں¢" if pnl > 0 else "ًں”´" if pnl < 0 else "âڑھ"
+        status = "ط±ط¨ط­" if pnl > 0 else "ط®ط³ط§ط±ط©" if pnl < 0 else "طھط¹ط§ط¯ظ„"
+
+        return (f"{title}\n\n"
+                f"{emoji} <b>ط§ظ„ط£ط±ط¨ط§ط­:</b> {pnl:.2f} USDT\n"
+                f"ًں“ٹ <b>ط§ظ„طµظپظ‚ط§طھ:</b> {count}\n"
+                f"ًں’¹ <b>ط§ظ„ط­ط§ظ„ط©:</b> {status}")
+    except:
+        return "â‌Œ ط®ط·ط£"
+
+
+def recreate_missing_tp(symbol, position_side, entry_price, quantity):
+    try:
+        close_side = "SELL" if position_side == "LONG" else "BUY"
+        created_any = False
+
+        if ENABLE_MULTIPLE_TP:
+            tp_levels = TP_MULTIPLE_LEVELS
+            tp_ratios = TP_QUANTITY_RATIOS
+        else:
+            tp_levels = [TP_PERCENT]
+            tp_ratios = [1.0]
+
+        for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):
+            level_quantity = _round_quantity(symbol, quantity * ratio)
+            if level_quantity <= 0:
+                continue
+
+            tp_price = calculate_tp_price(position_side, entry_price, tp_percent)
+            formatted_tp = format_price_for_binance(symbol, tp_price)
+            if not formatted_tp:
+                continue
+
+            tp_params = {
+                'symbol': symbol,
+                'side': close_side,
+                'type': 'TAKE_PROFIT_MARKET',
+                'quantity': level_quantity,
+                'stopPrice': formatted_tp,
+                'positionSide': position_side,
+                'timeInForce': 'GTC'
+            }
+
+            tp_order = create_order_with_retry(tp_params)
+            if tp_order:
+                created_any = True
+                logger.info(f"âœ… TP{i+1} ظ„ظ€ {symbol} @ {formatted_tp}")
+            else:
+                logger.error(f"â‌Œ ظپط´ظ„ TP{i+1} ظ„ظ€ {symbol}")
+
+        return created_any
+    except Exception as e:
+        logger.error(f"ط®ط·ط£ ظپظٹ ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، TP ظ„ظ€ {symbol}: {e}")
+        return False
+
+
+def check_and_add_tp_sl_to_existing_positions():
+    """
+    ًں”¥ v4.1.4: ط¥طµظ„ط§ط­ TP/SL ظ„طµظپظ‚ط§طھ ط§ظ„ط¨ظˆطھ ظپظ‚ط·
+    ظٹطھط¬ط§ظ‡ظ„ ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط© طھظ…ط§ظ…ط§ظ‹
+    """
+    try:
+        # ًں”¥ ظ†ط£ط®ط° ظپظ‚ط· ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظ…ط³ط¬ظ„ط© ظپظٹ open_positions.json
+        state_file = "open_positions.json"
+
+        if not os.path.exists(state_file):
+            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ ظ…ط³ط¬ظ„ط©")
+            return 0
+
+        with open(state_file, "r", encoding="utf-8") as f:
+            bot_positions_raw = json.load(f)
+
+        bot_owned_keys = {
+            f"{p.get('symbol')}_{p.get('positionSide')}"
+            for p in bot_positions_raw
+            if p.get('symbol') and p.get('positionSide')
+        }
+
+        if not bot_owned_keys:
+            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ")
+            return 0
+
+        all_positions = get_open_positions()
+        bot_positions = [
+            p for p in all_positions
+            if f"{p['symbol']}_{p['positionSide']}" in bot_owned_keys
+        ]
+
+        if not bot_positions:
+            logger.info("â„¹ï¸ڈ ظ„ط§ طھظˆط¬ط¯ طµظپظ‚ط§طھ ط¨ظˆطھ ظ…ظپطھظˆط­ط©")
+            return 0
+
+        logger.info(f"ًں”§ ظپط­طµ {len(bot_positions)} طµظپظ‚ط© ط¨ظˆطھ (طھط¬ط§ظ‡ظ„ {len(all_positions) - len(bot_positions)} طµظپظ‚ط© ظٹط¯ظˆظٹط©)")
+
+        fixed = 0
+
+        for position in bot_positions:
+            symbol = position["symbol"]
+            position_side = position["positionSide"]
+
+            has_tp, has_sl, details = verify_tp_sl_created(symbol, position_side)
+
+            if not has_sl:
+                logger.warning(f"âڑ ï¸ڈ {symbol} ط¨ط¯ظˆظ† SL (طµظپظ‚ط© ط¨ظˆطھ) - ظ…ط­ط§ظˆظ„ط© ط¥ط¹ط§ط¯ط© ط§ظ„ط¥ظ†ط´ط§ط،")
+
+                entry_price = float(position["entryPrice"])
+                quantity = abs(float(position["positionAmt"]))
+                current_price = get_price(symbol)
+
+                sl_price, sl_percent = calculate_dynamic_sl(symbol, entry_price, position_side)
+                formatted_sl = format_price_for_binance(symbol, sl_price)
+
+                if not formatted_sl:
+                    continue
+
+                already_past_sl = (
+                    (position_side == "LONG" and current_price is not None and current_price <= formatted_sl) or
+                    (position_side == "SHORT" and current_price is not None and current_price >= formatted_sl)
+                )
+
+                if already_past_sl:
+                    logger.error(f"ًں›‘ {symbol} طھط®ط·ظ‰ SL - ط¥ط؛ظ„ط§ظ‚ ظپظˆط±ظٹ")
+                    if close_position_safe(symbol, position_side):
+                        fixed += 1
+                    continue
+
+                close_side = "SELL" if position_side == "LONG" else "BUY"
+
+                sl_params = {
+                    'symbol': symbol,
+                    'side': close_side,
+                    'type': 'STOP_MARKET',
+                    'quantity': quantity,
+                    'stopPrice': formatted_sl,
+                    'positionSide': position_side,
+                    'timeInForce': 'GTC'
+                }
+
+                sl_order = create_order_with_retry(sl_params)
+
+                if sl_order:
+                    fixed += 1
+                    logger.info(f"âœ… طھظ… ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، SL ظ„ظ€ {symbol}")
+                elif CLOSE_ON_TP_SL_FAIL:
+                    logger.error(f"â‌Œ ظپط´ظ„ SL ظ„ظ€ {symbol} - ط¥ط؛ظ„ط§ظ‚ ظˆظ‚ط§ط¦ظٹ")
+                    if close_position_safe(symbol, position_side):
+                        logger.info(f"âœ… طھظ… ط¥ط؛ظ„ط§ظ‚ {symbol} ظˆظ‚ط§ط¦ظٹط§ظ‹")
+
+            elif not has_tp:
+                logger.warning(f"âڑ ï¸ڈ {symbol} ط¨ط¯ظˆظ† TP (طµظپظ‚ط© ط¨ظˆطھ) - ظ…ط­ط§ظˆظ„ط© ط¥ط¹ط§ط¯ط© ط§ظ„ط¥ظ†ط´ط§ط،")
+
+                entry_price = float(position["entryPrice"])
+                quantity = abs(float(position["positionAmt"]))
+
+                if recreate_missing_tp(symbol, position_side, entry_price, quantity):
+                    fixed += 1
+                    logger.info(f"âœ… طھظ… ط¥ط¹ط§ط¯ط© ط¥ظ†ط´ط§ط، TP ظ„ظ€ {symbol}")
+
+        return fixed
+    except Exception as e:
+        logger.error(f"ط®ط·ط£: {e}")
+        return 0
+
+
+if __name__ == "__main__":
+    print("ًںڑ€ core_functions.py v4.1.4")
+    print(f"âœ… ط§ظ„ط§طھطµط§ظ„: {'ظ†ط§ط¬ط­' if client else 'ظپط´ظ„'}")
+    print(f"ًں”چ ط§ظ„طھط­ظ‚ظ‚ ظ…ظ† TP/SL: {'ظ…ظپط¹ظ„' if VERIFY_TP_SL_AFTER_CREATION else 'ظ…ط¹ط·ظ„'}")
+    print(f"ًں“ٹ ظپظ„طھط± ط§ظ„ط³ظٹظˆظ„ط©: {'ظ…ظپط¹ظ„' if ENABLE_VOLUME_FILTER else 'ظ…ط¹ط·ظ„'}")
+    print(f"âڑ، Cache ط§ظ„ط±ظ…ظˆط²: {_SYMBOLS_CACHE_DURATION} ط«ط§ظ†ظٹط©")
+    print(f"ًں”¥ طھظ…ظٹظٹط² ط§ظ„طµظپظ‚ط§طھ ط§ظ„ظٹط¯ظˆظٹط©: âœ…")
