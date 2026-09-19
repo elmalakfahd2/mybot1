@@ -98,8 +98,8 @@ MIN_CONFIDENCE_AUTO = 55               # ✅ v4.1.5: من 60 → 55
 MIN_SIGNAL_STRENGTH = 5                # ✅ v4.1.5: من 6 → 5
 
 # ==================== نظام النقاط (v4.1.5 - مخفف) ====================
-MIN_SCORE_REQUIRED = 63                # ✅ v4.1.5: من 65 → 62
-MIN_ORDER_BOOK_POINTS = 1              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
+MIN_SCORE_REQUIRED = 65                # ✅ v4.1.5: من 65 → 62
+MIN_ORDER_BOOK_POINTS = 2              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
 MIN_RSI_POINTS = 0                     # ✅ v4.1.5: من 3 → 0 (تعطيل الفلتر)
 
 SCORE_WEIGHTS = {
