@@ -1,18 +1,21 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v4.1.2
+# 📁 ملف: main_enhanced.py - الإصدار v4.1.4
+# 🔧 التعديلات v4.1.4:
+#    - 🔥 التمييز بين صفقات البوت والصفقات اليدوية
+#    - 🔥 البوت يتجاهل صفقاتك تماماً
+#    - 🔥 MAX_POSITIONS يُحسب على صفقات البوت فقط
+#    - 🔥 المراقبة تطبق فقط على صفقات البوت
 # 🔧 التعديلات v4.1.2:
-#    - 🔥 لا تشغّل start_scanner_threads من main
-#    - 🔥 تُشغَّل من post_init في bot_enhanced.py
-# 🔧 التعديلات v4.1.1:
-#    - Cache الرموز
-#    - fallback قائمة الرموز
-# 📅 التاريخ: 2026-09-18
+#    - لا تشغّل start_scanner_threads من main
+# 📅 التاريخ: 2026-09-19
 # ==================================================
 
 import logging
 import threading
 import time
 import asyncio
+import json
+import os
 from datetime import datetime
 
 from config import *
@@ -73,6 +76,8 @@ _auto_trading_enabled = True
 
 _open_trades_tracking = {}
 
+STATE_FILE = "open_positions.json"
+
 
 # ==================== 🔥 قائمة احتياطية للرموز ====================
 
@@ -82,6 +87,75 @@ FALLBACK_SYMBOLS = [
     "MATICUSDT", "LTCUSDT", "ATOMUSDT", "NEARUSDT", "FILUSDT",
     "AAVEUSDT", "UNIUSDT", "ETCUSDT", "APTUSDT", "ARBUSDT"
 ]
+
+
+# ==================== 🔥 التمييز بين صفقات البوت واليدوية ====================
+
+def _load_bot_owned_keys():
+    """قراءة (symbol, positionSide) من ملف صفقات البوت"""
+    try:
+        if not os.path.exists(STATE_FILE):
+            return set()
+        
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        keys = set()
+        for p in data:
+            sym = p.get('symbol')
+            side = p.get('positionSide')
+            if sym and side:
+                keys.add(f"{sym}_{side}")
+        return keys
+    except Exception as e:
+        logger.error(f"خطأ في قراءة {STATE_FILE}: {e}")
+        return set()
+
+
+def get_bot_owned_positions():
+    """
+    🔥 إرجاع صفقات البوت فقط (المسجلة في open_positions.json)
+    الصفقات اليدوية تُستثنى تلقائياً
+    """
+    try:
+        bot_keys = _load_bot_owned_keys()
+        if not bot_keys:
+            return []
+        
+        all_real = core.get_open_positions()
+        bot_positions = [
+            p for p in all_real
+            if f"{p['symbol']}_{p['positionSide']}" in bot_keys
+        ]
+        
+        return bot_positions
+    except Exception as e:
+        logger.error(f"خطأ في get_bot_owned_positions: {e}")
+        return []
+
+
+def get_manual_positions():
+    """صفقاتك اليدوية (غير مسجلة في open_positions.json)"""
+    try:
+        bot_keys = _load_bot_owned_keys()
+        all_real = core.get_open_positions()
+        manual = [
+            p for p in all_real
+            if f"{p['symbol']}_{p['positionSide']}" not in bot_keys
+        ]
+        return manual
+    except Exception as e:
+        logger.error(f"خطأ في get_manual_positions: {e}")
+        return []
+
+
+def is_bot_owned_position(symbol, position_side):
+    """هل الصفقة مملوكة للبوت؟"""
+    try:
+        bot_keys = _load_bot_owned_keys()
+        return f"{symbol}_{position_side}" in bot_keys
+    except:
+        return False
 
 
 # ==================== دوال مساعدة ====================
@@ -155,7 +229,9 @@ def send_startup():
         available = balance_info.get('available', 0)
         wallet = balance_info.get('wallet', 0)
 
-        positions = core.get_open_positions()
+        all_positions = core.get_open_positions()
+        bot_positions = get_bot_owned_positions()
+        manual_positions = get_manual_positions()
 
         daily = core.get_accurate_daily_pnl()
         weekly = core.get_accurate_weekly_pnl()
@@ -167,7 +243,7 @@ def send_startup():
         realtime_status = "✅ نشط" if REALTIME_AVAILABLE else "❌ معطل"
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.1.2</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.1.4</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"🎯 <b>نظام:</b> القناص + TP/SL محقق\n"
@@ -180,12 +256,14 @@ def send_startup():
             f"   • SL ديناميكي: {'✅' if DYNAMIC_SL_ENABLED else '❌'}\n"
             f"   • Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}\n"
             f"   • Breakeven بعد TP1: ✅\n"
-            f"   • منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}\n\n"
+            f"   • منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}\n"
+            f"   • 🔥 تمييز الصفقات اليدوية: ✅\n\n"
             f"📊 <b>الحالة:</b>\n"
             f"   • الأزواج: {count}\n"
             f"   • الرصيد المتاح: {available:.2f} USDT\n"
             f"   • الرصيد الإجمالي: {wallet:.2f} USDT\n"
-            f"   • الصفقات: {len(positions)}/{MAX_OPEN_POSITIONS}\n\n"
+            f"   • صفقات البوت: {len(bot_positions)}/{MAX_OPEN_POSITIONS}\n"
+            f"   • صفقاتك اليدوية: {len(manual_positions)} (يتجاهلها البوت)\n\n"
             f"📈 <b>الأرباح:</b>\n"
             f"   • اليوم: {daily['daily_pnl']:.2f}\n"
             f"   • الأسبوع: {weekly['weekly_pnl']:.2f}\n"
@@ -212,10 +290,11 @@ def check_trading_pause():
     return False
 
 
-# ==================== مراقبة TP/SL ====================
+# ==================== مراقبة TP/SL (صفقات البوت فقط) ====================
 
 def monitor_tp_sl_loop():
-    logger.info("🔍 بدء مراقبة TP/SL...")
+    """🔍 مراقبة TP/SL لصفقات البوت فقط (تتجاهل صفقاتك اليدوية)"""
+    logger.info("🔍 بدء مراقبة TP/SL (صفقات البوت فقط)...")
 
     global _last_tp_sl_monitor
 
@@ -226,23 +305,32 @@ def monitor_tp_sl_loop():
             if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                 _last_tp_sl_monitor = current_time
 
-                positions = core.get_open_positions()
+                # 🔥 صفقات البوت فقط
+                bot_positions = get_bot_owned_positions()
+                manual_positions = get_manual_positions()
 
-                for position in positions:
+                if manual_positions:
+                    logger.info(f"ℹ️ يوجد {len(manual_positions)} صفقة يدوية (يتجاهلها البوت)")
+
+                if not bot_positions:
+                    time.sleep(30)
+                    continue
+
+                for position in bot_positions:
                     symbol = position['symbol']
                     position_side = position['positionSide']
 
                     has_tp, has_sl, details = core.verify_tp_sl_created(symbol, position_side)
 
                     if not has_sl:
-                        logger.warning(f"⚠️ {symbol} {position_side} بدون SL!")
+                        logger.warning(f"⚠️ {symbol} {position_side} بدون SL (صفقة بوت)!")
                         fixed = core.check_and_add_tp_sl_to_existing_positions()
                         if fixed > 0:
                             send_tp_sl_recovery_notification(symbol, position_side)
                             break
 
                     elif not has_tp:
-                        logger.warning(f"⚠️ {symbol} {position_side} بدون TP!")
+                        logger.warning(f"⚠️ {symbol} {position_side} بدون TP (صفقة بوت)!")
                         fixed = core.check_and_add_tp_sl_to_existing_positions()
                         if fixed > 0:
                             send_tp_sl_recovery_notification(symbol, position_side)
@@ -403,34 +491,47 @@ def execute_sniper_trade(signal):
             logger.warning(f"🛑 {symbol}: ثقة {confidence}% < {MIN_CONFIDENCE_AUTO}%")
             return False
 
-        positions = core.get_open_positions()
-        if len(positions) >= MAX_OPEN_POSITIONS:
-            logger.warning(f"⏸️ حد أقصى: {len(positions)}/{MAX_OPEN_POSITIONS}")
+        # ==================== 🔥 صفقات البوت فقط ====================
+        all_positions = core.get_open_positions()
+        bot_positions = get_bot_owned_positions()
+        manual_positions = get_manual_positions()
+        
+        logger.info(f"📊 صفقات البوت: {len(bot_positions)}/{MAX_OPEN_POSITIONS} | يدوية: {len(manual_positions)} | إجمالي: {len(all_positions)}")
+        
+        # الحد الأقصى يُحسب على صفقات البوت فقط
+        if len(bot_positions) >= MAX_OPEN_POSITIONS:
+            logger.warning(f"⏸️ حد أقصى للبوت: {len(bot_positions)}/{MAX_OPEN_POSITIONS}")
             return False
 
-        if any(p['symbol'] == symbol for p in positions):
-            logger.warning(f"⚠️ صفقة موجودة على {symbol}")
+        # منع التكرار على صفقات البوت فقط
+        if any(p['symbol'] == symbol for p in bot_positions):
+            logger.warning(f"⚠️ البوت لديه صفقة على {symbol}")
             return False
 
+        # منع الاتجاهات المتعاكسة مع صفقات البوت فقط
         if ENABLE_OPPOSITE_DIRECTION_FILTER:
-            for pos in positions:
+            for pos in bot_positions:
                 pos_amt = float(pos.get('positionAmt', 0))
                 pos_direction = "BUY" if pos_amt > 0 else "SELL"
 
                 if pos_direction != direction:
-                    logger.warning(f"🛑 {symbol}: اتجاه معاكس لـ {pos['symbol']} ({pos_direction})")
+                    logger.warning(f"🛑 {symbol}: اتجاه معاكس لصفقة البوت على {pos['symbol']} ({pos_direction})")
                     return False
 
+        # ==================== قاطع الخسارة اليومية ====================
         drawdown_ok, drawdown_reason = core.check_daily_drawdown()
         if not drawdown_ok:
             logger.error(f"🛑 {drawdown_reason}")
             return False
 
-        corr_ok, corr_reason = core.check_correlation_exposure(symbol, direction, positions)
+        # ==================== فلتر الارتباط ====================
+        # 🔥 نمرر صفقات البوت فقط للارتباط (صفقاتك اليدوية لا تُحسب)
+        corr_ok, corr_reason = core.check_correlation_exposure(symbol, direction, bot_positions)
         if not corr_ok:
             logger.warning(f"🛑 {symbol}: {corr_reason}")
             return False
 
+        # ==================== فلتر السبريد والسيولة ====================
         liquidity_ok, liquidity_reason = core.check_spread_and_liquidity(symbol, TRADE_USDT)
         if not liquidity_ok:
             logger.warning(f"🛑 {symbol}: {liquidity_reason}")
@@ -486,315 +587,4 @@ def execute_sniper_trade(signal):
 
             send_trade_notification(signal, result)
             logger.info(f"✅ {symbol}: تم فتح الصفقة بنجاح")
-            return True
-
-        return False
-
-    except Exception as e:
-        logger.error(f"خطأ في التنفيذ: {e}")
-        return False
-
-
-def send_failed_trade_notification(signal, result):
-    try:
-        from telegram import Bot
-        bot = Bot(token=TELEGRAM_TOKEN)
-
-        msg = (
-            f"⚠️ <b>فشل التنفيذ</b>\n\n"
-            f"💰 <b>العملة:</b> {signal['symbol']}\n"
-            f"📈 <b>الاتجاه:</b> {signal['direction']}\n"
-            f"❌ <b>السبب:</b> فشل إنشاء TP/SL\n"
-            f"🔒 <b>الإجراء:</b> تم إغلاق الصفقة فوراً"
-        )
-
-        async def send_async():
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="HTML")
-
-        threading.Thread(target=run_async_safe, args=(send_async(),), daemon=True).start()
-
-    except Exception as e:
-        logger.error(f"❌ خطأ: {e}")
-
-
-def send_trade_notification(signal, result):
-    try:
-        from telegram import Bot
-        bot = Bot(token=TELEGRAM_TOKEN)
-
-        emoji = "🟢" if signal['direction'] == 'BUY' else "🔴"
-        score = signal.get('score_details', {})
-        verification = result.get('verification', {})
-
-        entry_price = result['entry_price']
-        position_side = result['positionSide']
-        quantity = result['quantity']
-
-        tp_results = result.get('tp_results', {})
-        tp_orders = tp_results.get('tp_orders', [])
-        sl_price = tp_results.get('sl_price')
-
-        msg = (
-            f"🎯 <b>تم التنفيذ بنجاح!</b>\n\n"
-            f"💰 <b>العملة:</b> {signal['symbol']}\n"
-            f"📈 <b>الاتجاه:</b> {emoji} {signal['direction']}\n"
-            f"💵 <b>الدخول:</b> <code>{entry_price}</code>\n"
-            f"⚖️ <b>الكمية:</b> <code>{quantity}</code>\n\n"
-            f"📊 <b>النقاط:</b> {score.get('total', 0)}/100\n"
-        )
-
-        rt_adj = score.get('realtime_adjustment', 0)
-        if rt_adj != 0:
-            msg += f"   • ⚡ لحظي: {rt_adj:+d}\n"
-
-        msg += f"\n🎯 <b>الأهداف:</b>\n"
-
-        successful_tps = [tp for tp in tp_orders if tp.get('success')]
-
-        for tp in successful_tps:
-            tp_price = tp.get('tp_price', 0)
-            tp_ratio = tp.get('ratio', 0)
-            msg += f"   ✅ TP{tp['level']}: <code>{tp_price}</code> ({tp_ratio*100:.0f}%)\n"
-
-        if sl_price:
-            msg += f"   🛡️ SL: <code>{sl_price}</code>\n"
-
-        tp_count = verification.get('details', {}).get('tp_count', 0)
-        sl_count = verification.get('details', {}).get('sl_count', 0)
-
-        msg += f"\n✅ TP: {tp_count} | SL: {sl_count}\n"
-        msg += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-
-        async def send_async():
-            await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode="HTML"
-            )
-
-        threading.Thread(target=run_async_safe, args=(send_async(),), daemon=True).start()
-
-    except Exception as e:
-        logger.error(f"❌ خطأ في إشعار فتح الصفقة: {e}")
-
-
-# ==================== المسح ====================
-
-def auto_sniper_scanner():
-    global _last_auto_scan, _auto_scan_enabled
-
-    logger.info("🎯 بدء مسح القناص...")
-
-    while _auto_scan_enabled:
-        try:
-            current_time = time.time()
-
-            if check_trading_pause():
-                time.sleep(60)
-                continue
-
-            if current_time - _last_auto_scan >= AUTO_SCAN_INTERVAL:
-                _last_auto_scan = current_time
-
-                positions = core.get_open_positions()
-                logger.info(f"📊 الصفقات: {len(positions)}/{MAX_OPEN_POSITIONS}")
-
-                if len(positions) >= MAX_OPEN_POSITIONS:
-                    logger.info("⏸️ حد أقصى - انتظار")
-                    time.sleep(30)
-                    continue
-
-                if MARKET_REGIME_AVAILABLE:
-                    try:
-                        regime = MarketRegime.get_regime()
-                        logger.info(f"📊 السوق: {regime.get('regime_ar')} - {regime.get('recommendation')}")
-                    except:
-                        pass
-
-                logger.info("🎯 مسح...")
-
-                signals = strat.scan_sniper_signals()
-
-                if signals:
-                    logger.info(f"🎯 {len(signals)} إشارة")
-
-                    for signal in signals:
-                        positions = core.get_open_positions()
-                        if len(positions) >= MAX_OPEN_POSITIONS:
-                            break
-
-                        if execute_sniper_trade(signal):
-                            logger.info(f"✅ {signal['symbol']}")
-                            time.sleep(2)
-                else:
-                    logger.info("🔍 لا توجد إشارات")
-
-                logger.info(f"⏰ الدورة التالية: {AUTO_SCAN_INTERVAL // 60} دقيقة")
-
-            time.sleep(30)
-
-        except Exception as e:
-            logger.error(f"خطأ: {e}")
-            time.sleep(60)
-
-
-# ==================== الحالة ====================
-
-def get_system_status():
-    positions = core.get_open_positions()
-    balance_info = get_full_balance_info()
-
-    daily = core.get_accurate_daily_pnl()
-    weekly = core.get_accurate_weekly_pnl()
-    monthly = core.get_accurate_monthly_pnl()
-
-    is_paused, pause_remaining = core.is_trading_paused()
-
-    regime_info = {}
-    if MARKET_REGIME_AVAILABLE:
-        try:
-            regime_info = MarketRegime.get_regime()
-        except:
-            pass
-
-    memory_info = {}
-    if MEMORY_AVAILABLE:
-        try:
-            memory_info = memory.get_memory_stats()
-        except:
-            pass
-
-    realtime_info = {}
-    if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
-        try:
-            realtime_info = realtime_data.get_realtime_status()
-        except:
-            pass
-
-    return {
-        'auto_scan': _auto_scan_enabled,
-        'auto_trading': _auto_trading_enabled,
-        'open_positions': len(positions),
-        'max_positions': MAX_OPEN_POSITIONS,
-        'balance_available': balance_info.get('available', 0),
-        'balance_wallet': balance_info.get('wallet', 0),
-        'balance_pnl': balance_info.get('unrealized_pnl', 0),
-        'daily_pnl': daily['daily_pnl'],
-        'weekly_pnl': weekly['weekly_pnl'],
-        'monthly_pnl': monthly['monthly_pnl'],
-        'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
-        'strategy': 'نظام القناص v4.1.2',
-        'groq_available': GROQ_AVAILABLE,
-        'memory_available': MEMORY_AVAILABLE,
-        'market_regime_available': MARKET_REGIME_AVAILABLE,
-        'realtime_available': REALTIME_AVAILABLE,
-        'realtime_info': realtime_info,
-        'is_paused': is_paused,
-        'pause_remaining': pause_remaining,
-        'trailing_sl_status': core.get_trailing_sl_status(),
-        'market_regime': regime_info,
-        'memory_stats': memory_info,
-        'consecutive_losses': core.get_consecutive_losses()
-    }
-
-
-def toggle_auto_trading():
-    global _auto_trading_enabled
-    _auto_trading_enabled = not _auto_trading_enabled
-    status = "مفعل" if _auto_trading_enabled else "معطل"
-    return f"✅ <b>التنفيذ التلقائي: {status}</b>"
-
-
-def toggle_auto_scan():
-    global _auto_scan_enabled
-    _auto_scan_enabled = not _auto_scan_enabled
-    status = "مفعل" if _auto_scan_enabled else "معطل"
-    return f"✅ <b>المسح التلقائي: {status}</b>"
-
-
-# ==================== التشغيل ====================
-
-def start_scanner_threads():
-    """تشغيل الخيوط - تُستدعى من post_init في bot_enhanced.py"""
-    logger.info("🔧 بدء تشغيل الخيوط...")
-
-    # تهيئة WebSocket اللحظي
-    if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
-        try:
-            all_symbols = core.get_all_futures_symbols()
-
-            if not all_symbols:
-                logger.warning("⚠️ قائمة الرموز فارغة - استخدام القائمة الاحتياطية")
-                all_symbols = FALLBACK_SYMBOLS
-
-            top_symbols = all_symbols[:min(REALTIME_MAX_SUBSCRIPTIONS, TOP_SYMBOLS_TO_SCAN)]
-
-            if realtime_data.init_realtime(top_symbols):
-                logger.info(f"✅ WebSocket اللحظي مفعل ({len(top_symbols)} عملة)")
-                logger.info("⏳ انتظار 8 ثواني لتجميع البيانات الأولية...")
-                time.sleep(8)
-
-                rt_status = realtime_data.get_realtime_status()
-                logger.info(f"📊 حالة WebSocket: {rt_status}")
-            else:
-                logger.warning("⚠️ فشل تشغيل WebSocket اللحظي")
-        except Exception as e:
-            logger.error(f"❌ خطأ في تهيئة WebSocket: {e}")
-            import traceback
-            traceback.print_exc()
-
-    # تشغيل خيوط المراقبة
-    scanner = threading.Thread(target=auto_sniper_scanner, daemon=True)
-    scanner.start()
-
-    monitor = threading.Thread(target=monitor_positions_loop, daemon=True)
-    monitor.start()
-
-    tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True)
-    tp_sl_monitor.start()
-
-    logger.info("✅ تم تشغيل 3 خيوط مراقبة")
-
-
-def main():
-    """الدالة الرئيسية"""
-    try:
-        send_startup()
-        time.sleep(3)
-
-        logger.info("🧹 مزامنة ملف الصفقات مع Binance...")
-        tgbot.cleanup_state_file()
-
-        if MEMORY_AVAILABLE:
-            try:
-                logger.info("🔄 مزامنة profit_history.json...")
-                memory.sync_profit_history()
-                logger.info("✅ تم مزامنة profit_history.json")
-            except Exception as e:
-                logger.warning(f"⚠️ فشل مزامنة profit_history: {e}")
-
-        # 🔥 لا نشغّل start_scanner_threads هنا!
-        # ستُشغَّل من bot_enhanced.run_bot() بعد بدء polling
-
-        logger.info("🎯 نظام القناص v4.1.2 مفعل")
-        logger.info(f"⏰ المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
-        logger.info(f"🔒 Trailing SL: {'✅' if TRAILING_SL_ENABLED else '❌'}")
-        logger.info(f"🔒 Breakeven بعد TP1: ✅ ({TP_MULTIPLE_LEVELS[0]}%)")
-        logger.info(f"📊 فلتر السيولة: {'✅' if ENABLE_VOLUME_FILTER else '❌'}")
-        logger.info(f"🛡️ منع الصفقات المتعاكسة: {'✅' if ENABLE_OPPOSITE_DIRECTION_FILTER else '❌'}")
-        logger.info(f"⚡ بيانات لحظية: {'✅' if (REALTIME_AVAILABLE and ENABLE_REALTIME_DATA) else '❌'}")
-        logger.info(f"🎯 MIN_SCORE: {MIN_SCORE_REQUIRED}")
-        logger.info(f"📈 MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
-        logger.info(f"🛑 توقف بعد {MAX_CONSECUTIVE_LOSSES} خسائر")
-
-        # 🔥 شغّل البوت مباشرة (blocking)
-        tgbot.run_bot()
-
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-if __name__ == "__main__":
-    main()
+            retu
