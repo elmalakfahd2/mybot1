@@ -61,8 +61,8 @@ GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
-TRADE_USDT = 20
-LEVERAGE = 5
+TRADE_USDT = 15
+LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5                 # ✅ v4.1.5: من 3 → 5
 
 # ==================== TP المتعدد ====================
