@@ -1,7 +1,11 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v4.1.7
+# 📁 ملف: main_enhanced.py - الإصدار v4.1.8
+# 🔧 التعديلات v4.1.8:
+#    - 🔥 إصلاح bad operand type for unary -: 'str'
+#    - 🔥 تحويل آمن للأنواع في record_closed_trade
+#    - 🔥 تحويل آمن للأنواع في send_close_notification
 # 🔧 التعديلات v4.1.7:
-#    - 🔥 إضافة إشعار إغلاق الصفقات (PnL + السبب)
+#    - إضافة إشعار إغلاق الصفقات
 # 🔧 التعديلات v4.1.6:
 #    - تبسيط start_scanner_threads
 #    - logs في كل خطوة
@@ -88,6 +92,24 @@ FALLBACK_SYMBOLS = [
 ]
 
 
+# ==================== 🔥 دوال تحويل آمنة ====================
+
+def safe_float(value, default=0.0):
+    """تحويل آمن إلى float"""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(value, default=0):
+    """تحويل آمن إلى int"""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 # ==================== التمييز بين صفقات البوت واليدوية ====================
 
 def _load_bot_owned_keys():
@@ -140,10 +162,10 @@ def get_full_balance_info():
         for asset in account.get('assets', []):
             if asset.get('asset') == 'USDT':
                 return {
-                    'available': float(asset.get('availableBalance', 0)),
-                    'wallet': float(asset.get('walletBalance', 0)),
-                    'unrealized_pnl': float(asset.get('unrealizedProfit', 0)),
-                    'margin': float(asset.get('totalPositionInitialMargin', 0)),
+                    'available': safe_float(asset.get('availableBalance', 0)),
+                    'wallet': safe_float(asset.get('walletBalance', 0)),
+                    'unrealized_pnl': safe_float(asset.get('unrealizedProfit', 0)),
+                    'margin': safe_float(asset.get('totalPositionInitialMargin', 0)),
                 }
         return {}
     except:
@@ -185,7 +207,7 @@ def send_startup():
         monthly = core.get_accurate_monthly_pnl()
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.1.7</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.1.8</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
@@ -196,9 +218,9 @@ def send_startup():
             f"   • صفقات البوت: {len(bot_positions)}/{MAX_OPEN_POSITIONS}\n"
             f"   • صفقاتك اليدوية: {len(manual_positions)}\n\n"
             f"📈 <b>الأرباح:</b>\n"
-            f"   • اليوم: {daily['daily_pnl']:.2f}\n"
-            f"   • الأسبوع: {weekly['weekly_pnl']:.2f}\n"
-            f"   • الشهر: {monthly['monthly_pnl']:.2f}\n\n"
+            f"   • اليوم: {safe_float(daily.get('daily_pnl', 0)):.2f}\n"
+            f"   • الأسبوع: {safe_float(weekly.get('weekly_pnl', 0)):.2f}\n"
+            f"   • الشهر: {safe_float(monthly.get('monthly_pnl', 0)):.2f}\n\n"
             f"🔔 <b>إشعار إغلاق الصفقات:</b> ✅ مفعل\n\n"
             f"✅ <b>النظام جاهز!</b>"
         )
@@ -318,19 +340,19 @@ def check_closed_trades():
 
 def record_closed_trade(trade_data):
     """
-    🔥 v4.1.7: تسجيل الصفقة + إرسال إشعار إغلاق
+    🔥 v4.1.8: تسجيل الصفقة + إشعار إغلاق (مع تحويل آمن)
     """
     try:
         symbol = trade_data.get('symbol')
         direction = trade_data.get('direction', 'UNKNOWN')
-        entry_price = trade_data.get('entry_price', 0)
-        quantity = trade_data.get('quantity', 0)
+        entry_price = safe_float(trade_data.get('entry_price', 0))
+        quantity = safe_float(trade_data.get('quantity', 0))
         position_side = trade_data.get('positionSide', 'LONG')
         entry_time_iso = trade_data.get('entry_time_iso') or datetime.now().isoformat()
 
         logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
 
-        # ==================== جلب PnL الحقيقي ====================
+        # ==================== جلب PnL الحقيقي (تحويل آمن) ====================
         pnl = 0.0
         try:
             client_obj = core.get_client()
@@ -341,11 +363,13 @@ def record_closed_trade(trade_data):
                     limit=5
                 )
                 if income:
-                    # آخر عنصر هو الأحدث
-                    pnl = float(income[-1]['income'])
-                    logger.info(f"💰 PnL من Binance: {pnl:+.4f}")
+                    # 🔥 v4.1.8: تحويل آمن
+                    raw_income = income[-1].get('income', 0)
+                    pnl = safe_float(raw_income, 0.0)
+                    logger.info(f"💰 PnL من Binance: {pnl:+.4f} (raw: {raw_income}, type: {type(raw_income).__name__})")
         except Exception as e:
             logger.warning(f"⚠️ فشل جلب PnL لـ {symbol}: {e}")
+            pnl = 0.0
 
         # ==================== تسجيل في الذاكرة ====================
         if MEMORY_AVAILABLE:
@@ -357,11 +381,11 @@ def record_closed_trade(trade_data):
                     exit_price=0,
                     quantity=quantity,
                     pnl=pnl,
-                    confidence=trade_data.get('confidence', 0),
-                    timeframe_alignment=trade_data.get('timeframe_alignment', 0),
-                    volume_ratio=trade_data.get('volume_ratio', 0),
+                    confidence=safe_float(trade_data.get('confidence', 0)),
+                    timeframe_alignment=safe_float(trade_data.get('timeframe_alignment', 0)),
+                    volume_ratio=safe_float(trade_data.get('volume_ratio', 0)),
                     groq_recommendation=trade_data.get('groq_recommendation', ''),
-                    groq_confidence=trade_data.get('groq_confidence', 0),
+                    groq_confidence=safe_float(trade_data.get('groq_confidence', 0)),
                     score_details=trade_data.get('sniper_score', {}),
                     exit_reason="auto_detected",
                     entry_time_iso=entry_time_iso
@@ -375,7 +399,13 @@ def record_closed_trade(trade_data):
 
         core.record_trade_result(pnl)
 
-        # ==================== 🔥 إرسال إشعار الإغلاق ====================
+        # ==================== إرسال إشعار الإغلاق ====================
+        try:
+            opened_at = safe_float(trade_data.get('opened_at', time.time()), time.time())
+            duration_minutes = safe_int((time.time() - opened_at) / 60, 0)
+        except:
+            duration_minutes = 0
+
         send_close_notification(
             symbol=symbol,
             direction=direction,
@@ -383,7 +413,7 @@ def record_closed_trade(trade_data):
             entry_price=entry_price,
             quantity=quantity,
             pnl=pnl,
-            duration_minutes=int((time.time() - trade_data.get('opened_at', time.time())) / 60)
+            duration_minutes=duration_minutes
         )
 
         logger.info(f"✅ تم معالجة إغلاق: {symbol} PnL: {pnl:+.4f}")
@@ -395,11 +425,20 @@ def record_closed_trade(trade_data):
 
 def send_close_notification(symbol, direction, position_side, entry_price, quantity, pnl, duration_minutes=0):
     """
-    🔥 v4.1.7: إرسال إشعار إغلاق الصفقة
+    🔥 v4.1.8: إرسال إشعار إغلاق الصفقة (مع تحويل آمن)
     """
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
+
+        # 🔥 v4.1.8: تحويل آمن للأنواع
+        symbol = str(symbol) if symbol else "UNKNOWN"
+        direction = str(direction) if direction else "UNKNOWN"
+        position_side = str(position_side) if position_side else "BOTH"
+        entry_price = safe_float(entry_price, 0.0)
+        quantity = safe_float(quantity, 0.0)
+        pnl = safe_float(pnl, 0.0)
+        duration_minutes = safe_int(duration_minutes, 0)
 
         # ==================== تحديد الحالة ====================
         if pnl > 0.01:
@@ -417,15 +456,17 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
         if position_value > 0:
             pnl_percent = (pnl / position_value) * 100
         else:
-            pnl_percent = 0
+            pnl_percent = 0.0
 
         # ==================== حساب المدة ====================
         if duration_minutes > 60:
             hours = duration_minutes // 60
             mins = duration_minutes % 60
             duration_text = f"{hours} س {mins} د"
-        else:
+        elif duration_minutes > 0:
             duration_text = f"{duration_minutes} دقيقة"
+        else:
+            duration_text = "أقل من دقيقة"
 
         # ==================== بناء الرسالة ====================
         msg = (
@@ -453,6 +494,7 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
 
     except Exception as e:
         logger.error(f"❌ خطأ في إشعار الإغلاق: {e}")
+        traceback.print_exc()
 
 
 # ==================== خيط المسح التلقائي ====================
@@ -533,27 +575,27 @@ def execute_sniper_trade(signal):
 
         logger.info(f"🚀 فحص {symbol} {direction}")
 
-        total_score = signal.get('total_score', 0)
+        total_score = safe_float(signal.get('total_score', 0))
         if total_score < MIN_SCORE_REQUIRED:
             logger.warning(f"🛑 {symbol}: نقاط {total_score} < {MIN_SCORE_REQUIRED}")
             return False
 
         analysis = signal.get('analysis', {})
         volume = analysis.get('volume_analysis', {})
-        vol_ratio = volume.get('volume_5m_ratio', 0)
+        vol_ratio = safe_float(volume.get('volume_5m_ratio', 0))
 
         if vol_ratio < MIN_VOLUME_FACTOR:
             logger.warning(f"🛑 {symbol}: حجم {vol_ratio}x < {MIN_VOLUME_FACTOR}")
             return False
 
         groq_rec = signal.get('groq_recommendation', '')
-        groq_conf = signal.get('groq_confidence', 0)
+        groq_conf = safe_float(signal.get('groq_confidence', 0))
 
         if groq_rec == 'رفض' and groq_conf >= 70:
             logger.warning(f"🛑 {symbol}: Groq رفض ({groq_conf}%)")
             return False
 
-        confidence = signal.get('confidence', 0)
+        confidence = safe_float(signal.get('confidence', 0))
         if confidence < MIN_CONFIDENCE_AUTO:
             logger.warning(f"🛑 {symbol}: ثقة {confidence}% < {MIN_CONFIDENCE_AUTO}%")
             return False
@@ -570,7 +612,7 @@ def execute_sniper_trade(signal):
 
         if ENABLE_OPPOSITE_DIRECTION_FILTER:
             for pos in bot_positions:
-                pos_amt = float(pos.get('positionAmt', 0))
+                pos_amt = safe_float(pos.get('positionAmt', 0))
                 pos_direction = "BUY" if pos_amt > 0 else "SELL"
                 if pos_direction != direction:
                     logger.warning(f"🛑 {symbol}: اتجاه معاكس")
@@ -625,8 +667,8 @@ def execute_sniper_trade(signal):
                     'entry_price': result['entry_price'],
                     'quantity': result['quantity'],
                     'positionSide': result['positionSide'],
-                    'confidence': signal.get('confidence', 0),
-                    'timeframe_alignment': signal.get('timeframe_alignment', 0),
+                    'confidence': safe_float(signal.get('confidence', 0)),
+                    'timeframe_alignment': safe_float(signal.get('timeframe_alignment', 0)),
                     'volume_ratio': vol_ratio,
                     'groq_recommendation': groq_rec,
                     'groq_confidence': groq_conf,
@@ -643,6 +685,7 @@ def execute_sniper_trade(signal):
 
     except Exception as e:
         logger.error(f"خطأ في التنفيذ: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -656,9 +699,9 @@ def send_trade_notification(signal, result):
         score = signal.get('score_details', {})
         verification = result.get('verification', {})
 
-        entry_price = result['entry_price']
-        position_side = result['positionSide']
-        quantity = result['quantity']
+        entry_price = safe_float(result.get('entry_price', 0))
+        position_side = result.get('positionSide', 'LONG')
+        quantity = safe_float(result.get('quantity', 0))
 
         tp_results = result.get('tp_results', {})
         tp_orders = tp_results.get('tp_orders', [])
@@ -670,15 +713,15 @@ def send_trade_notification(signal, result):
             f"📈 <b>الاتجاه:</b> {emoji} {signal['direction']}\n"
             f"💵 <b>الدخول:</b> <code>{entry_price}</code>\n"
             f"⚖️ <b>الكمية:</b> <code>{quantity}</code>\n"
-            f"📊 <b>النقاط:</b> {score.get('total', 0)}/100\n\n"
+            f"📊 <b>النقاط:</b> {safe_int(score.get('total', 0))}/100\n\n"
             f"🎯 <b>الأهداف:</b>\n"
         )
 
         for tp in [tp for tp in tp_orders if tp.get('success')]:
-            msg += f"   ✅ TP{tp['level']}: <code>{tp.get('tp_price', 0)}</code>\n"
+            msg += f"   ✅ TP{tp['level']}: <code>{safe_float(tp.get('tp_price', 0))}</code>\n"
 
         if sl_price:
-            msg += f"   🛡️ SL: <code>{sl_price}</code>\n"
+            msg += f"   🛡️ SL: <code>{safe_float(sl_price)}</code>\n"
 
         msg += f"\n⏰ {datetime.now().strftime('%H:%M:%S')}"
 
@@ -712,12 +755,12 @@ def get_system_status():
         'max_positions': MAX_OPEN_POSITIONS,
         'manual_positions': len(manual_positions),
         'total_real_positions': len(all_positions),
-        'balance_available': balance_info.get('available', 0),
-        'balance_wallet': balance_info.get('wallet', 0),
-        'balance_pnl': balance_info.get('unrealized_pnl', 0),
-        'daily_pnl': daily['daily_pnl'],
-        'weekly_pnl': weekly['weekly_pnl'],
-        'monthly_pnl': monthly['monthly_pnl'],
+        'balance_available': safe_float(balance_info.get('available', 0)),
+        'balance_wallet': safe_float(balance_info.get('wallet', 0)),
+        'balance_pnl': safe_float(balance_info.get('unrealized_pnl', 0)),
+        'daily_pnl': safe_float(daily.get('daily_pnl', 0)),
+        'weekly_pnl': safe_float(weekly.get('weekly_pnl', 0)),
+        'monthly_pnl': safe_float(monthly.get('monthly_pnl', 0)),
         'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
         'is_paused': is_paused,
         'pause_remaining': pause_remaining,
@@ -739,43 +782,33 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== التشغيل v4.1.7 ====================
+# ==================== التشغيل v4.1.8 ====================
 
 def start_scanner_threads():
     """تشغيل الخيوط"""
     logger.info("🔧 [START] بدء تشغيل الخيوط...")
 
-    # WebSocket في thread منفصل
-    def init_websocket_background():
-        try:
-            logger.info("⚡ [WS-THREAD] بدء WebSocket...")
+    if ENABLE_REALTIME_DATA and REALTIME_AVAILABLE:
+        def init_websocket_background():
+            try:
+                logger.info("⚡ [WS-THREAD] بدء WebSocket...")
+                all_symbols = core.get_all_futures_symbols()
+                if not all_symbols:
+                    all_symbols = FALLBACK_SYMBOLS
+                top_symbols = all_symbols[:min(REALTIME_MAX_SUBSCRIPTIONS, TOP_SYMBOLS_TO_SCAN)]
+                if realtime_data.init_realtime(top_symbols):
+                    logger.info(f"✅ [WS-THREAD] WebSocket مفعل ({len(top_symbols)} عملة)")
+                else:
+                    logger.warning("⚠️ [WS-THREAD] فشل تشغيل WebSocket")
+            except Exception as e:
+                logger.error(f"❌ [WS-THREAD] خطأ: {e}")
 
-            if not REALTIME_AVAILABLE or not ENABLE_REALTIME_DATA:
-                logger.info("ℹ️ [WS-THREAD] WebSocket معطل")
-                return
-
-            all_symbols = core.get_all_futures_symbols()
-            if not all_symbols:
-                logger.warning("⚠️ [WS-THREAD] قائمة الرموز فارغة - استخدام fallback")
-                all_symbols = FALLBACK_SYMBOLS
-
-            top_symbols = all_symbols[:min(REALTIME_MAX_SUBSCRIPTIONS, TOP_SYMBOLS_TO_SCAN)]
-
-            if realtime_data.init_realtime(top_symbols):
-                logger.info(f"✅ [WS-THREAD] WebSocket اللحظي مفعل ({len(top_symbols)} عملة)")
-            else:
-                logger.warning("⚠️ [WS-THREAD] فشل تشغيل WebSocket")
-
-        except Exception as e:
-            logger.error(f"❌ [WS-THREAD] خطأ: {e}")
-            traceback.print_exc()
-
-    if ENABLE_REALTIME_DATA:
         ws_thread = threading.Thread(target=init_websocket_background, daemon=True, name="WebSocketInit")
         ws_thread.start()
         logger.info("✅ [START] تم بدء WebSocket في الخلفية")
+    else:
+        logger.info("ℹ️ [START] WebSocket معطل")
 
-    # scanner
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
@@ -783,7 +816,6 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
-    # monitor
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="TrailingMonitor")
         monitor.start()
@@ -791,7 +823,6 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
-    # tp_sl_monitor
     try:
         tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True, name="TPSLMonitor")
         tp_sl_monitor.start()
@@ -805,7 +836,7 @@ def start_scanner_threads():
 
 def main():
     try:
-        logger.info("🚀 [MAIN] بدء main_enhanced v4.1.7...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v4.1.8...")
 
         send_startup()
         time.sleep(3)
@@ -823,7 +854,7 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ [MAIN] فشل مزامنة profit_history: {e}")
 
-        logger.info("🎯 [MAIN] نظام القناص v4.1.7 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v4.1.8 مفعل")
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
         logger.info(f"📈 [MAIN] MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
