@@ -1,11 +1,14 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v4.1.6
+# 📁 ملف: main_enhanced.py - الإصدار v4.1.7
+# 🔧 التعديلات v4.1.7:
+#    - 🔥 إضافة إشعار إغلاق الصفقات (PnL + السبب)
 # 🔧 التعديلات v4.1.6:
-#    - 🔥 تبسيط start_scanner_threads
-#    - 🔥 logs في كل خطوة
-#    - 🔥 try/except حول كل خيط
-#    - 🔥 WebSocket لا يمنع بدء الخيوط
-# 📅 التاريخ: 2026-09-19
+#    - تبسيط start_scanner_threads
+#    - logs في كل خطوة
+#    - WebSocket في thread منفصل
+# 🔧 التعديلات v4.1.4:
+#    - تمييز صفقات البوت عن اليدوية
+# 📅 التاريخ: 2026-09-20
 # ==================================================
 
 import logging
@@ -182,7 +185,7 @@ def send_startup():
         monthly = core.get_accurate_monthly_pnl()
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.1.6</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v4.1.7</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
@@ -196,6 +199,7 @@ def send_startup():
             f"   • اليوم: {daily['daily_pnl']:.2f}\n"
             f"   • الأسبوع: {weekly['weekly_pnl']:.2f}\n"
             f"   • الشهر: {monthly['monthly_pnl']:.2f}\n\n"
+            f"🔔 <b>إشعار إغلاق الصفقات:</b> ✅ مفعل\n\n"
             f"✅ <b>النظام جاهز!</b>"
         )
 
@@ -218,7 +222,7 @@ def check_trading_pause():
     return False
 
 
-# ==================== 🔥 خيط مراقبة TP/SL ====================
+# ==================== خيط مراقبة TP/SL ====================
 
 def monitor_tp_sl_loop():
     try:
@@ -260,7 +264,7 @@ def monitor_tp_sl_loop():
         traceback.print_exc()
 
 
-# ==================== 🔥 خيط مراقبة Trailing SL ====================
+# ==================== خيط مراقبة Trailing SL + الصفقات المغلقة ====================
 
 def monitor_positions_loop():
     try:
@@ -287,8 +291,9 @@ def monitor_positions_loop():
 
 
 def check_closed_trades():
+    """فحص الصفقات المغلقة وإرسال إشعار لكل واحدة"""
     try:
-        if not MEMORY_AVAILABLE or not ENABLE_TRADE_MEMORY:
+        if not _open_trades_tracking:
             return
 
         current_positions = core.get_open_positions()
@@ -296,39 +301,61 @@ def check_closed_trades():
 
         closed_keys = [k for k in list(_open_trades_tracking.keys()) if k not in current_keys]
 
+        if closed_keys:
+            logger.info(f"🔔 اكتشف {len(closed_keys)} صفقة مغلقة")
+
         for key in closed_keys:
             trade_data = _open_trades_tracking[key]
             try:
                 record_closed_trade(trade_data)
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"خطأ في تسجيل الصفقة المغلقة: {e}")
             del _open_trades_tracking[key]
 
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"خطأ في check_closed_trades: {e}")
 
 
 def record_closed_trade(trade_data):
+    """
+    🔥 v4.1.7: تسجيل الصفقة + إرسال إشعار إغلاق
+    """
     try:
-        if not MEMORY_AVAILABLE:
-            return
-
         symbol = trade_data.get('symbol')
+        direction = trade_data.get('direction', 'UNKNOWN')
+        entry_price = trade_data.get('entry_price', 0)
+        quantity = trade_data.get('quantity', 0)
+        position_side = trade_data.get('positionSide', 'LONG')
         entry_time_iso = trade_data.get('entry_time_iso') or datetime.now().isoformat()
 
-        client_obj = core.get_client()
-        if client_obj:
-            income = client_obj.futures_income_history(
-                incomeType="REALIZED_PNL", symbol=symbol, limit=5
-            )
-            if income:
-                pnl = float(income[-1]['income'])
+        logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
+
+        # ==================== جلب PnL الحقيقي ====================
+        pnl = 0.0
+        try:
+            client_obj = core.get_client()
+            if client_obj:
+                income = client_obj.futures_income_history(
+                    incomeType="REALIZED_PNL",
+                    symbol=symbol,
+                    limit=5
+                )
+                if income:
+                    # آخر عنصر هو الأحدث
+                    pnl = float(income[-1]['income'])
+                    logger.info(f"💰 PnL من Binance: {pnl:+.4f}")
+        except Exception as e:
+            logger.warning(f"⚠️ فشل جلب PnL لـ {symbol}: {e}")
+
+        # ==================== تسجيل في الذاكرة ====================
+        if MEMORY_AVAILABLE:
+            try:
                 memory.record_trade(
                     symbol=symbol,
-                    direction=trade_data.get('direction', 'UNKNOWN'),
-                    entry_price=trade_data.get('entry_price', 0),
+                    direction=direction,
+                    entry_price=entry_price,
                     exit_price=0,
-                    quantity=trade_data.get('quantity', 0),
+                    quantity=quantity,
                     pnl=pnl,
                     confidence=trade_data.get('confidence', 0),
                     timeframe_alignment=trade_data.get('timeframe_alignment', 0),
@@ -339,16 +366,96 @@ def record_closed_trade(trade_data):
                     exit_reason="auto_detected",
                     entry_time_iso=entry_time_iso
                 )
-                core.record_trade_result(pnl)
                 try:
                     memory.sync_profit_history()
                 except:
                     pass
+            except Exception as e:
+                logger.error(f"خطأ في تسجيل الصفقة في الذاكرة: {e}")
+
+        core.record_trade_result(pnl)
+
+        # ==================== 🔥 إرسال إشعار الإغلاق ====================
+        send_close_notification(
+            symbol=symbol,
+            direction=direction,
+            position_side=position_side,
+            entry_price=entry_price,
+            quantity=quantity,
+            pnl=pnl,
+            duration_minutes=int((time.time() - trade_data.get('opened_at', time.time())) / 60)
+        )
+
+        logger.info(f"✅ تم معالجة إغلاق: {symbol} PnL: {pnl:+.4f}")
+
     except Exception as e:
-        logger.error(f"خطأ في تسجيل: {e}")
+        logger.error(f"خطأ في record_closed_trade: {e}")
+        traceback.print_exc()
 
 
-# ==================== 🔥 خيط المسح التلقائي ====================
+def send_close_notification(symbol, direction, position_side, entry_price, quantity, pnl, duration_minutes=0):
+    """
+    🔥 v4.1.7: إرسال إشعار إغلاق الصفقة
+    """
+    try:
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_TOKEN)
+
+        # ==================== تحديد الحالة ====================
+        if pnl > 0.01:
+            emoji = "🟢"
+            title = "✅ <b>تم إغلاق الصفقة بربح</b>"
+        elif pnl < -0.01:
+            emoji = "🔴"
+            title = "❌ <b>تم إغلاق الصفقة بخسارة</b>"
+        else:
+            emoji = "⚪"
+            title = "⚪ <b>تم إغلاق الصفقة (تعادل)</b>"
+
+        # ==================== حساب النسبة ====================
+        position_value = entry_price * quantity
+        if position_value > 0:
+            pnl_percent = (pnl / position_value) * 100
+        else:
+            pnl_percent = 0
+
+        # ==================== حساب المدة ====================
+        if duration_minutes > 60:
+            hours = duration_minutes // 60
+            mins = duration_minutes % 60
+            duration_text = f"{hours} س {mins} د"
+        else:
+            duration_text = f"{duration_minutes} دقيقة"
+
+        # ==================== بناء الرسالة ====================
+        msg = (
+            f"{title}\n\n"
+            f"💰 <b>العملة:</b> {symbol}\n"
+            f"📈 <b>الاتجاه:</b> {direction} ({position_side})\n"
+            f"💵 <b>الدخول:</b> <code>{entry_price}</code>\n"
+            f"⚖️ <b>الكمية:</b> <code>{quantity}</code>\n\n"
+            f"{emoji} <b>PnL:</b> <code>{pnl:+.4f}</code> USDT\n"
+            f"📊 <b>النسبة:</b> <code>{pnl_percent:+.2f}%</code>\n"
+            f"⏱️ <b>المدة:</b> {duration_text}\n\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        )
+
+        async def send_async():
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg,
+                parse_mode="HTML"
+            )
+
+        threading.Thread(target=run_async_safe, args=(send_async(),), daemon=True).start()
+
+        logger.info(f"🔔 تم إرسال إشعار الإغلاق: {symbol} {pnl:+.4f}")
+
+    except Exception as e:
+        logger.error(f"❌ خطأ في إشعار الإغلاق: {e}")
+
+
+# ==================== خيط المسح التلقائي ====================
 
 def auto_sniper_scanner():
     try:
@@ -540,6 +647,7 @@ def execute_sniper_trade(signal):
 
 
 def send_trade_notification(signal, result):
+    """إشعار فتح الصفقة"""
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -631,17 +739,13 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== 🔥 التشغيل v4.1.6 ====================
+# ==================== التشغيل v4.1.7 ====================
 
 def start_scanner_threads():
-    """
-    🔥 v4.1.6: تبسيط كامل
-    WebSocket في thread منفصل
-    الخيوط الثلاثة تبدأ فوراً
-    """
+    """تشغيل الخيوط"""
     logger.info("🔧 [START] بدء تشغيل الخيوط...")
 
-    # ==================== 1. WebSocket في thread منفصل ====================
+    # WebSocket في thread منفصل
     def init_websocket_background():
         try:
             logger.info("⚡ [WS-THREAD] بدء WebSocket...")
@@ -666,45 +770,42 @@ def start_scanner_threads():
             logger.error(f"❌ [WS-THREAD] خطأ: {e}")
             traceback.print_exc()
 
-    ws_thread = threading.Thread(target=init_websocket_background, daemon=True, name="WebSocketInit")
-    ws_thread.start()
-    logger.info("✅ [START] تم بدء WebSocket في الخلفية")
+    if ENABLE_REALTIME_DATA:
+        ws_thread = threading.Thread(target=init_websocket_background, daemon=True, name="WebSocketInit")
+        ws_thread.start()
+        logger.info("✅ [START] تم بدء WebSocket في الخلفية")
 
-    # ==================== 2. خيط المسح ====================
+    # scanner
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
         logger.info("✅ [START] تم بدء scanner thread")
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
-        traceback.print_exc()
 
-    # ==================== 3. خيط Trailing SL ====================
+    # monitor
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="TrailingMonitor")
         monitor.start()
         logger.info("✅ [START] تم بدء monitor thread")
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
-        traceback.print_exc()
 
-    # ==================== 4. خيط مراقبة TP/SL ====================
+    # tp_sl_monitor
     try:
         tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True, name="TPSLMonitor")
         tp_sl_monitor.start()
         logger.info("✅ [START] تم بدء tp_sl_monitor thread")
     except Exception as e:
         logger.error(f"❌ [START] فشل tp_sl_monitor: {e}")
-        traceback.print_exc()
 
-    # ==================== تأكيد ====================
     time.sleep(2)
     logger.info(f"✅ [START] عدد الخيوط النشطة: {threading.active_count()}")
 
 
 def main():
     try:
-        logger.info("🚀 [MAIN] بدء main_enhanced...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v4.1.7...")
 
         send_startup()
         time.sleep(3)
@@ -722,10 +823,11 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ [MAIN] فشل مزامنة profit_history: {e}")
 
-        logger.info("🎯 [MAIN] نظام القناص v4.1.6 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v4.1.7 مفعل")
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
         logger.info(f"📈 [MAIN] MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
+        logger.info(f"🔔 [MAIN] إشعار إغلاق الصفقات: ✅")
 
         logger.info("🚀 [MAIN] بدء البوت...")
         tgbot.run_bot()
