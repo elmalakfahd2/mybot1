@@ -61,13 +61,13 @@ GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
-TRADE_USDT = 15
-LEVERAGE = 10
+TRADE_USDT = 10
+LEVERAGE = 20
 MAX_OPEN_POSITIONS = 5                 # ✅ v4.1.5: من 3 → 5
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]
+TP_MULTIPLE_LEVELS = [1.3, 2.2, 3.0]
 TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
 SL_PERCENT = 2.0
 TP_PERCENT = 1.2
@@ -98,7 +98,7 @@ MIN_CONFIDENCE_AUTO = 57               # ✅ v4.1.5: من 60 → 55
 MIN_SIGNAL_STRENGTH = 5                # ✅ v4.1.5: من 6 → 5
 
 # ==================== نظام النقاط (v4.1.5 - مخفف) ====================
-MIN_SCORE_REQUIRED = 67                # ✅ v4.1.5: من 65 → 62
+MIN_SCORE_REQUIRED = 66                # ✅ v4.1.5: من 65 → 62
 MIN_ORDER_BOOK_POINTS = 2              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
 MIN_RSI_POINTS = 1                     # ✅ v4.1.5: من 3 → 0 (تعطيل الفلتر)
 
