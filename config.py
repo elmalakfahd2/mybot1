@@ -87,7 +87,7 @@ MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 5
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 67
+MIN_SCORE_REQUIRED = 66
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
