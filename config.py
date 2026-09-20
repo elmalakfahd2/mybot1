@@ -51,7 +51,7 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
 TRADE_USDT = 15
-LEVERAGE = 10
+LEVERAGE = 15
 MAX_OPEN_POSITIONS = 5
 
 # ==================== TP المتعدد ====================
@@ -81,13 +81,13 @@ MIN_MARKET_CAP_RANK = 200
 
 # ==================== شروط الدخول ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 0.99
+MIN_VOLUME_FACTOR = 1.1
 MIN_GROQ_CONFIDENCE = 60
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 5
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 65
+MIN_SCORE_REQUIRED = 67
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
