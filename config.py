@@ -1,13 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.1.8
+config.py - الإعدادات النهائية v4.1.5
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v4.1.8:
-    - تثبيت الإعدادات الحالية
-    - توثيق كل تعديل
+🔧 التعديلات v4.1.5 (المرحلة 1 - تخفيف تدريجي):
+    - خفض MIN_VOLUME_FACTOR من 1.2 → 0.9
+    - خفض MIN_ORDER_BOOK_POINTS من 4 → 0
+    - خفض MIN_SCORE_REQUIRED من 65 → 62
+    - خفض MIN_CONFIDENCE_AUTO من 60 → 55
+    - رفع MAX_OPEN_POSITIONS من 3 → 5
+    - رفع MAX_CORRELATION من 0.55 → 0.75
+    - تعطيل ENABLE_CORRELATION_FILTER مؤقتاً
+    - تعطيل ENABLE_OPPOSITE_DIRECTION_FILTER مؤقتاً
 
-📅 آخر تعديل: 2026-09-20
+🔧 التعديلات السابقة:
+    - v4.1: WebSocket (OBI, Pressure, Liquidations)
+    - v4.1.4: تمييز الصفقات اليدوية
+    - v4.0: Breakeven بعد TP1 + حساب العمولات
+
+📅 آخر تعديل: 2026-09-19
 """
 
 import os
@@ -52,7 +63,7 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 # ==================== التداول ====================
 TRADE_USDT = 15
 LEVERAGE = 10
-MAX_OPEN_POSITIONS = 5
+MAX_OPEN_POSITIONS = 5                 # ✅ v4.1.5: من 3 → 5
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
@@ -79,17 +90,17 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول ====================
+# ==================== شروط الدخول (v4.1.5 - مخففة) ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 1.1
+MIN_VOLUME_FACTOR = 0.99                # ✅ v4.1.5: من 1.2 → 0.9
 MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 55
-MIN_SIGNAL_STRENGTH = 5
+MIN_CONFIDENCE_AUTO = 55               # ✅ v4.1.5: من 60 → 55
+MIN_SIGNAL_STRENGTH = 5                # ✅ v4.1.5: من 6 → 5
 
-# ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 66
-MIN_ORDER_BOOK_POINTS = 2
-MIN_RSI_POINTS = 0
+# ==================== نظام النقاط (v4.1.5 - مخفف) ====================
+MIN_SCORE_REQUIRED = 65                # ✅ v4.1.5: من 65 → 62
+MIN_ORDER_BOOK_POINTS = 2              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
+MIN_RSI_POINTS = 0                     # ✅ v4.1.5: من 3 → 0 (تعطيل الفلتر)
 
 SCORE_WEIGHTS = {
     'timeframe_alignment': 20,
@@ -104,8 +115,8 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== فلتر دفتر الأوامر ====================
-ENABLE_ORDER_BOOK_FILTER = True
+# ==================== فلتر دفتر الأوامر والتنفيذ ====================
+ENABLE_ORDER_BOOK_FILTER = True        # يبقى True للـ spread/depth، لكن النقاط صفر
 MAX_SPREAD_PERCENT = 0.15
 MIN_DEPTH_MULTIPLIER = 10
 
@@ -113,16 +124,16 @@ MIN_DEPTH_MULTIPLIER = 10
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط ====================
-ENABLE_CORRELATION_FILTER = False
-MAX_CORRELATION = 0.75
+# ==================== فلتر الارتباط (v4.1.5 - معطل مؤقتاً) ====================
+ENABLE_CORRELATION_FILTER = False      # ✅ v4.1.5: من True → False (مؤقتاً)
+MAX_CORRELATION = 0.75                 # ✅ v4.1.5: من 0.55 → 0.75
 
-# ==================== منع الصفقات المتعاكسة ====================
-ENABLE_OPPOSITE_DIRECTION_FILTER = False
+# ==================== منع الصفقات المتعاكسة (v4.1.5 - معطل مؤقتاً) ====================
+ENABLE_OPPOSITE_DIRECTION_FILTER = False  # ✅ v4.1.5: من True → False (مؤقتاً)
 
 # ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 5.0
+DAILY_MAX_LOSS_PERCENT = 5.0           # يبقى 5% (خسارة محققة فقط)
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
@@ -180,12 +191,18 @@ LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
-# ==================== البيانات اللحظية (WebSocket) ====================
+# ==================== ⚡ البيانات اللحظية (WebSocket) v4.1 ====================
 ENABLE_REALTIME_DATA = False
 REALTIME_ADJUSTMENT_ENABLED = True
+
+# نطاق التعديل
 REALTIME_MIN_ADJUSTMENT = -5
 REALTIME_MAX_ADJUSTMENT = 10
+
+# إعدادات التدفق
 REALTIME_PRESSURE_WINDOW = 30
 REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
+
+# عدد العملات للاشتراك
 REALTIME_MAX_SUBSCRIPTIONS = 25
