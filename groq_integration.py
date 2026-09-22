@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v4.1.1
-🔧 التعديلات v4.1.1:
-   - 🔥 إصلاح تكرار اللوجات (إزالة handler المكرر)
-🔧 الإصدار السابق:
-   - إرسال بيانات حقيقية كاملة لـ Groq
-   - prompt محسن
+groq_integration.py - الإصدار v5.2
+🔧 التعديلات v5.2:
+   - دعم Gemini API كبديل لـ Groq
+   - التبديل التلقائي عند فشل الأساسي
+   - تحويل آمن للأنواع
+   - لا يحتوي على أي مفاتيح
 """
 
 import logging
@@ -13,10 +13,13 @@ import json
 import traceback
 import requests
 import re
+import os
 
 from config import (
     GROQ_API_KEY, ENABLE_GROQ_ANALYSIS, GROQ_MODEL,
-    GROQ_API_BASE_URL, GROQ_SEND_FULL_DATA
+    GROQ_API_BASE_URL, GROQ_SEND_FULL_DATA,
+    GEMINI_API_KEY, ENABLE_GEMINI_ANALYSIS, GEMINI_MODEL,
+    GEMINI_API_BASE_URL, AI_PROVIDER, AI_FALLBACK_ENABLED
 )
 
 # 🔥 لا نضيف handler — root logger في bot_enhanced.py يتولى ذلك
@@ -24,12 +27,14 @@ logger = logging.getLogger("groq_integration")
 logger.setLevel(logging.INFO)
 
 groq_available = False
+gemini_available = False
 client = None
 _client_type = None
 
 
+# ==================== تهيئة Groq ====================
+
 def _try_init_groq_library():
-    """تهيئة Groq بالمكتبة الرسمية"""
     global groq_available, client, _client_type
 
     try:
@@ -64,7 +69,6 @@ def _try_init_groq_library():
 
 
 def _init_groq_http_fallback():
-    """بديل HTTP"""
     global groq_available, client, _client_type
 
     if not GROQ_API_KEY:
@@ -73,7 +77,7 @@ def _init_groq_http_fallback():
     class GroqHTTPClient:
         def __init__(self, api_key):
             self.api_key = api_key
-            self.base_url = "https://api.groq.com/openai/v1"
+            self.base_url = GROQ_API_BASE_URL
             self.headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
@@ -103,7 +107,7 @@ def _init_groq_http_fallback():
         }
 
         test_response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
+            f"{GROQ_API_BASE_URL}/chat/completions",
             headers=test_client.headers,
             json=test_payload,
             timeout=15
@@ -113,70 +117,73 @@ def _init_groq_http_fallback():
             client = test_client
             _client_type = "http_client"
             groq_available = True
-            logger.info("✅ تهيئة HTTP")
+            logger.info("✅ تهيئة Groq HTTP")
             return True
         else:
-            logger.error(f"فشل اختبار: {test_response.status_code}")
+            logger.error(f"فشل اختبار Groq: {test_response.status_code}")
             return False
 
     except Exception as e:
-        logger.error(f"فشل HTTP: {e}")
+        logger.error(f"فشل Groq HTTP: {e}")
         return False
 
 
-def _init_simple_http_client():
-    """عميل بسيط"""
-    global groq_available, client, _client_type
+# ==================== تهيئة Gemini ====================
 
-    class SimpleGroqClient:
-        def __init__(self, api_key):
-            self.api_key = api_key
-            self.base_url = "https://api.groq.com/openai/v1"
-            self.headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
+def _try_init_gemini():
+    global gemini_available
 
-        def chat_completions_create(self, **kwargs):
-            url = f"{self.base_url}/chat/completions"
-            response = requests.post(url, headers=self.headers, json=kwargs, timeout=45)
-            response.raise_for_status()
-            return response.json()
+    if not GEMINI_API_KEY:
+        logger.info("ℹ️ GEMINI_API_KEY غير موجود")
+        return False
+
+    if not ENABLE_GEMINI_ANALYSIS:
+        logger.info("ℹ️ Gemini معطل")
+        return False
 
     try:
-        client = SimpleGroqClient(GROQ_API_KEY)
-        _client_type = "simple_http"
-        groq_available = True
-        logger.info("✅ تهيئة بسيطة")
-        return True
+        # اختبار الاتصال
+        url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}?key={GEMINI_API_KEY}"
+        response = requests.get(url, timeout=15)
+
+        if response.status_code == 200:
+            gemini_available = True
+            logger.info("✅ تهيئة Gemini")
+            return True
+        else:
+            logger.warning(f"⚠️ فشل اختبار Gemini: {response.status_code}")
+            return False
+
     except Exception as e:
-        logger.error(f"فشل: {e}")
+        logger.warning(f"⚠️ فشل Gemini: {e}")
         return False
 
 
 # ==================== التهيئة ====================
+
+# Groq
 if ENABLE_GROQ_ANALYSIS and GROQ_API_KEY:
     logger.info("🔄 تهيئة Groq...")
-
     if not _try_init_groq_library():
         if not _init_groq_http_fallback():
-            if not _init_simple_http_client():
-                logger.error("❌ فشل كل المحاولات")
-            else:
-                logger.info("✅ تهيئة بسيطة")
-        else:
-            logger.info("✅ تهيئة HTTP")
-    else:
-        logger.info("✅ تهيئة رسمية")
+            logger.error("❌ فشل كل محاولات Groq")
 else:
     if not ENABLE_GROQ_ANALYSIS:
         logger.info("ℹ️ Groq معطل")
     if not GROQ_API_KEY:
-        logger.warning("⚠️ مفتاح مفقود")
+        logger.warning("⚠️ GROQ_API_KEY مفقود")
 
+# Gemini
+logger.info("🔄 تهيئة Gemini...")
+if _try_init_gemini():
+    logger.info("✅ Gemini جاهز")
+else:
+    logger.warning("⚠️ Gemini غير متاح - سيتم استخدام Groq فقط")
+
+
+# ==================== استخراج JSON ====================
 
 def extract_json_from_response(response_content):
-    """استخراج JSON"""
     try:
         json_pattern = r'\{[\s\S]*\}'
         matches = re.findall(json_pattern, response_content)
@@ -197,8 +204,8 @@ def extract_json_from_response(response_content):
         return None
 
 
-def parse_groq_response(response_content):
-    """تحليل الاستجابة"""
+def parse_ai_response(response_content, provider="groq"):
+    """تحليل استجابة AI (موحد لـ Groq و Gemini)"""
     try:
         if not response_content:
             return None
@@ -206,28 +213,31 @@ def parse_groq_response(response_content):
         json_str = extract_json_from_response(response_content)
 
         if json_str:
-            groq_data = json.loads(json_str)
+            data = json.loads(json_str)
 
             required = ['recommendation', 'confidence', 'analysis']
-            if all(k in groq_data for k in required):
+            if all(k in data for k in required):
                 result = {
-                    'groq_recommendation': groq_data['recommendation'],
-                    'groq_confidence': groq_data['confidence'],
-                    'groq_analysis': groq_data['analysis'],
-                    'groq_reasoning': groq_data.get('reasoning', 'لا توجد أسباب'),
-                    'groq_risk_level': groq_data.get('risk_level', 'متوسط')
+                    'groq_recommendation': data['recommendation'],
+                    'groq_confidence': data['confidence'],
+                    'groq_analysis': data['analysis'],
+                    'groq_reasoning': data.get('reasoning', 'لا توجد أسباب'),
+                    'groq_risk_level': data.get('risk_level', 'متوسط'),
+                    'ai_provider': provider
                 }
-                logger.info(f"✅ Groq: {result['groq_recommendation']} ({result['groq_confidence']}%)")
+                logger.info(f"✅ AI ({provider}): {result['groq_recommendation']} ({result['groq_confidence']}%)")
                 return result
             else:
                 return {
-                    'groq_recommendation': groq_data.get('recommendation', 'تحذير'),
-                    'groq_confidence': groq_data.get('confidence', 50),
-                    'groq_analysis': groq_data.get('analysis', response_content[:300]),
-                    'groq_reasoning': groq_data.get('reasoning', ''),
-                    'groq_risk_level': groq_data.get('risk_level', 'متوسط')
+                    'groq_recommendation': data.get('recommendation', 'تحذير'),
+                    'groq_confidence': data.get('confidence', 50),
+                    'groq_analysis': data.get('analysis', response_content[:300]),
+                    'groq_reasoning': data.get('reasoning', ''),
+                    'groq_risk_level': data.get('risk_level', 'متوسط'),
+                    'ai_provider': provider
                 }
 
+        # استخراج نصي
         recommendation = "تحذير"
         confidence = 50
 
@@ -248,7 +258,8 @@ def parse_groq_response(response_content):
             'groq_confidence': confidence,
             'groq_analysis': response_content[:400],
             'groq_reasoning': 'تحليل نصي',
-            'groq_risk_level': 'متوسط'
+            'groq_risk_level': 'متوسط',
+            'ai_provider': provider
         }
 
     except json.JSONDecodeError as e:
@@ -259,8 +270,9 @@ def parse_groq_response(response_content):
         return None
 
 
+# ==================== بناء الـ Prompt ====================
+
 def build_rich_prompt(signal_data, analysis_data=None):
-    """بناء prompt غني بالبيانات الحقيقية"""
     try:
         symbol = signal_data.get('symbol', 'UNKNOWN')
         direction = signal_data.get('direction', 'UNKNOWN')
@@ -356,12 +368,95 @@ JSON فقط، بدون نص إضافي."""
         return f"حلل إشارة {signal_data.get('symbol')} {signal_data.get('direction')}"
 
 
-def analyze_signal_with_groq(signal_data, analysis_data=None):
-    """تحليل إشارة بـ Groq"""
-    if not ENABLE_GROQ_ANALYSIS or not groq_available or client is None:
+# ==================== Groq Call ====================
+
+def _call_groq(prompt, messages):
+    """استدعاء Groq"""
+    try:
+        response_content = None
+
+        if _client_type in ("Groq", "Client"):
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1000,
+                top_p=0.9
+            )
+            response_content = response.choices[0].message.content
+
+        elif _client_type in ("http_client", "simple_http"):
+            response = client.chat_completions_create(
+                model=GROQ_MODEL,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1000,
+                top_p=0.9
+            )
+            response_content = response['choices'][0]['message']['content']
+
+        return response_content
+
+    except Exception as e:
+        logger.warning(f"فشل Groq: {e}")
         return None
 
+
+# ==================== Gemini Call ====================
+
+def _call_gemini(prompt):
+    """استدعاء Gemini API"""
     try:
+        url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 1000,
+                "topP": 0.9,
+                "responseMimeType": "application/json"
+            }
+        }
+
+        response = requests.post(url, json=payload, timeout=45)
+
+        if response.status_code != 200:
+            logger.warning(f"فشل Gemini: {response.status_code} - {response.text[:200]}")
+            return None
+
+        data = response.json()
+
+        # استخراج النص
+        if 'candidates' not in data or not data['candidates']:
+            logger.warning("لا يوجد candidates في Gemini")
+            return None
+
+        candidate = data['candidates'][0]
+        if 'content' not in candidate or 'parts' not in candidate['content']:
+            logger.warning("لا يوجد content في Gemini")
+            return None
+
+        text = candidate['content']['parts'][0].get('text', '')
+        return text
+
+    except Exception as e:
+        logger.warning(f"خطأ Gemini: {e}")
+        return None
+
+
+# ==================== الدالة الرئيسية ====================
+
+def analyze_signal_with_groq(signal_data, analysis_data=None):
+    """تحليل إشارة بـ AI (Groq أو Gemini)"""
+    try:
+        # بناء الـ prompt
         if GROQ_SEND_FULL_DATA:
             prompt = build_rich_prompt(signal_data, analysis_data)
         else:
@@ -370,88 +465,87 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
             confidence = signal_data.get('confidence', 0)
             prompt = f"حلل {symbol} {direction} ثقة {confidence}%"
 
-        messages = [
-            {
-                "role": "system",
-                "content": "أنت محلل فني محترف في سوق العملات الرقمية. حلل بعمق وأجب بـ JSON صالح فقط."
-            },
-            {"role": "user", "content": prompt}
-        ]
+        # ==================== تحديد المزود ====================
+        use_gemini_first = (AI_PROVIDER == "gemini")
+        use_groq_first = (AI_PROVIDER == "groq")
+        use_auto = (AI_PROVIDER == "auto")
 
-        response_content = None
+        result = None
 
-        if _client_type in ("Groq", "Client"):
-            try:
-                response = client.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=1000,
-                    top_p=0.9
-                )
-                response_content = response.choices[0].message.content
-            except Exception as e:
-                logger.warning(f"فشل: {e}")
-                return None
+        # ==================== Gemini أولاً ====================
+        if use_gemini_first or (use_auto and gemini_available and not groq_available):
+            if gemini_available:
+                logger.info("🧠 استخدام Gemini...")
+                response_content = _call_gemini(prompt)
+                if response_content:
+                    result = parse_ai_response(response_content, "gemini")
+                    if result:
+                        return result
 
-        elif _client_type in ("http_client", "simple_http"):
-            try:
-                response = client.chat_completions_create(
-                    model=GROQ_MODEL,
-                    messages=messages,
-                    temperature=0.3,
-                    max_tokens=1000,
-                    top_p=0.9
-                )
-                response_content = response['choices'][0]['message']['content']
-            except Exception as e:
-                logger.error(f"فشل HTTP: {e}")
-                return None
+        # ==================== Groq ====================
+        if groq_available:
+            logger.info("🧠 استخدام Groq...")
+            messages = [
+                {
+                    "role": "system",
+                    "content": "أنت محلل فني محترف في سوق العملات الرقمية. حلل بعمق وأجب بـ JSON صالح فقط."
+                },
+                {"role": "user", "content": prompt}
+            ]
 
-        if response_content:
-            logger.info(f"🧠 Groq raw: {response_content[:200]}...")
-            result = parse_groq_response(response_content)
+            response_content = _call_groq(prompt, messages)
+            if response_content:
+                logger.info(f"🧠 Groq raw: {response_content[:200]}...")
+                result = parse_ai_response(response_content, "groq")
+                if result:
+                    return result
 
-            if result:
-                logger.info(f"✅ Groq {signal_data.get('symbol')}: {result['groq_recommendation']} ({result['groq_confidence']}%)")
-                return result
-            else:
-                return {
-                    'groq_recommendation': 'خطأ',
-                    'groq_confidence': 0,
-                    'groq_analysis': 'فشل التحليل',
-                    'groq_reasoning': 'خطأ تقني',
-                    'groq_risk_level': 'غير معروف'
-                }
+        # ==================== Fallback ====================
+        if AI_FALLBACK_ENABLED:
+            if not use_gemini_first and gemini_available:
+                logger.info("🔄 Fallback → Gemini...")
+                response_content = _call_gemini(prompt)
+                if response_content:
+                    result = parse_ai_response(response_content, "gemini")
+                    if result:
+                        return result
 
+        logger.warning("⚠️ فشل كل مزودي AI")
         return None
 
     except Exception as e:
-        logger.error(f"❌ خطأ Groq: {e}")
+        logger.error(f"❌ خطأ AI: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 
 def is_groq_available():
-    return groq_available and ENABLE_GROQ_ANALYSIS and client is not None
+    """التحقق من التوفر (Groq أو Gemini)"""
+    return (groq_available or gemini_available)
 
 
-def get_groq_status():
+def get_ai_status():
+    """حالة مزودي AI"""
     return {
-        'available': groq_available,
-        'enabled': ENABLE_GROQ_ANALYSIS,
-        'client_type': _client_type,
-        'client_initialized': client is not None,
-        'api_key_exists': bool(GROQ_API_KEY),
-        'full_data_mode': GROQ_SEND_FULL_DATA
+        'groq_available': groq_available,
+        'gemini_available': gemini_available,
+        'groq_client_type': _client_type,
+        'groq_api_key_exists': bool(GROQ_API_KEY),
+        'gemini_api_key_exists': bool(GEMINI_API_KEY),
+        'ai_provider': AI_PROVIDER,
+        'fallback_enabled': AI_FALLBACK_ENABLED,
+        'active_provider': 'gemini' if (AI_PROVIDER == "gemini" or (AI_PROVIDER == "auto" and not groq_available and gemini_available)) else 'groq' if groq_available else 'none'
     }
 
 
+# الاسم المستخدم في bot_strategies_enhanced
 enhance_signal_with_groq = analyze_signal_with_groq
 
 
 if __name__ == "__main__":
-    print("اختبار Groq:")
-    print(get_groq_status())
+    logging.basicConfig(level=logging.INFO)
+    print("اختبار AI:")
+    print(get_ai_status())
 
     if is_groq_available():
         test_signal = {
