@@ -1,10 +1,12 @@
 # ==================================================
-# 📁 ملف: bot_enhanced.py - الإصدار v5.0
+# 📁 ملف: bot_enhanced.py - الإصدار v5.0.1
+# 🔧 التعديلات v5.0.1:
+#    - 🔥 إصلاح SyntaxError في السطر 764
 # 🔧 التعديلات v5.0:
-#    - 🔥 إضافة زر "🧠 التعلم التلقائي"
-#    - 🔥 إضافة زر "📊 تقرير سريع"
-#    - 🔥 إضافة معالجات الأزرار الجديدة
-#    - 🔥 دوال _show_learning_status و _show_quick_report
+#    - إضافة زر "🧠 التعلم التلقائي"
+#    - إضافة زر "📊 تقرير سريع"
+#    - معالجات الأزرار الجديدة
+#    - دوال _show_learning_status و _show_quick_report
 #    - إخفاء httpx (أمان)
 #    - منع الصفقات المتعاكسة
 #    - عرض الرصيد الصحيح
@@ -758,10 +760,13 @@ async def handle_message(update: Update, context: CallbackContext):
     # ==================== تحليل عملة ====================
     t = text.upper().lstrip("/")
     sym = None
+
     if len(t) in [3, 4] and t.isalpha():
         sym = t + "USDT"
     elif t.endswith("USDT"):
-        sym = t    if sym:
+        sym = t
+
+    if sym:
         if not _bot_running:
             await update.message.reply_text("❌ البوت متوقف.", parse_mode="HTML", reply_markup=main_kb)
             return
