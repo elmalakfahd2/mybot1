@@ -1,15 +1,15 @@
 # ==================================================
-# 📁 ملف: bot_enhanced.py - الإصدار v4.1.3
-# 🔧 التعديلات v4.1.3:
-#    - 🔥 تشغيل الخيوط في thread منفصل (لا يحجب polling)
-#    - 🔥 إصلاح عدم استجابة الأزرار نهائياً
-# 🔧 التعديلات v4.1.2:
-#    - post_init لتشغيل الخيوط
-# 🔧 التعديلات v4.0:
+# 📁 ملف: bot_enhanced.py - الإصدار v5.0
+# 🔧 التعديلات v5.0:
+#    - 🔥 إضافة زر "🧠 التعلم التلقائي"
+#    - 🔥 إضافة زر "📊 تقرير سريع"
+#    - 🔥 إضافة معالجات الأزرار الجديدة
+#    - 🔥 دوال _show_learning_status و _show_quick_report
 #    - إخفاء httpx (أمان)
 #    - منع الصفقات المتعاكسة
 #    - عرض الرصيد الصحيح
-# 📅 التاريخ: 2026-09-18
+#    - تمييز الصفقات اليدوية
+# 📅 التاريخ: 2026-09-22
 # ==================================================
 
 import logging, os, json, threading, time, asyncio
@@ -187,7 +187,7 @@ def analyze_signal_with_timeout(symbol, timeout_seconds=25):
         return None
 
 
-# لوحة المفاتيح الرئيسية
+# لوحة المفاتيح الرئيسية (v5.0)
 main_kb = ReplyKeyboardMarkup([
     ["💰 الرصيد", "📊 الصفقات المفتوحة"],
     ["📈 الأرباح اليومية", "🔍 البحث عن إشارات"],
@@ -196,7 +196,8 @@ main_kb = ReplyKeyboardMarkup([
     ["📋 تقرير الأداء", "🔄 تشغيل/إيقاف البوت"],
     ["📊 الأرباح الأسبوعية", "📈 الأرباح الشهرية"],
     ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
-    ["🔎 فحص الأوامر المشروطة"]
+    ["🔎 فحص الأوامر المشروطة", "🧠 التعلم التلقائي"],
+    ["📊 تقرير سريع"]
 ], resize_keyboard=True)
 
 
@@ -343,7 +344,7 @@ async def send_direct_message(text: str, parse_mode="HTML", reply_markup=None):
         logger.error(f"❌ فشل الإرسال المباشر: {e}")
 
 
-# ==================== التنفيذ اليدوي v4.0 ====================
+# ==================== التنفيذ اليدوي ====================
 
 def execute_trade_manual(update: Update, symbol: str, side: str):
     """تنفيذ صفقة يدوية مع منع الصفقات المتعاكسة"""
@@ -512,21 +513,29 @@ async def start(update: Update, context: CallbackContext):
 
     groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
 
+    # 🔥 v5.0: حالة التعلم
+    try:
+        learning_status = "✅ مفعل" if ENABLE_AUTO_LEARNING else "❌ معطل"
+    except:
+        learning_status = "❌ معطل"
+
     await update.message.reply_text(
-        f"🤖 <b>بوت القناص الذكي v4.1.3</b> - {status}\n\n"
+        f"🤖 <b>بوت القناص الذكي v5.0</b> - {status}\n\n"
         f"🎯 <b>الاستراتيجية:</b> Price Action + AI\n"
         f"• تحليل متعدد المؤشرات والفريمات\n"
         f"• فلترة صارمة بالحجم والسيولة\n"
         f"• TP/SL محقق تلقائياً\n"
         f"• Trailing SL ديناميكي\n"
-        f"• Breakeven بعد TP1\n\n"
+        f"• Breakeven بعد TP1\n"
+        f"• 🧠 التعلم التلقائي\n\n"
         f"⚙️ <b>الإعدادات:</b>\n"
         f"• رأس المال: {TRADE_USDT} USDT\n"
         f"• الرافعة: {LEVERAGE}x\n"
         f"• الحد الأقصى: {MAX_OPEN_POSITIONS} صفقات\n"
         f"• TP: {tp_system}\n"
         f"• SL: {SL_PERCENT}%\n"
-        f"• Groq AI: {groq_status}\n\n"
+        f"• Groq AI: {groq_status}\n"
+        f"• التعلم التلقائي: {learning_status}\n\n"
         f"🚀 <b>نظام TP المتعدد:</b>\n"
         f"• L1: {TP_MULTIPLE_LEVELS[0]}% ({TP_QUANTITY_RATIOS[0]*100}%)\n"
         f"• L2: {TP_MULTIPLE_LEVELS[1]}% ({TP_QUANTITY_RATIOS[1]*100}%)\n"
@@ -627,6 +636,16 @@ async def handle_message(update: Update, context: CallbackContext):
         await _show_algo_orders(update)
         return
 
+    # ==================== 🧠 التعلم التلقائي ====================
+    if text == "🧠 التعلم التلقائي":
+        await _show_learning_status(update)
+        return
+
+    # ==================== 📊 تقرير سريع ====================
+    if text == "📊 تقرير سريع":
+        await _show_quick_report(update)
+        return
+
     # ==================== الأرباح ====================
     if text == "📈 الأرباح اليومية":
         await _show_daily_pnl(update)
@@ -707,12 +726,13 @@ async def handle_message(update: Update, context: CallbackContext):
         wallet = balance_info.get('wallet', 0)
 
         msg = (
-            f"📊 <b>حالة النظام v4.1.3</b>\n\n"
+            f"📊 <b>حالة النظام v5.0</b>\n\n"
             f"🤖 <b>البوت:</b> {bot_status}\n"
             f"🔍 <b>المسح:</b> {auto_scan_status}\n"
             f"🤖 <b>التنفيذ:</b> {auto_trading_status}\n"
             f"🧠 <b>Groq AI:</b> {groq_status}\n"
-            f"📈 <b>الصفقات:</b> {status['open_positions']}/{status['max_positions']}\n\n"
+            f"📈 <b>الصفقات:</b> {status['open_positions']}/{status['max_positions']}\n"
+            f"👤 <b>صفقاتك:</b> {status.get('manual_positions', 0)}\n\n"
             f"💰 <b>الرصيد:</b>\n"
             f"   • المتاح: {available:.2f} USDT\n"
             f"   • الإجمالي: {wallet:.2f} USDT\n\n"
@@ -726,6 +746,7 @@ async def handle_message(update: Update, context: CallbackContext):
             f"⚙️ <b>SL:</b> {SL_PERCENT}% (ديناميكي)\n"
             f"🔒 <b>Trailing SL:</b> {'✅' if TRAILING_SL_ENABLED else '❌'}\n"
             f"🔒 <b>Breakeven بعد TP1:</b> ✅\n"
+            f"🧠 <b>التعلم التلقائي:</b> {'✅' if status.get('auto_learning_enabled') else '❌'}\n"
         )
 
         if status.get('is_paused'):
@@ -740,9 +761,7 @@ async def handle_message(update: Update, context: CallbackContext):
     if len(t) in [3, 4] and t.isalpha():
         sym = t + "USDT"
     elif t.endswith("USDT"):
-        sym = t
-
-    if sym:
+        sym = t    if sym:
         if not _bot_running:
             await update.message.reply_text("❌ البوت متوقف.", parse_mode="HTML", reply_markup=main_kb)
             return
@@ -752,10 +771,12 @@ async def handle_message(update: Update, context: CallbackContext):
 
     # ==================== تعليمات ====================
     await update.message.reply_text(
-        "❓ <b>تعليمات البوت v4.1.3:</b>\n\n"
+        "❓ <b>تعليمات البوت v5.0:</b>\n\n"
         "• <code>💰 الرصيد</code> - الرصيد الدقيق\n"
         "• <code>📊 الصفقات المفتوحة</code> - الصفقات الحالية\n"
-        "• <code>🔎 فحص الأوامر المشروطة</code> - عرض TP/SL الفعلية\n"
+        "• <code>🔎 فحص الأوامر المشروطة</code> - عرض TP/SL\n"
+        "• <code>🧠 التعلم التلقائي</code> - حالة التعلم\n"
+        "• <code>📊 تقرير سريع</code> - أداء مختصر\n"
         "• <code>🔍 البحث عن إشارات</code> - بحث يدوي\n"
         "• <code>رمز العملة</code> - تحليل (مثال: BTC)\n"
         "• <code>📊 حالة النظام</code> - حالة كاملة\n"
@@ -1112,7 +1133,7 @@ async def _show_enhanced_performance_report(update: Update):
         monthly_rate = (successful_monthly / monthly_trade_count * 100) if monthly_trade_count > 0 else 0
 
         msg = (
-            f"📋 <b>تقرير الأداء v4.1.3</b>\n\n"
+            f"📋 <b>تقرير الأداء v5.0</b>\n\n"
             f"💰 <b>الرصيد:</b>\n"
             f"   • المتاح: {available:.2f} USDT\n"
             f"   • الإجمالي: {wallet:.2f} USDT\n\n"
@@ -1140,6 +1161,158 @@ async def _show_enhanced_performance_report(update: Update):
         logger.error(f"خطأ: {e}")
         await update.message.reply_text("❌ <b>خطأ</b>", parse_mode="HTML", reply_markup=main_kb)
 
+
+# ==================== 🧠 حالة التعلم التلقائي ====================
+
+async def _show_learning_status(update: Update):
+    """عرض حالة التعلم التلقائي"""
+    try:
+        msg = "🧠 <b>حالة التعلم التلقائي</b>\n\n"
+
+        # ==================== 1. الإعدادات ====================
+        try:
+            learning_status = "✅ مفعل" if ENABLE_AUTO_LEARNING else "❌ معطل"
+            tuning_status = "✅ مفعل" if AUTO_TUNE_WEIGHTS else "❌ معطل"
+            protection_status = "✅ مفعل" if AUTO_PROTECTION_ENABLED else "❌ معطل"
+
+            msg += f"📊 <b>الإعدادات:</b>\n"
+            msg += f"   • التعلم: {learning_status}\n"
+            msg += f"   • تعديل الأوزان: {tuning_status}\n"
+            msg += f"   • الحماية الذاتية: {protection_status}\n"
+            msg += f"   • كل: {AUTO_LEARN_INTERVAL_HOURS} ساعة\n"
+            msg += f"   • بعد: {AUTO_LEARN_MIN_TRADES} صفقة\n\n"
+        except Exception as e:
+            logger.error(f"خطأ في الإعدادات: {e}")
+
+        # ==================== 2. عدد الصفقات ====================
+        try:
+            import trade_memory as memory
+            mem_stats = memory.get_memory_stats()
+
+            total = mem_stats.get('total_trades', 0)
+            win_rate = mem_stats.get('win_rate', 0)
+
+            remaining = max(0, AUTO_LEARN_MIN_TRADES - total)
+
+            msg += f"📊 <b>الصفقات:</b>\n"
+            msg += f"   • الإجمالي: {total}\n"
+            msg += f"   • نسبة النجاح: {win_rate:.1f}%\n"
+
+            if remaining > 0:
+                msg += f"   • متبقي للتعلم: {remaining} صفقة\n"
+            else:
+                msg += f"   • جاهز للتعلم ✅\n"
+
+            msg += "\n"
+        except Exception as e:
+            logger.error(f"خطأ في الصفقات: {e}")
+
+        # ==================== 3. جلسات التعلم ====================
+        try:
+            import auto_tuner
+            tuning_stats = auto_tuner.get_tuning_stats()
+
+            msg += f"🧠 <b>جلسات التعلم:</b>\n"
+            msg += f"   • العدد: {tuning_stats.get('total_tunings', 0)}\n"
+
+            last = tuning_stats.get('last_tuning')
+            if last:
+                msg += f"   • آخر جلسة: {last[:19]}\n"
+
+            msg += "\n"
+        except Exception as e:
+            logger.error(f"خطأ في الجلسات: {e}")
+
+        # ==================== 4. الجدولة ====================
+        try:
+            import smart_scheduler
+            sched_status = smart_scheduler.get_scheduler_status()
+
+            msg += f"⏰ <b>الجدولة:</b>\n"
+            msg += f"   • الحالة: {'🟢 نشط' if sched_status.get('running') else '🔴 متوقف'}\n"
+
+            last_learn = sched_status.get('last_learning')
+            if last_learn:
+                msg += f"   • آخر تعلم: {last_learn[:19]}\n"
+
+            msg += "\n"
+        except Exception as e:
+            logger.error(f"خطأ في الجدولة: {e}")
+
+        # ==================== 5. أزرار ====================
+        keyboard = [
+            [InlineKeyboardButton("🚀 تشغيل التعلم الآن", callback_data="force_learning")],
+            [InlineKeyboardButton("📊 تقرير الأداء الكامل", callback_data="full_performance_report")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"خطأ في _show_learning_status: {e}")
+        await update.message.reply_text(f"❌ <b>خطأ:</b> {str(e)[:200]}", parse_mode="HTML")
+
+
+# ==================== 📊 التقرير السريع ====================
+
+async def _show_quick_report(update: Update):
+    """عرض تقرير سريع"""
+    try:
+        import performance_tracker as tracker
+
+        perf = tracker.get_full_performance(days=7)
+
+        if not perf:
+            await update.message.reply_text(
+                "📊 <b>لا توجد بيانات كافية</b>\n\n"
+                "يحتاج البوت لـ 5 صفقات على الأقل.",
+                parse_mode="HTML"
+            )
+            return
+
+        eval_result = tracker.evaluate_performance(perf)
+
+        msg = f"📊 <b>التقرير السريع</b>\n\n"
+
+        msg += f"📈 <b>الأداء (7 أيام):</b>\n"
+        msg += f"   • صفقات: {perf['total_trades']}\n"
+        msg += f"   • رابحة: {perf['wins']} ✅\n"
+        msg += f"   • خاسرة: {perf['losses']} ❌\n"
+        msg += f"   • نسبة النجاح: {perf['win_rate']}%\n\n"
+
+        msg += f"💰 <b>الأرباح:</b>\n"
+        msg += f"   • الإجمالي: {perf['total_pnl']:+.4f} USDT\n"
+        msg += f"   • متوسط الربح: {perf['avg_win']:+.4f}\n"
+        msg += f"   • متوسط الخسارة: {perf['avg_loss']:+.4f}\n\n"
+
+        msg += f"📊 <b>المؤشرات:</b>\n"
+        msg += f"   • Profit Factor: {perf['profit_factor']}\n"
+        msg += f"   • R:R Ratio: {perf['rr_ratio']}\n"
+        msg += f"   • Sharpe: {perf['sharpe_ratio']}\n"
+        msg += f"   • Max DD: {perf['max_drawdown']}\n\n"
+
+        msg += f"🎯 <b>التقييم:</b> {eval_result['rating']}\n"
+        msg += f"   ({eval_result['score']}/100)\n\n"
+
+        # أفضل/أسوأ
+        if perf.get('best_symbol'):
+            best = perf['best_symbol']
+            msg += f"✅ أفضل: <b>{best[0]}</b> ({best[1]['pnl']:+.2f})\n"
+
+        if perf.get('worst_symbol'):
+            worst = perf['worst_symbol']
+            msg += f"❌ أسوأ: <b>{worst[0]}</b> ({worst[1]['pnl']:+.2f})\n"
+
+        msg += f"\n⏰ {datetime.now().strftime('%H:%M:%S')}"
+
+        await update.message.reply_text(msg, parse_mode="HTML")
+
+    except Exception as e:
+        logger.error(f"خطأ في _show_quick_report: {e}")
+        await update.message.reply_text(f"❌ <b>خطأ:</b> {str(e)[:200]}", parse_mode="HTML")
+
+
+# ==================== إغلاق الصفقات ====================
 
 def _close_all_positions(update: Update):
     try:
@@ -1286,6 +1459,34 @@ async def button_handler(update: Update, context: CallbackContext):
             symbol = parts[2]
             _analyze_smart_detailed(update, symbol)
 
+    # 🔥 v5.0: أزرار التعلم
+    elif data == "force_learning":
+        try:
+            await query.edit_message_text("🧠 <b>جاري تشغيل التعلم...</b>", parse_mode="HTML")
+
+            import smart_scheduler
+            result = smart_scheduler.force_learning_now()
+
+            if result:
+                await query.edit_message_text("✅ <b>تم تشغيل التعلم بنجاح</b>", parse_mode="HTML")
+            else:
+                await query.edit_message_text("⏳ <b>لا توجد بيانات كافية</b>", parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"خطأ: {e}")
+            await query.edit_message_text(f"❌ خطأ: {str(e)[:100]}", parse_mode="HTML")
+
+    elif data == "full_performance_report":
+        try:
+            await query.edit_message_text("📊 <b>جاري إنشاء التقرير...</b>", parse_mode="HTML")
+
+            import daily_reporter
+            daily_reporter.send_daily_report()
+
+            await query.edit_message_text("✅ <b>تم إرسال التقرير</b>", parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"خطأ: {e}")
+            await query.edit_message_text(f"❌ خطأ: {str(e)[:100]}", parse_mode="HTML")
+
     elif data == "confirm_close_all":
         try:
             await query.edit_message_text("🔄 <b>جاري الإغلاق...</b>", parse_mode="HTML")
@@ -1326,10 +1527,10 @@ async def button_handler(update: Update, context: CallbackContext):
             pass
 
 
-# ==================== 🔥 التشغيل v4.1.3 ====================
+# ==================== التشغيل v5.0 ====================
 
 def run_bot():
-    """تشغيل البوت + الخيوط في thread منفصل (لا يحجب polling)"""
+    """تشغيل البوت + الخيوط في thread منفصل"""
     try:
         try:
             loop = asyncio.get_event_loop()
@@ -1337,7 +1538,6 @@ def run_bot():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        # ==================== 🔥 post_init: تشغيل الخيوط في thread منفصل ====================
         async def post_init(application):
             logger.info("🚀 البوت بدأ — تشغيل الخيوط في الخلفية...")
 
@@ -1351,7 +1551,6 @@ def run_bot():
                     import traceback
                     traceback.print_exc()
 
-            # 🔥 شغّل في thread منفصل — لا يحجب polling
             threading.Thread(target=run_threads_in_background, daemon=True).start()
             logger.info("✅ تم إرسال تشغيل الخيوط للخلفية")
 
@@ -1368,7 +1567,7 @@ def run_bot():
 
         application.add_error_handler(error_handler)
 
-        logger.info("🚀 بدء البوت v4.1.3...")
+        logger.info("🚀 بدء البوت v5.0...")
         logger.info("📡 Starting Telegram polling...")
 
         application.run_polling(drop_pending_updates=True)

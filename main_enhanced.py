@@ -1,18 +1,15 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v4.1.8
-# 🔧 التعديلات v4.1.8:
-#    - 🔥 إصلاح bad operand type for unary -: 'str'
-#    - 🔥 تحويل آمن للأنواع في record_closed_trade
-#    - 🔥 تحويل آمن للأنواع في send_close_notification
+# 📁 ملف: main_enhanced.py - الإصدار v5.0
+# 🔧 التعديلات v5.0:
+#    - 🔥 تشغيل smart_scheduler في الخلفية
+#    - 🔥 تفعيل نظام التعلم التلقائي
+#    - 🔥 تفعيل التقارير اليومية/الأسبوعية
+#    - 🔥 تفعيل الحماية الذاتية
+#    - إصلاح bad operand type for unary -: 'str'
+#    - تحويل آمن للأنواع
 # 🔧 التعديلات v4.1.7:
-#    - إضافة إشعار إغلاق الصفقات
-# 🔧 التعديلات v4.1.6:
-#    - تبسيط start_scanner_threads
-#    - logs في كل خطوة
-#    - WebSocket في thread منفصل
-# 🔧 التعديلات v4.1.4:
-#    - تمييز صفقات البوت عن اليدوية
-# 📅 التاريخ: 2026-09-20
+#    - إشعار إغلاق الصفقات
+# 📅 التاريخ: 2026-09-22
 # ==================================================
 
 import logging
@@ -73,6 +70,44 @@ except ImportError as e:
     realtime_data = None
     logger.warning(f"⚠️ realtime_data غير متاح: {e}")
 
+# ==================== 🔥 v5.0: نظام التعلم التلقائي ====================
+try:
+    import smart_scheduler
+    SCHEDULER_AVAILABLE = True
+    logger.info("✅ نظام التعلم التلقائي متاح")
+except ImportError as e:
+    SCHEDULER_AVAILABLE = False
+    smart_scheduler = None
+    logger.warning(f"⚠️ smart_scheduler غير متاح: {e}")
+
+try:
+    import auto_learner
+    LEARNER_AVAILABLE = True
+    logger.info("✅ auto_learner متاح")
+except ImportError:
+    LEARNER_AVAILABLE = False
+
+try:
+    import auto_tuner
+    TUNER_AVAILABLE = True
+    logger.info("✅ auto_tuner متاح")
+except ImportError:
+    TUNER_AVAILABLE = False
+
+try:
+    import performance_tracker
+    TRACKER_AVAILABLE = True
+    logger.info("✅ performance_tracker متاح")
+except ImportError:
+    TRACKER_AVAILABLE = False
+
+try:
+    import daily_reporter
+    REPORTER_AVAILABLE = True
+    logger.info("✅ daily_reporter متاح")
+except ImportError:
+    REPORTER_AVAILABLE = False
+
 
 _last_auto_scan = 0
 _last_tp_sl_monitor = 0
@@ -95,7 +130,6 @@ FALLBACK_SYMBOLS = [
 # ==================== 🔥 دوال تحويل آمنة ====================
 
 def safe_float(value, default=0.0):
-    """تحويل آمن إلى float"""
     try:
         return float(value)
     except (ValueError, TypeError):
@@ -103,7 +137,6 @@ def safe_float(value, default=0.0):
 
 
 def safe_int(value, default=0):
-    """تحويل آمن إلى int"""
     try:
         return int(value)
     except (ValueError, TypeError):
@@ -206,11 +239,15 @@ def send_startup():
         weekly = core.get_accurate_weekly_pnl()
         monthly = core.get_accurate_monthly_pnl()
 
+        # 🔥 v5.0: حالة التعلم التلقائي
+        learning_status = "✅ مفعل" if (SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING) else "❌ معطل"
+
         msg = (
-            f"🚀 <b>بوت القناص الذكي v4.1.8</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v5.0</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
+            f"🧠 <b>نظام التعلم التلقائي:</b> {learning_status}\n\n"
             f"📊 <b>الحالة:</b>\n"
             f"   • الأزواج: {count}\n"
             f"   • الرصيد المتاح: {available:.2f} USDT\n"
@@ -221,7 +258,6 @@ def send_startup():
             f"   • اليوم: {safe_float(daily.get('daily_pnl', 0)):.2f}\n"
             f"   • الأسبوع: {safe_float(weekly.get('weekly_pnl', 0)):.2f}\n"
             f"   • الشهر: {safe_float(monthly.get('monthly_pnl', 0)):.2f}\n\n"
-            f"🔔 <b>إشعار إغلاق الصفقات:</b> ✅ مفعل\n\n"
             f"✅ <b>النظام جاهز!</b>"
         )
 
@@ -313,7 +349,6 @@ def monitor_positions_loop():
 
 
 def check_closed_trades():
-    """فحص الصفقات المغلقة وإرسال إشعار لكل واحدة"""
     try:
         if not _open_trades_tracking:
             return
@@ -339,9 +374,6 @@ def check_closed_trades():
 
 
 def record_closed_trade(trade_data):
-    """
-    🔥 v4.1.8: تسجيل الصفقة + إشعار إغلاق (مع تحويل آمن)
-    """
     try:
         symbol = trade_data.get('symbol')
         direction = trade_data.get('direction', 'UNKNOWN')
@@ -352,7 +384,7 @@ def record_closed_trade(trade_data):
 
         logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
 
-        # ==================== جلب PnL الحقيقي (تحويل آمن) ====================
+        # ==================== جلب PnL ====================
         pnl = 0.0
         try:
             client_obj = core.get_client()
@@ -363,15 +395,13 @@ def record_closed_trade(trade_data):
                     limit=5
                 )
                 if income:
-                    # 🔥 v4.1.8: تحويل آمن
                     raw_income = income[-1].get('income', 0)
                     pnl = safe_float(raw_income, 0.0)
-                    logger.info(f"💰 PnL من Binance: {pnl:+.4f} (raw: {raw_income}, type: {type(raw_income).__name__})")
+                    logger.info(f"💰 PnL: {pnl:+.4f}")
         except Exception as e:
-            logger.warning(f"⚠️ فشل جلب PnL لـ {symbol}: {e}")
-            pnl = 0.0
+            logger.warning(f"⚠️ فشل جلب PnL: {e}")
 
-        # ==================== تسجيل في الذاكرة ====================
+        # ==================== تسجيل ====================
         if MEMORY_AVAILABLE:
             try:
                 memory.record_trade(
@@ -395,11 +425,11 @@ def record_closed_trade(trade_data):
                 except:
                     pass
             except Exception as e:
-                logger.error(f"خطأ في تسجيل الصفقة في الذاكرة: {e}")
+                logger.error(f"خطأ في التسجيل: {e}")
 
         core.record_trade_result(pnl)
 
-        # ==================== إرسال إشعار الإغلاق ====================
+        # ==================== إشعار الإغلاق ====================
         try:
             opened_at = safe_float(trade_data.get('opened_at', time.time()), time.time())
             duration_minutes = safe_int((time.time() - opened_at) / 60, 0)
@@ -424,14 +454,10 @@ def record_closed_trade(trade_data):
 
 
 def send_close_notification(symbol, direction, position_side, entry_price, quantity, pnl, duration_minutes=0):
-    """
-    🔥 v4.1.8: إرسال إشعار إغلاق الصفقة (مع تحويل آمن)
-    """
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
 
-        # 🔥 v4.1.8: تحويل آمن للأنواع
         symbol = str(symbol) if symbol else "UNKNOWN"
         direction = str(direction) if direction else "UNKNOWN"
         position_side = str(position_side) if position_side else "BOTH"
@@ -440,7 +466,6 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
         pnl = safe_float(pnl, 0.0)
         duration_minutes = safe_int(duration_minutes, 0)
 
-        # ==================== تحديد الحالة ====================
         if pnl > 0.01:
             emoji = "🟢"
             title = "✅ <b>تم إغلاق الصفقة بربح</b>"
@@ -451,14 +476,9 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
             emoji = "⚪"
             title = "⚪ <b>تم إغلاق الصفقة (تعادل)</b>"
 
-        # ==================== حساب النسبة ====================
         position_value = entry_price * quantity
-        if position_value > 0:
-            pnl_percent = (pnl / position_value) * 100
-        else:
-            pnl_percent = 0.0
+        pnl_percent = (pnl / position_value * 100) if position_value > 0 else 0.0
 
-        # ==================== حساب المدة ====================
         if duration_minutes > 60:
             hours = duration_minutes // 60
             mins = duration_minutes % 60
@@ -468,7 +488,6 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
         else:
             duration_text = "أقل من دقيقة"
 
-        # ==================== بناء الرسالة ====================
         msg = (
             f"{title}\n\n"
             f"💰 <b>العملة:</b> {symbol}\n"
@@ -482,11 +501,7 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
         )
 
         async def send_async():
-            await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode="HTML"
-            )
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="HTML")
 
         threading.Thread(target=run_async_safe, args=(send_async(),), daemon=True).start()
 
@@ -494,7 +509,6 @@ def send_close_notification(symbol, direction, position_side, entry_price, quant
 
     except Exception as e:
         logger.error(f"❌ خطأ في إشعار الإغلاق: {e}")
-        traceback.print_exc()
 
 
 # ==================== خيط المسح التلقائي ====================
@@ -690,7 +704,6 @@ def execute_sniper_trade(signal):
 
 
 def send_trade_notification(signal, result):
-    """إشعار فتح الصفقة"""
     try:
         from telegram import Bot
         bot = Bot(token=TELEGRAM_TOKEN)
@@ -748,6 +761,14 @@ def get_system_status():
 
     is_paused, pause_remaining = core.is_trading_paused()
 
+    # 🔥 v5.0: حالة التعلم
+    scheduler_status = {}
+    if SCHEDULER_AVAILABLE:
+        try:
+            scheduler_status = smart_scheduler.get_scheduler_status()
+        except:
+            pass
+
     return {
         'auto_scan': _auto_scan_enabled,
         'auto_trading': _auto_trading_enabled,
@@ -764,7 +785,9 @@ def get_system_status():
         'cooldown_symbols': len(strat.get_cooldown_status().get('active_symbols', {})),
         'is_paused': is_paused,
         'pause_remaining': pause_remaining,
-        'consecutive_losses': core.get_consecutive_losses()
+        'consecutive_losses': core.get_consecutive_losses(),
+        'scheduler_status': scheduler_status,
+        'auto_learning_enabled': ENABLE_AUTO_LEARNING if 'ENABLE_AUTO_LEARNING' in dir() else False,
     }
 
 
@@ -782,12 +805,15 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== التشغيل v4.1.8 ====================
+# ==================== التشغيل v5.0 ====================
 
 def start_scanner_threads():
-    """تشغيل الخيوط"""
+    """تشغيل كل الخيوط"""
+    logger.info("=" * 60)
     logger.info("🔧 [START] بدء تشغيل الخيوط...")
+    logger.info("=" * 60)
 
+    # ==================== 1. WebSocket (معطل افتراضياً) ====================
     if ENABLE_REALTIME_DATA and REALTIME_AVAILABLE:
         def init_websocket_background():
             try:
@@ -799,7 +825,7 @@ def start_scanner_threads():
                 if realtime_data.init_realtime(top_symbols):
                     logger.info(f"✅ [WS-THREAD] WebSocket مفعل ({len(top_symbols)} عملة)")
                 else:
-                    logger.warning("⚠️ [WS-THREAD] فشل تشغيل WebSocket")
+                    logger.warning("⚠️ [WS-THREAD] فشل WebSocket")
             except Exception as e:
                 logger.error(f"❌ [WS-THREAD] خطأ: {e}")
 
@@ -809,6 +835,7 @@ def start_scanner_threads():
     else:
         logger.info("ℹ️ [START] WebSocket معطل")
 
+    # ==================== 2. خيط المسح ====================
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
@@ -816,6 +843,7 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
+    # ==================== 3. خيط Trailing SL ====================
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="TrailingMonitor")
         monitor.start()
@@ -823,6 +851,7 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
+    # ==================== 4. خيط مراقبة TP/SL ====================
     try:
         tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True, name="TPSLMonitor")
         tp_sl_monitor.start()
@@ -830,13 +859,28 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل tp_sl_monitor: {e}")
 
+    # ==================== 🔥 5. خيط التعلم التلقائي ====================
+    if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
+        try:
+            if smart_scheduler.start_scheduler():
+                logger.info("✅ [START] تم بدء smart_scheduler (التعلم التلقائي)")
+            else:
+                logger.warning("⚠️ [START] فشل بدء smart_scheduler")
+        except Exception as e:
+            logger.error(f"❌ [START] فشل scheduler: {e}")
+    else:
+        logger.info("ℹ️ [START] التعلم التلقائي معطل")
+
     time.sleep(2)
     logger.info(f"✅ [START] عدد الخيوط النشطة: {threading.active_count()}")
+    logger.info("=" * 60)
 
 
 def main():
     try:
-        logger.info("🚀 [MAIN] بدء main_enhanced v4.1.8...")
+        logger.info("=" * 60)
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.0...")
+        logger.info("=" * 60)
 
         send_startup()
         time.sleep(3)
@@ -854,11 +898,19 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ [MAIN] فشل مزامنة profit_history: {e}")
 
-        logger.info("🎯 [MAIN] نظام القناص v4.1.8 مفعل")
+        logger.info("=" * 60)
+        logger.info("🎯 [MAIN] نظام القناص v5.0 مفعل")
+        logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
         logger.info(f"📈 [MAIN] MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
-        logger.info(f"🔔 [MAIN] إشعار إغلاق الصفقات: ✅")
+        logger.info(f"💰 [MAIN] TRADE_USDT: {TRADE_USDT}")
+        logger.info(f"⚡ [MAIN] LEVERAGE: {LEVERAGE}x")
+        logger.info(f"🔔 [MAIN] إشعار إغلاق: ✅")
+        logger.info(f"🧠 [MAIN] التعلم التلقائي: {'✅' if ENABLE_AUTO_LEARNING else '❌'}")
+        logger.info(f"📊 [MAIN] التقارير اليومية: {'✅' if ENABLE_DAILY_REPORT else '❌'}")
+        logger.info(f"🛡️ [MAIN] الحماية الذاتية: {'✅' if AUTO_PROTECTION_ENABLED else '❌'}")
+        logger.info("=" * 60)
 
         logger.info("🚀 [MAIN] بدء البوت...")
         tgbot.run_bot()

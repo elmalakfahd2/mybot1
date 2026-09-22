@@ -1,24 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.1.5
+config.py - الإعدادات النهائية v5.0
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v4.1.5 (المرحلة 1 - تخفيف تدريجي):
-    - خفض MIN_VOLUME_FACTOR من 1.2 → 0.9
-    - خفض MIN_ORDER_BOOK_POINTS من 4 → 0
-    - خفض MIN_SCORE_REQUIRED من 65 → 62
-    - خفض MIN_CONFIDENCE_AUTO من 60 → 55
-    - رفع MAX_OPEN_POSITIONS من 3 → 5
-    - رفع MAX_CORRELATION من 0.55 → 0.75
-    - تعطيل ENABLE_CORRELATION_FILTER مؤقتاً
-    - تعطيل ENABLE_OPPOSITE_DIRECTION_FILTER مؤقتاً
+🔧 التعديلات v5.0:
+    - إضافة نظام التعلم التلقائي
+    - تحسين TP/SL (R:R 1:1)
+    - تفعيل فلاتر الحماية
+    - تقليل استهلاك Groq
 
-🔧 التعديلات السابقة:
-    - v4.1: WebSocket (OBI, Pressure, Liquidations)
-    - v4.1.4: تمييز الصفقات اليدوية
-    - v4.0: Breakeven بعد TP1 + حساب العمولات
-
-📅 آخر تعديل: 2026-09-19
+📅 آخر تعديل: 2026-09-22
 """
 
 import os
@@ -63,20 +54,20 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 # ==================== التداول ====================
 TRADE_USDT = 15
 LEVERAGE = 10
-MAX_OPEN_POSITIONS = 5                 # ✅ v4.1.5: من 3 → 5
+MAX_OPEN_POSITIONS = 5
 
-# ==================== TP المتعدد ====================
+# ==================== TP المتعدد (محسّن R:R) ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
-SL_PERCENT = 2.0
-TP_PERCENT = 1.2
+TP_MULTIPLE_LEVELS = [1.5, 2.5, 4.0]      # 🔥 محسّن
+TP_QUANTITY_RATIOS = [0.4, 0.3, 0.3]      # 🔥 محسّن
+SL_PERCENT = 1.5                           # 🔥 محسّن
+TP_PERCENT = 1.5                           # 🔥 محسّن
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
 SL_ATR_MULTIPLIER = 2.5
-SL_MIN_PERCENT = 1.5
-SL_MAX_PERCENT = 3.0
+SL_MIN_PERCENT = 1.2                       # 🔥 محسّن
+SL_MAX_PERCENT = 2.0                       # 🔥 محسّن
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -90,18 +81,19 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول (v4.1.5 - مخففة) ====================
+# ==================== شروط الدخول ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 0.99                # ✅ v4.1.5: من 1.2 → 0.9
+MIN_VOLUME_FACTOR = 1.0                    # 🔥 محسّن
 MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 55               # ✅ v4.1.5: من 60 → 55
-MIN_SIGNAL_STRENGTH = 5                # ✅ v4.1.5: من 6 → 5
+MIN_CONFIDENCE_AUTO = 58                   # 🔥 محسّن
+MIN_SIGNAL_STRENGTH = 5
 
-# ==================== نظام النقاط (v4.1.5 - مخفف) ====================
-MIN_SCORE_REQUIRED = 65                # ✅ v4.1.5: من 65 → 62
-MIN_ORDER_BOOK_POINTS = 2              # ✅ v4.1.5: من 4 → 0 (تعطيل الفلتر)
-MIN_RSI_POINTS = 0                     # ✅ v4.1.5: من 3 → 0 (تعطيل الفلتر)
+# ==================== نظام النقاط ====================
+MIN_SCORE_REQUIRED = 67                    # 🔥 محسّن
+MIN_ORDER_BOOK_POINTS = 2
+MIN_RSI_POINTS = 0
 
+# 🔥 الأوزان الأساسية — سيتم تعديلها تلقائياً
 SCORE_WEIGHTS = {
     'timeframe_alignment': 20,
     'volume': 17,
@@ -115,8 +107,8 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== فلتر دفتر الأوامر والتنفيذ ====================
-ENABLE_ORDER_BOOK_FILTER = True        # يبقى True للـ spread/depth، لكن النقاط صفر
+# ==================== فلتر دفتر الأوامر ====================
+ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.15
 MIN_DEPTH_MULTIPLIER = 10
 
@@ -124,22 +116,22 @@ MIN_DEPTH_MULTIPLIER = 10
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط (v4.1.5 - معطل مؤقتاً) ====================
-ENABLE_CORRELATION_FILTER = False      # ✅ v4.1.5: من True → False (مؤقتاً)
-MAX_CORRELATION = 0.75                 # ✅ v4.1.5: من 0.55 → 0.75
+# ==================== فلتر الارتباط ====================
+ENABLE_CORRELATION_FILTER = True           # 🔥 مفعل
+MAX_CORRELATION = 0.65                     # 🔥 محسّن
 
-# ==================== منع الصفقات المتعاكسة (v4.1.5 - معطل مؤقتاً) ====================
-ENABLE_OPPOSITE_DIRECTION_FILTER = False  # ✅ v4.1.5: من True → False (مؤقتاً)
+# ==================== منع الصفقات المتعاكسة ====================
+ENABLE_OPPOSITE_DIRECTION_FILTER = True    # 🔥 مفعل
 
 # ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 5.0           # يبقى 5% (خسارة محققة فقط)
+DAILY_MAX_LOSS_PERCENT = 8.0               # 🔥 مرن قليلاً
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
 TRAILING_SL_TRIGGER = 1.0
 TRAILING_SL_DISTANCE = 0.5
-BREAKEVEN_TRIGGER = 1.2
+BREAKEVEN_TRIGGER = 1.5                    # 🔥 بعد TP1 (1.5%)
 BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
@@ -179,7 +171,7 @@ ENABLE_GROQ_ANALYSIS = True
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 45
+GROQ_MIN_SCORE_BEFORE_CALL = 55            # 🔥 محسّن لتقليل الاستهلاك
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
@@ -191,18 +183,34 @@ LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
-# ==================== ⚡ البيانات اللحظية (WebSocket) v4.1 ====================
+# ==================== البيانات اللحظية (WebSocket) ====================
 ENABLE_REALTIME_DATA = False
 REALTIME_ADJUSTMENT_ENABLED = True
-
-# نطاق التعديل
 REALTIME_MIN_ADJUSTMENT = -5
 REALTIME_MAX_ADJUSTMENT = 10
-
-# إعدادات التدفق
 REALTIME_PRESSURE_WINDOW = 30
 REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
-
-# عدد العملات للاشتراك
 REALTIME_MAX_SUBSCRIPTIONS = 25
+
+# ==================== 🔥 نظام التعلم التلقائي v5.0 ====================
+ENABLE_AUTO_LEARNING = True                # تفعيل التعلم التلقائي
+AUTO_LEARN_INTERVAL_HOURS = 24             # كل 24 ساعة
+AUTO_LEARN_MIN_TRADES = 30                 # بعد 30 صفقة
+AUTO_TUNE_WEIGHTS = True                   # تعديل الأوزان تلقائياً
+AUTO_RESTART_AFTER_TUNE = True             # إعادة تشغيل تلقائي
+AUTO_PROTECTION_ENABLED = True             # حماية ذاتية
+DAILY_REPORT_HOUR = 10                     # تقرير يومي الساعة 10 صباحاً
+AUTO_LEARN_MAX_ADJUSTMENT = 0.30           # أقصى تعديل 30% لكل وزن
+AUTO_LEARN_BACKUP_ENABLED = True           # نسخة احتياطية قبل التعديل
+
+# ==================== 🔥 الحماية الذاتية ====================
+AUTO_PAUSE_ON_LOSS_STREAK = 5              # إيقاف مؤقت بعد 5 خسائر
+AUTO_PAUSE_DURATION_MINUTES = 120          # لمدة ساعتين
+AUTO_REDUCE_RISK_ON_LOSS = True            # تقليل المخاطرة بعد الخسائر
+AUTO_RISK_REDUCTION_FACTOR = 0.5           # تقليل TRADE_USDT للنصف
+
+# ==================== 🔥 التقارير ====================
+ENABLE_DAILY_REPORT = True                 # تقرير يومي تلقائي
+ENABLE_WEEKLY_REPORT = True                # تقرير أسبوعي (الأحد)
+REPORT_INCLUDE_SUGGESTIONS = True          # تضمين التوصيات
