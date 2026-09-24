@@ -1,12 +1,12 @@
 # ==================================================
-# 📁 ملف: smart_scheduler.py - الإصدار v5.0
-# 🔧 الوصف:
+# 📁 ملف: smart_scheduler.py - الإصدار v5.2.2
+# 🔧 التعديلات v5.2.2:
+#    - 🔥 إزالة os._exit (لا إعادة تشغيل)
+#    - 🔥 تحديث الأوزان في الذاكرة
+#    - 🔥 إصلاح توقف البوت بعد التعلم
+# 🔧 التعديلات v5.0:
 #    - جدولة المهام التلقائية
-#    - تشغيل التحليل كل 24 ساعة
-#    - تشغيل التعديل التلقائي
-#    - تقارير يومية وأسبوعية
-#    - حماية ذاتية
-# 📅 التاريخ: 2026-09-22
+# 📅 التاريخ: 2026-09-24
 # ==================================================
 
 import threading
@@ -16,7 +16,6 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger("smart_scheduler")
 
-# حالة الجدولة
 _last_learning_run = 0
 _last_report_run = 0
 _last_weekly_report = 0
@@ -26,11 +25,6 @@ _scheduler_running = False
 # ==================== فحص الحماية الذاتية ====================
 
 def check_auto_protection():
-    """
-    🔥 فحص الحماية الذاتية
-    - إذا خسر البوت عدة صفقات متتالية
-    - يقلل المخاطرة تلقائياً
-    """
     try:
         from config import (
             AUTO_PROTECTION_ENABLED,
@@ -46,9 +40,7 @@ def check_auto_protection():
         consecutive_losses = core.get_consecutive_losses()
 
         if consecutive_losses >= AUTO_PAUSE_ON_LOSS_STREAK:
-            logger.warning(f"🛑 {consecutive_losses} خسائر متتالية — تفعيل الحماية الذاتية")
-            # الحماية موجودة بالفعل في core_functions
-            # (is_trading_paused)
+            logger.warning(f"🛑 {consecutive_losses} خسائر متتالية — الحماية الذاتية نشطة")
 
         elif consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             logger.warning(f"🛑 {consecutive_losses} خسائر — البوت سيُوقف مؤقتاً")
@@ -66,7 +58,7 @@ def run_learning_session():
         logger.info("🧠 [SCHEDULER] بدء جلسة التعلم التلقائي...")
         logger.info("=" * 60)
 
-        # ==================== 1. التحليل ====================
+        # 1. التحليل
         import auto_learner
         analysis = auto_learner.run_analysis()
 
@@ -74,14 +66,11 @@ def run_learning_session():
             logger.info("⏳ [SCHEDULER] لا توجد بيانات كافية")
             return False
 
-        # ==================== 2. التعديل ====================
+        # 2. التعديل
         from config import AUTO_TUNE_WEIGHTS
 
         if AUTO_TUNE_WEIGHTS:
             import auto_tuner
-            # auto_tuner.run_tuning() ستُعيد تشغيل البوت
-            # لكننا نريد فقط تحضير التعديل بدون إعادة تشغيل
-            # سنقوم بذلك يدوياً هنا
 
             try:
                 from config import (
@@ -111,14 +100,17 @@ def run_learning_session():
 
                     logger.info("✅ [SCHEDULER] تم تحديث الأوزان")
 
-                    # إعادة تشغيل البوت
-                    logger.info("🔄 [SCHEDULER] إعادة تشغيل البوت...")
-                    time.sleep(5)
+                    # 🔥 v5.2.2: تحديث في الذاكرة (بدون إعادة تشغيل)
+                    logger.info("🔄 [SCHEDULER] تحديث الأوزان في الذاكرة...")
                     auto_tuner.restart_bot()
+
+                    logger.info("✅ [SCHEDULER] تم التحديث - البوت مستمر في العمل")
                     return True
 
             except Exception as e:
                 logger.error(f"خطأ في التعديل: {e}")
+                import traceback
+                traceback.print_exc()
 
         return True
 
@@ -132,7 +124,6 @@ def run_learning_session():
 # ==================== تقرير يومي ====================
 
 def run_daily_report():
-    """إرسال تقرير يومي"""
     try:
         logger.info("📊 [SCHEDULER] بدء التقرير اليومي...")
 
@@ -149,7 +140,6 @@ def run_daily_report():
 # ==================== تقرير أسبوعي ====================
 
 def run_weekly_report():
-    """إرسال تقرير أسبوعي"""
     try:
         logger.info("📊 [SCHEDULER] بدء التقرير الأسبوعي...")
 
@@ -186,7 +176,7 @@ def scheduler_loop():
             now = time.time()
             now_dt = datetime.now()
 
-            # ==================== 1. التعلم التلقائي ====================
+            # 1. التعلم التلقائي
             if ENABLE_AUTO_LEARNING:
                 interval_seconds = AUTO_LEARN_INTERVAL_HOURS * 3600
 
@@ -195,30 +185,27 @@ def scheduler_loop():
                     logger.info("🧠 [SCHEDULER] موعد التعلم التلقائي")
                     threading.Thread(target=run_learning_session, daemon=True).start()
 
-            # ==================== 2. التقرير اليومي ====================
+            # 2. التقرير اليومي
             if ENABLE_DAILY_REPORT:
                 target_hour = DAILY_REPORT_HOUR
-                # إذا حان الوقت ولم نُرسل اليوم
                 if now_dt.hour == target_hour and (now - _last_report_run) >= 3600:
                     _last_report_run = now
                     logger.info("📊 [SCHEDULER] موعد التقرير اليومي")
                     threading.Thread(target=run_daily_report, daemon=True).start()
 
-            # ==================== 3. التقرير الأسبوعي ====================
+            # 3. التقرير الأسبوعي
             if ENABLE_WEEKLY_REPORT:
-                # الأحد الساعة 10 صباحاً
                 if now_dt.weekday() == 6 and now_dt.hour == DAILY_REPORT_HOUR:
-                    if (now - _last_weekly_report) >= 86400:  # مرة يومياً
+                    if (now - _last_weekly_report) >= 86400:
                         _last_weekly_report = now
                         logger.info("📊 [SCHEDULER] موعد التقرير الأسبوعي")
                         threading.Thread(target=run_weekly_report, daemon=True).start()
 
-            # ==================== 4. الحماية الذاتية ====================
+            # 4. الحماية الذاتية
             if AUTO_PROTECTION_ENABLED:
                 check_auto_protection()
 
-            # ==================== انتظار ====================
-            time.sleep(60)  # فحص كل دقيقة
+            time.sleep(60)
 
         except Exception as e:
             logger.error(f"❌ [SCHEDULER] خطأ في الحلقة: {e}")
@@ -242,14 +229,12 @@ def start_scheduler():
 
 
 def stop_scheduler():
-    """إيقاف الجدولة"""
     global _scheduler_running
     _scheduler_running = False
     logger.info("🛑 [SCHEDULER] إيقاف الجدولة")
 
 
 def get_scheduler_status():
-    """حالة الجدولة"""
     return {
         'running': _scheduler_running,
         'last_learning': datetime.fromtimestamp(_last_learning_run).isoformat() if _last_learning_run > 0 else None,
@@ -259,7 +244,7 @@ def get_scheduler_status():
 
 
 def force_learning_now():
-    """تشغيل التعلم فوراً (للاستخدام اليدوي)"""
+    """تشغيل التعلم فوراً"""
     global _last_learning_run
     _last_learning_run = 0
     logger.info("🔥 [SCHEDULER] تشغيل التعلم فوراً")
