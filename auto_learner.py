@@ -1,12 +1,11 @@
 # ==================================================
-# 📁 ملف: auto_learner.py - الإصدار v5.0
-# 🔧 الوصف:
-#    - قراءة trade_memory.json
-#    - تحليل كل صفقة
-#    - حساب correlation لكل ميزة
-#    - إرجاع الأوزان الموصى بها
-#    - لا يحتاج تدخل يدوي
-# 📅 التاريخ: 2026-09-22
+# 📁 ملف: auto_learner.py - الإصدار v5.3
+# 🔧 التعديلات v5.3:
+#    - 🔥 تحليل مفصّل: لماذا خسرت؟
+#    - 🔥 مقارنة الرابحة vs الخاسرة
+#    - 🔥 تحديد الأنماط الشائعة
+#    - 🔥 AUTO_LEARN_MIN_TRADES = 10
+# 📅 التاريخ: 2026-09-24
 # ==================================================
 
 import json
@@ -22,34 +21,27 @@ LEARNING_HISTORY_FILE = "learning_history.json"
 
 
 def _ensure_memory_file():
-    """التأكد من وجود ملف الذاكرة"""
     if not os.path.exists(MEMORY_FILE):
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump({
-                "trades": [],
-                "symbol_stats": {},
-                "hourly_stats": {},
+                "trades": [], "symbol_stats": {}, "hourly_stats": {},
                 "last_updated": datetime.now().isoformat(),
-                "total_trades": 0,
-                "total_wins": 0,
-                "total_losses": 0,
-                "total_pnl": 0.0
+                "total_trades": 0, "total_wins": 0,
+                "total_losses": 0, "total_pnl": 0.0
             }, f, indent=2, ensure_ascii=False)
 
 
 def load_memory():
-    """تحميل الذاكرة"""
     try:
         _ensure_memory_file()
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"خطأ في تحميل الذاكرة: {e}")
+        logger.error(f"خطأ: {e}")
         return {"trades": []}
 
 
 def load_learning_history():
-    """تحميل سجل التعلم"""
     try:
         if not os.path.exists(LEARNING_HISTORY_FILE):
             return []
@@ -60,24 +52,18 @@ def load_learning_history():
 
 
 def save_learning_history(history):
-    """حفظ سجل التعلم"""
     try:
         with open(LEARNING_HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
         return True
     except Exception as e:
-        logger.error(f"خطأ في حفظ سجل التعلم: {e}")
+        logger.error(f"خطأ: {e}")
         return False
 
 
 # ==================== حساب الارتباط ====================
 
 def calculate_correlation(feature_values, outcomes):
-    """
-    حساب ارتباط بيرسون بين ميزة والنتيجة
-    feature_values: قائمة قيم الميزة
-    outcomes: قائمة النتائج (1 = ربح، 0 = خسارة)
-    """
     try:
         n = len(feature_values)
         if n < 5:
@@ -100,13 +86,178 @@ def calculate_correlation(feature_values, outcomes):
         return round(numerator / (n * std_x * std_y), 4)
 
     except Exception as e:
-        logger.error(f"خطأ في حساب الارتباط: {e}")
+        logger.error(f"خطأ: {e}")
         return 0.0
+
+
+# ==================== 🔥 تحليل مفصل: لماذا خسرت؟ ====================
+
+def analyze_why_lost(trades):
+    """
+    🔥 تحليل مفصّل: لماذا خسرت الصفقات؟
+    """
+    try:
+        wins = [t for t in trades if t.get('is_win', False)]
+        losses = [t for t in trades if not t.get('is_win', False)]
+
+        if not losses:
+            return {
+                'common_losses': [],
+                'common_wins': [],
+                'comparisons': []
+            }
+
+        # ==================== مقارنة الخصائص ====================
+        features_to_compare = [
+            ('rsi', 'RSI', lambda t: t.get('score_details', {}).get('rsi_points', 0)),
+            ('volume', 'الحجم', lambda t: t.get('volume_ratio', 0)),
+            ('timeframe', 'ترابط الفريمات', lambda t: t.get('timeframe_alignment', 0)),
+            ('momentum', 'الزخم', lambda t: t.get('score_details', {}).get('momentum_points', 0)),
+            ('order_book', 'دفتر الأوامر', lambda t: t.get('score_details', {}).get('order_book_points', 0)),
+            ('confidence', 'الثقة', lambda t: t.get('confidence', 0)),
+            ('groq_conf', 'ثقة Groq', lambda t: t.get('groq_confidence', 0)),
+            ('market', 'السوق', lambda t: t.get('score_details', {}).get('market_points', 0)),
+            ('funding', 'Funding/OI', lambda t: t.get('score_details', {}).get('funding_oi_points', 0)),
+            ('price_action', 'Price Action', lambda t: t.get('score_details', {}).get('price_action_points', 0)),
+        ]
+
+        comparisons = []
+
+        for key, name_ar, extractor in features_to_compare:
+            try:
+                win_values = [extractor(t) for t in wins if extractor(t) is not None]
+                loss_values = [extractor(t) for t in losses if extractor(t) is not None]
+
+                if not win_values or not loss_values:
+                    continue
+
+                win_avg = sum(win_values) / len(win_values)
+                loss_avg = sum(loss_values) / len(loss_values)
+                diff = win_avg - loss_avg
+
+                comparisons.append({
+                    'feature': key,
+                    'name': name_ar,
+                    'win_avg': round(win_avg, 2),
+                    'loss_avg': round(loss_avg, 2),
+                    'diff': round(diff, 2),
+                    'significant': abs(diff) > (abs(win_avg) * 0.15 if win_avg != 0 else 1)
+                })
+            except:
+                continue
+
+        # ترتيب حسب الأهمية
+        comparisons.sort(key=lambda x: abs(x['diff']), reverse=True)
+
+        # ==================== أنماط الخسائر ====================
+        common_losses = []
+
+        # 1. RSI مرتفع جداً
+        high_rsi_losses = [t for t in losses if t.get('score_details', {}).get('rsi_points', 0) == 0]
+        if len(high_rsi_losses) >= 2:
+            common_losses.append({
+                'pattern': 'RSI غير مثالي',
+                'count': len(high_rsi_losses),
+                'total_losses': len(losses),
+                'description': f"RSI كان خارج النطاق المثالي في {len(high_rsi_losses)}/{len(losses)} خسارة"
+            })
+
+        # 2. دفتر أوامر ضعيف
+        weak_ob_losses = [t for t in losses if t.get('score_details', {}).get('order_book_points', 0) < 3]
+        if len(weak_ob_losses) >= 2:
+            common_losses.append({
+                'pattern': 'دفتر أوامر ضعيف',
+                'count': len(weak_ob_losses),
+                'total_losses': len(losses),
+                'description': f"دفتر الأوامر كان ضعيفاً في {len(weak_ob_losses)}/{len(losses)} خسارة"
+            })
+
+        # 3. حجم منخفض
+        low_volume_losses = [t for t in losses if t.get('volume_ratio', 0) < 1.3]
+        if len(low_volume_losses) >= 2:
+            common_losses.append({
+                'pattern': 'حجم منخفض',
+                'count': len(low_volume_losses),
+                'total_losses': len(losses),
+                'description': f"الحجم كان منخفضاً في {len(low_volume_losses)}/{len(losses)} خسارة"
+            })
+
+        # 4. Momentum معاكس
+        wrong_momentum_losses = [t for t in losses if t.get('score_details', {}).get('momentum_points', 0) == 0]
+        if len(wrong_momentum_losses) >= 2:
+            common_losses.append({
+                'pattern': 'Momentum معاكس',
+                'count': len(wrong_momentum_losses),
+                'total_losses': len(losses),
+                'description': f"Momentum كان معاكساً في {len(wrong_momentum_losses)}/{len(losses)} خسارة"
+            })
+
+        # 5. ثقة منخفضة
+        low_conf_losses = [t for t in losses if t.get('confidence', 0) < 60]
+        if len(low_conf_losses) >= 2:
+            common_losses.append({
+                'pattern': 'ثقة منخفضة',
+                'count': len(low_conf_losses),
+                'total_losses': len(losses),
+                'description': f"الثقة كانت منخفضة في {len(low_conf_losses)}/{len(losses)} خسارة"
+            })
+
+        # 6. السوق معاكس
+        bad_market_losses = [t for t in losses if t.get('score_details', {}).get('market_points', 0) < 3]
+        if len(bad_market_losses) >= 2:
+            common_losses.append({
+                'pattern': 'سوق معاكس',
+                'count': len(bad_market_losses),
+                'total_losses': len(losses),
+                'description': f"حالة السوق كانت سيئة في {len(bad_market_losses)}/{len(losses)} خسارة"
+            })
+
+        # ==================== أنماط الربح ====================
+        common_wins = []
+
+        good_volume_wins = [t for t in wins if t.get('volume_ratio', 0) >= 1.5]
+        if len(good_volume_wins) >= 2:
+            common_wins.append({
+                'pattern': 'حجم قوي',
+                'count': len(good_volume_wins),
+                'total_wins': len(wins),
+                'description': f"الحجم كان قوياً في {len(good_volume_wins)}/{len(wins)} ربح"
+            })
+
+        good_ob_wins = [t for t in wins if t.get('score_details', {}).get('order_book_points', 0) >= 7]
+        if len(good_ob_wins) >= 2:
+            common_wins.append({
+                'pattern': 'دفتر أوامر قوي',
+                'count': len(good_ob_wins),
+                'total_wins': len(wins),
+                'description': f"دفتر الأوامر كان قوياً في {len(good_ob_wins)}/{len(wins)} ربح"
+            })
+
+        good_conf_wins = [t for t in wins if t.get('confidence', 0) >= 70]
+        if len(good_conf_wins) >= 2:
+            common_wins.append({
+                'pattern': 'ثقة عالية',
+                'count': len(good_conf_wins),
+                'total_wins': len(wins),
+                'description': f"الثقة كانت عالية في {len(good_conf_wins)}/{len(wins)} ربح"
+            })
+
+        return {
+            'common_losses': common_losses,
+            'common_wins': common_wins,
+            'comparisons': comparisons[:5]  # أفضل 5 مقارنات
+        }
+
+    except Exception as e:
+        logger.error(f"خطأ في analyze_why_lost: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'common_losses': [], 'common_wins': [], 'comparisons': []}
 
 
 # ==================== التحليل الرئيسي ====================
 
-def analyze_performance(min_trades=30):
+def analyze_performance(min_trades=10):
     """
     تحليل أداء البوت وتحديد الأوزان المثالية
     """
@@ -118,7 +269,6 @@ def analyze_performance(min_trades=30):
             logger.info(f"⏳ عدد الصفقات غير كافٍ ({len(trades)}/{min_trades})")
             return None
 
-        # آخر min_trades صفقة
         recent_trades = trades[-min_trades:]
 
         logger.info(f"📊 تحليل {len(recent_trades)} صفقة...")
@@ -142,34 +292,15 @@ def analyze_performance(min_trades=30):
             is_win = 1 if trade.get('is_win', False) else 0
             outcomes.append(is_win)
 
-            # استخراج الميزات
-            features['timeframe_alignment'].append(
-                float(trade.get('timeframe_alignment', 0))
-            )
-            features['volume_ratio'].append(
-                float(trade.get('volume_ratio', 0))
-            )
-            features['rsi'].append(
-                float(trade.get('rsi', 50)) if 'rsi' in trade else 50.0
-            )
-            features['momentum_strength'].append(
-                float(score_details.get('momentum_points', 0))
-            )
-            features['confidence'].append(
-                float(trade.get('confidence', 0))
-            )
-            features['groq_confidence'].append(
-                float(trade.get('groq_confidence', 0))
-            )
-            features['order_book_points'].append(
-                float(score_details.get('order_book_points', 0))
-            )
-            features['funding_oi_points'].append(
-                float(score_details.get('funding_oi_points', 0))
-            )
-            features['market_points'].append(
-                float(score_details.get('market_points', 0))
-            )
+            features['timeframe_alignment'].append(float(trade.get('timeframe_alignment', 0)))
+            features['volume_ratio'].append(float(trade.get('volume_ratio', 0)))
+            features['rsi'].append(float(trade.get('score_details', {}).get('rsi_points', 0)))
+            features['momentum_strength'].append(float(score_details.get('momentum_points', 0)))
+            features['confidence'].append(float(trade.get('confidence', 0)))
+            features['groq_confidence'].append(float(trade.get('groq_confidence', 0)))
+            features['order_book_points'].append(float(score_details.get('order_book_points', 0)))
+            features['funding_oi_points'].append(float(score_details.get('funding_oi_points', 0)))
+            features['market_points'].append(float(score_details.get('market_points', 0)))
 
         # ==================== حساب الارتباطات ====================
         correlations = {}
@@ -179,7 +310,7 @@ def analyze_performance(min_trades=30):
                 correlations[feature_name] = corr
                 logger.info(f"   • {feature_name}: {corr:+.3f}")
 
-        # ==================== إحصاءات إضافية ====================
+        # ==================== إحصاءات ====================
         wins = [t for t in recent_trades if t.get('is_win')]
         losses = [t for t in recent_trades if not t.get('is_win')]
 
@@ -190,12 +321,14 @@ def analyze_performance(min_trades=30):
         avg_win = sum(t.get('pnl', 0) for t in wins) / win_count if win_count > 0 else 0
         avg_loss = sum(t.get('pnl', 0) for t in losses) / loss_count if loss_count > 0 else 0
 
+        # ==================== التحليل المفصل ====================
+        detailed_analysis = analyze_why_lost(recent_trades)
+
         # ==================== التوصيات ====================
         recommendations = generate_recommendations(
             correlations, win_rate, avg_win, avg_loss
         )
 
-        # ==================== بناء النتيجة ====================
         result = {
             'timestamp': datetime.now().isoformat(),
             'trades_analyzed': len(recent_trades),
@@ -206,7 +339,8 @@ def analyze_performance(min_trades=30):
             'avg_loss': round(avg_loss, 4),
             'profit_factor': round(abs(avg_win * win_count) / abs(avg_loss * loss_count), 2) if loss_count > 0 and avg_loss != 0 else 0,
             'correlations': correlations,
-            'recommendations': recommendations
+            'recommendations': recommendations,
+            'detailed_analysis': detailed_analysis
         }
 
         return result
@@ -219,17 +353,13 @@ def analyze_performance(min_trades=30):
 
 
 def generate_recommendations(correlations, win_rate, avg_win, avg_loss):
-    """توليد التوصيات بناءً على الارتباطات"""
+    """توليد التوصيات"""
     try:
         recommendations = {
             'weight_changes': {},
             'suggestions': [],
             'warnings': []
         }
-
-        # ==================== تعديلات الأوزان ====================
-        # الميزات ذات الارتباط القوي (> 0.3) → وزن أعلى
-        # الميزات ذات الارتباط الضعيف (< 0.1) → وزن أقل
 
         current_weights = {
             'timeframe_alignment': 20,
@@ -243,13 +373,12 @@ def generate_recommendations(correlations, win_rate, avg_win, avg_loss):
             'funding_oi': 5,
         }
 
-        # ربط أسماء الميزات بأسماء الأوزان
         mapping = {
             'timeframe_alignment': 'timeframe_alignment',
             'volume_ratio': 'volume',
             'rsi': 'rsi_ideal',
             'momentum_strength': 'momentum',
-            'confidence': 'groq',  # تقريبي
+            'confidence': 'groq',
             'groq_confidence': 'groq',
             'order_book_points': 'order_book',
             'funding_oi_points': 'funding_oi',
@@ -263,60 +392,40 @@ def generate_recommendations(correlations, win_rate, avg_win, avg_loss):
             weight_name = mapping[feature_name]
             current = current_weights.get(weight_name, 10)
 
-            # تعديل بنسبة الارتباط (مع حد أقصى 30%)
             if corr > 0.3:
-                # ميزة قوية
                 change = min(0.30, corr * 0.5)
                 new_weight = current * (1 + change)
                 recommendations['weight_changes'][weight_name] = round(new_weight, 1)
 
             elif corr < 0.05:
-                # ميزة ضعيفة
                 change = min(0.30, (0.1 - corr) * 2)
                 new_weight = current * (1 - change)
                 recommendations['weight_changes'][weight_name] = round(new_weight, 1)
 
-        # ==================== التوصيات ====================
         if win_rate < 0.40:
-            recommendations['warnings'].append(
-                f"⚠️ نسبة النجاح منخفضة: {win_rate*100:.1f}%"
-            )
+            recommendations['warnings'].append(f"⚠️ نسبة النجاح منخفضة: {win_rate*100:.1f}%")
 
         if win_rate > 0.60:
-            recommendations['suggestions'].append(
-                f"✅ نسبة النجاح ممتازة: {win_rate*100:.1f}%"
-            )
+            recommendations['suggestions'].append(f"✅ نسبة النجاح ممتازة: {win_rate*100:.1f}%")
 
         if avg_loss != 0 and abs(avg_win / avg_loss) < 1.0:
-            recommendations['warnings'].append(
-                f"⚠️ R:R سيئة: متوسط الربح {avg_win:.2f} vs الخسارة {avg_loss:.2f}"
-            )
+            recommendations['warnings'].append(f"⚠️ R:R سيئة: {avg_win:.2f} vs {avg_loss:.2f}")
 
-        # أفضل/أسوأ الميزات
         sorted_corr = sorted(correlations.items(), key=lambda x: x[1], reverse=True)
         if sorted_corr:
             best = sorted_corr[0]
             worst = sorted_corr[-1]
-            recommendations['suggestions'].append(
-                f"📈 أفضل ميزة: {best[0]} ({best[1]:+.3f})"
-            )
-            recommendations['warnings'].append(
-                f"📉 أسوأ ميزة: {worst[0]} ({worst[1]:+.3f})"
-            )
+            recommendations['suggestions'].append(f"📈 أفضل ميزة: {best[0]} ({best[1]:+.3f})")
+            recommendations['warnings'].append(f"📉 أسوأ ميزة: {worst[0]} ({worst[1]:+.3f})")
 
         return recommendations
 
     except Exception as e:
-        logger.error(f"خطأ في التوصيات: {e}")
+        logger.error(f"خطأ: {e}")
         return {'weight_changes': {}, 'suggestions': [], 'warnings': []}
 
 
-# ==================== اقتراح الأوزان الجديدة ====================
-
-def suggest_new_weights(min_trades=30):
-    """
-    اقتراح أوزان جديدة بناءً على التحليل
-    """
+def suggest_new_weights(min_trades=10):
     try:
         result = analyze_performance(min_trades)
         if not result:
@@ -324,7 +433,6 @@ def suggest_new_weights(min_trades=30):
 
         weight_changes = result.get('recommendations', {}).get('weight_changes', {})
         if not weight_changes:
-            logger.info("ℹ️ لا توجد تغييرات مقترحة")
             return None
 
         return {
@@ -334,14 +442,11 @@ def suggest_new_weights(min_trades=30):
         }
 
     except Exception as e:
-        logger.error(f"خطأ في اقتراح الأوزان: {e}")
+        logger.error(f"خطأ: {e}")
         return None
 
 
-# ==================== التوافق ====================
-
 def get_learning_stats():
-    """إحصائيات التعلم"""
     try:
         history = load_learning_history()
         return {
@@ -354,7 +459,7 @@ def get_learning_stats():
 
 
 def run_analysis():
-    """تشغيل التحليل الكامل (للاستخدام الخارجي)"""
+    """تشغيل التحليل الكامل"""
     try:
         logger.info("🧠 بدء التحليل التلقائي...")
 
@@ -363,18 +468,28 @@ def run_analysis():
             logger.info("⏳ لا يوجد ما يكفي من البيانات")
             return None
 
-        # حفظ في السجل
         history = load_learning_history()
         history.append(result)
         save_learning_history(history)
 
-        # طباعة التقرير
         logger.info("=" * 60)
         logger.info(f"📊 تقرير التحليل ({result['trades_analyzed']} صفقة)")
         logger.info(f"   نسبة النجاح: {result['win_rate']}%")
         logger.info(f"   Profit Factor: {result['profit_factor']}")
         logger.info(f"   متوسط الربح: {result['avg_win']:+.4f}")
         logger.info(f"   متوسط الخسارة: {result['avg_loss']:+.4f}")
+
+        # 🔥 الأنماط
+        detailed = result.get('detailed_analysis', {})
+        if detailed.get('common_losses'):
+            logger.info("   ❌ الخسائر الشائعة:")
+            for item in detailed['common_losses'][:3]:
+                logger.info(f"      • {item['description']}")
+
+        if detailed.get('common_wins'):
+            logger.info("   ✅ الأنماط الرابحة:")
+            for item in detailed['common_wins'][:3]:
+                logger.info(f"      • {item['description']}")
 
         for suggestion in result['recommendations'].get('suggestions', []):
             logger.info(f"   {suggestion}")
@@ -388,12 +503,14 @@ def run_analysis():
 
     except Exception as e:
         logger.error(f"خطأ في التشغيل: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار auto_learner...")
+    print("🧪 اختبار auto_learner v5.3...")
     result = run_analysis()
     if result:
         print(json.dumps(result, indent=2, ensure_ascii=False))

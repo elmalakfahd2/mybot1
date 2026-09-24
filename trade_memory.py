@@ -1,18 +1,21 @@
 # ==================================================
-# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v4.0
-# 🔧 التعديلات v4.0:
-#    - ✅ حساب العمولات (COMMISSION_RATE)
-#    - ✅ is_win فقط إذا الربح الصافي > 0
-#    - ✅ جلب exit_price الحقيقي من Binance
-#    - ✅ عقوبات إضافية للخسائر الكبيرة
-#    - ✅ إصلاح get_today_pnl مع العمولات
-#    - ✅ حظر بالخسارة الكلية
-# 📅 التاريخ: 2026-09-18
+# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.3
+# 🔧 التعديلات v5.3:
+#    - 🔥 إضافة backup_to_github (حفظ تلقائي)
+#    - 🔥 إضافة auto_backup_thread (حفظ دوري)
+#    - 🔥 إضافة get_all_trades_for_analysis
+#    - حساب العمولات (v4.0)
+#    - جلب exit_price الحقيقي (v4.0)
+# 📅 التاريخ: 2026-09-24
 # ==================================================
 
 import json
 import os
 import logging
+import base64
+import requests
+import threading
+import time
 from datetime import datetime, timedelta
 from threading import Lock
 
@@ -21,15 +24,29 @@ logger = logging.getLogger("trade_memory")
 MEMORY_FILE = "trade_memory.json"
 _lock = Lock()
 
-# 🔥 معدل العمولة (0.04% لكل جانب = 0.08% ذهاب وعودة)
+# 🔥 معدل العمولة
 try:
     from config import COMMISSION_RATE
 except ImportError:
-    COMMISSION_RATE = 0.0004  # 0.04%
+    COMMISSION_RATE = 0.0004
+
+# 🔥 GitHub Backup
+try:
+    from config import (
+        GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH,
+        ENABLE_AUTO_BACKUP, BACKUP_INTERVAL_MINUTES
+    )
+except ImportError:
+    GITHUB_TOKEN = ""
+    GITHUB_REPO = ""
+    GITHUB_BRANCH = "main"
+    ENABLE_AUTO_BACKUP = False
+    BACKUP_INTERVAL_MINUTES = 10
+
+_backup_thread_running = False
 
 
 def _ensure_memory_file():
-    """التأكد من وجود الملف"""
     if not os.path.exists(MEMORY_FILE):
         initial_data = {
             "trades": [],
@@ -47,7 +64,6 @@ def _ensure_memory_file():
 
 
 def load_memory():
-    """تحميل الذاكرة"""
     try:
         _ensure_memory_file()
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
@@ -55,19 +71,13 @@ def load_memory():
     except Exception as e:
         logger.error(f"خطأ في تحميل الذاكرة: {e}")
         return {
-            "trades": [],
-            "symbol_stats": {},
-            "hourly_stats": {},
-            "condition_stats": {},
-            "total_trades": 0,
-            "total_wins": 0,
-            "total_losses": 0,
-            "total_pnl": 0.0
+            "trades": [], "symbol_stats": {}, "hourly_stats": {},
+            "condition_stats": {}, "total_trades": 0, "total_wins": 0,
+            "total_losses": 0, "total_pnl": 0.0
         }
 
 
 def save_memory(data):
-    """حفظ الذاكرة"""
     try:
         data["last_updated"] = datetime.now().isoformat()
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
@@ -78,36 +88,136 @@ def save_memory(data):
         return False
 
 
-# ==================== 🔥 جلب سعر الخروج الحقيقي ====================
+# ==================== 🔥 GitHub Backup ====================
+
+def backup_to_github(force=False):
+    """
+    🔥 رفع trade_memory.json إلى GitHub
+    """
+    try:
+        if not GITHUB_TOKEN:
+            if force:
+                logger.warning("⚠️ GITHUB_TOKEN غير موجود - تخطي الرفع")
+            return False
+
+        if not os.path.exists(MEMORY_FILE):
+            logger.warning("⚠️ trade_memory.json غير موجود")
+            return False
+
+        # قراءة الملف
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Base64
+        content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+
+        # API URL
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/trade_memory.json"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        # جلب SHA الحالي
+        sha = None
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 200:
+                sha = response.json().get("sha")
+        except:
+            pass
+
+        # رفع
+        data = {
+            "message": f"Auto-save: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "content": content_b64,
+            "branch": GITHUB_BRANCH
+        }
+        if sha:
+            data["sha"] = sha
+
+        response = requests.put(url, headers=headers, json=data, timeout=30)
+
+        if response.status_code in [200, 201]:
+            logger.info(f"💾 تم حفظ trade_memory.json في GitHub")
+            return True
+        else:
+            logger.warning(f"⚠️ فشل الحفظ في GitHub: {response.status_code}")
+            return False
+
+    except Exception as e:
+        logger.error(f"خطأ في backup_to_github: {e}")
+        return False
+
+
+def auto_backup_loop():
+    """
+    🔥 خيط الحفظ الدوري في GitHub
+    """
+    global _backup_thread_running
+
+    if not ENABLE_AUTO_BACKUP:
+        logger.info("ℹ️ الحفظ التلقائي معطل")
+        return
+
+    if not GITHUB_TOKEN:
+        logger.warning("⚠️ GITHUB_TOKEN غير موجود - الحفظ التلقائي معطل")
+        return
+
+    _backup_thread_running = True
+    logger.info(f"💾 بدء الحفظ الدوري (كل {BACKUP_INTERVAL_MINUTES} دقيقة)")
+
+    while _backup_thread_running:
+        try:
+            time.sleep(BACKUP_INTERVAL_MINUTES * 60)
+
+            if _backup_thread_running:
+                logger.info("💾 حفظ دوري في GitHub...")
+                backup_to_github()
+
+        except Exception as e:
+            logger.error(f"خطأ في الحفظ الدوري: {e}")
+            time.sleep(60)
+
+
+def start_auto_backup():
+    """بدء الحفظ التلقائي في خيط منفصل"""
+    try:
+        if not ENABLE_AUTO_BACKUP:
+            logger.info("ℹ️ الحفظ التلقائي معطل")
+            return False
+
+        thread = threading.Thread(target=auto_backup_loop, daemon=True, name="GitHubBackup")
+        thread.start()
+        logger.info("✅ تم تشغيل الحفظ التلقائي في GitHub")
+        return True
+    except Exception as e:
+        logger.error(f"❌ فشل تشغيل الحفظ التلقائي: {e}")
+        return False
+
+
+# ==================== جلب سعر الخروج ====================
 
 def get_exit_price(symbol, entry_time_iso):
-    """
-    🔥 جلب سعر الخروج الحقيقي من سجل Binance
-    """
     try:
         import core_functions as core
         client_obj = core.get_client()
         if not client_obj:
             return 0.0
 
-        # تحويل entry_time إلى timestamp
         try:
             entry_dt = datetime.fromisoformat(entry_time_iso)
             entry_ts = int(entry_dt.timestamp() * 1000)
         except:
             entry_ts = int((datetime.now() - timedelta(hours=2)).timestamp() * 1000)
 
-        # جلب صفقات الحساب
         trades = client_obj.futures_account_trades(
-            symbol=symbol,
-            startTime=entry_ts,
-            limit=20
+            symbol=symbol, startTime=entry_ts, limit=20
         )
 
         if not trades:
             return 0.0
 
-        # آخر صفقة هي الخروج
         return float(trades[-1].get('price', 0))
 
     except Exception as e:
@@ -116,25 +226,19 @@ def get_exit_price(symbol, entry_time_iso):
 
 
 def calculate_net_pnl(entry_price, exit_price, quantity, direction):
-    """
-    🔥 حساب الربح الصافي بعد العمولات
-    """
     try:
         if not entry_price or not quantity:
             return 0.0
 
-        # حساب الربح الإجمالي
         if direction == "BUY":
             gross_pnl = (exit_price - entry_price) * quantity
-        else:  # SELL
+        else:
             gross_pnl = (entry_price - exit_price) * quantity
 
-        # حساب العمولات (لكل جانب)
         entry_commission = entry_price * quantity * COMMISSION_RATE
         exit_commission = exit_price * quantity * COMMISSION_RATE
         total_commission = entry_commission + exit_commission
 
-        # الربح الصافي
         net_pnl = gross_pnl - total_commission
 
         return round(net_pnl, 6)
@@ -151,32 +255,22 @@ def record_trade(symbol, direction, entry_price, exit_price,
                  volume_ratio, groq_recommendation, groq_confidence,
                  score_details=None, exit_reason="unknown",
                  entry_time_iso=None):
-    """
-    🔥 تسجيل صفقة مكتملة مع حساب العمولات
-    """
     try:
         with _lock:
             memory = load_memory()
 
-            # 🔥 جلب exit_price إذا لم يُعطى
             if not exit_price or exit_price == 0:
                 if entry_time_iso:
                     exit_price = get_exit_price(symbol, entry_time_iso)
 
-            # 🔥 حساب الربح الصافي بعد العمولات
             if exit_price and exit_price > 0:
                 net_pnl = calculate_net_pnl(entry_price, exit_price, quantity, direction)
             else:
-                # إذا لم نعرف exit_price، نستخدم pnl المُعطى
-                # لكن نخصم العمولات
                 commission = entry_price * quantity * COMMISSION_RATE * 2
                 net_pnl = pnl - commission
 
-            # 🔥 الصفقة فوز فقط إذا الربح الصافي > 0
-            # نضيف هامش صغير (0.01$) لتجنب "الفوائد الوهمية"
             is_win = net_pnl > 0.01
 
-            # حساب pnl_percent
             position_value = entry_price * quantity
             pnl_percent = (net_pnl / position_value * 100) if position_value > 0 else 0
 
@@ -188,7 +282,7 @@ def record_trade(symbol, direction, entry_price, exit_price,
                 "exit_price": round(exit_price, 8) if exit_price else 0,
                 "quantity": quantity,
                 "pnl_gross": round(pnl, 4),
-                "pnl": round(net_pnl, 4),  # 🔥 صافي بعد العمولات
+                "pnl": round(net_pnl, 4),
                 "pnl_percent": round(pnl_percent, 4),
                 "is_win": is_win,
                 "confidence": confidence,
@@ -205,8 +299,6 @@ def record_trade(symbol, direction, entry_price, exit_price,
             }
 
             memory["trades"].append(trade_record)
-
-            # تحديث الإحصائيات
             memory["total_trades"] += 1
             if is_win:
                 memory["total_wins"] += 1
@@ -214,16 +306,11 @@ def record_trade(symbol, direction, entry_price, exit_price,
                 memory["total_losses"] += 1
             memory["total_pnl"] = round(memory["total_pnl"] + net_pnl, 4)
 
-            # تحديث إحصائيات العملة
             if symbol not in memory["symbol_stats"]:
                 memory["symbol_stats"][symbol] = {
-                    "wins": 0,
-                    "losses": 0,
-                    "total_pnl": 0.0,
-                    "last_trade": None,
-                    "consecutive_losses": 0,
-                    "avg_confidence": 0,
-                    "avg_pnl": 0
+                    "wins": 0, "losses": 0, "total_pnl": 0.0,
+                    "last_trade": None, "consecutive_losses": 0,
+                    "avg_confidence": 0, "avg_pnl": 0
                 }
 
             stats = memory["symbol_stats"][symbol]
@@ -243,13 +330,10 @@ def record_trade(symbol, direction, entry_price, exit_price,
                 )
                 stats["avg_pnl"] = round(stats["total_pnl"] / total, 4)
 
-            # تحديث إحصائيات الساعة
             hour_key = str(datetime.now().hour)
             if hour_key not in memory["hourly_stats"]:
                 memory["hourly_stats"][hour_key] = {
-                    "wins": 0,
-                    "losses": 0,
-                    "total_pnl": 0.0
+                    "wins": 0, "losses": 0, "total_pnl": 0.0
                 }
 
             hour_stats = memory["hourly_stats"][hour_key]
@@ -258,8 +342,15 @@ def record_trade(symbol, direction, entry_price, exit_price,
 
             save_memory(memory)
 
+            # 🔥 حفظ فوري في GitHub (بعد كل صفقة)
+            if ENABLE_AUTO_BACKUP:
+                try:
+                    backup_to_github()
+                except:
+                    pass
+
             status = "✅" if is_win else "❌"
-            logger.info(f"📝 تسجيل: {symbol} {status} صافي: {net_pnl:+.4f}$ (إجمالي: {pnl:+.4f}$)")
+            logger.info(f"📝 تسجيل: {symbol} {status} صافي: {net_pnl:+.4f}$")
 
             return True
 
@@ -271,50 +362,32 @@ def record_trade(symbol, direction, entry_price, exit_price,
 # ==================== نقاط العملة ====================
 
 def get_symbol_score(symbol):
-    """
-    🔥 حساب نقاط الثقة للعملة مع عقوبات إضافية
-    """
     try:
         memory = load_memory()
 
         if symbol not in memory["symbol_stats"]:
-            return {
-                'score': 50,
-                'should_trade': True,
-                'reason': 'عملة جديدة - لا يوجد تاريخ',
-                'stats': {}
-            }
+            return {'score': 50, 'should_trade': True, 'reason': 'عملة جديدة', 'stats': {}}
 
         stats = memory["symbol_stats"][symbol]
         total = stats["wins"] + stats["losses"]
 
         if total == 0:
-            return {
-                'score': 50,
-                'should_trade': True,
-                'reason': 'لا يوجد تاريخ كافٍ',
-                'stats': stats
-            }
+            return {'score': 50, 'should_trade': True, 'reason': 'لا يوجد تاريخ', 'stats': stats}
 
         win_rate = stats["wins"] / total
-
-        # حساب النقاط
         score = 50
-        score += (win_rate - 0.5) * 100  # -50 إلى +50
+        score += (win_rate - 0.5) * 100
 
-        # عقوبة الخسائر المتتالية
         if stats["consecutive_losses"] >= 3:
             score -= 30
         elif stats["consecutive_losses"] >= 2:
             score -= 15
 
-        # 🔥 عقوبة إضافية للخسائر الكبيرة
         if stats["total_pnl"] < -1.0:
             score -= 30
         elif stats["total_pnl"] < -0.5:
             score -= 15
 
-        # مكافأة الأداء الجيد
         if win_rate >= 0.7 and total >= 5:
             score += 20
         elif win_rate >= 0.6 and total >= 3:
@@ -322,13 +395,12 @@ def get_symbol_score(symbol):
 
         score = max(0, min(100, score))
 
-        # قرار التداول
         should_trade = True
         reason = f"نسبة نجاح: {win_rate*100:.1f}% ({stats['wins']}/{total}) | PnL: {stats['total_pnl']:+.2f}$"
 
         if score < 30:
             should_trade = False
-            reason = f"⚠️ أداء ضعيف - نسبة نجاح: {win_rate*100:.1f}%"
+            reason = f"⚠️ أداء ضعيف"
         elif stats["consecutive_losses"] >= 3:
             should_trade = False
             reason = f"⚠️ {stats['consecutive_losses']} خسائر متتالية"
@@ -348,12 +420,11 @@ def get_symbol_score(symbol):
         }
 
     except Exception as e:
-        logger.error(f"خطأ في حساب نقاط العملة: {e}")
+        logger.error(f"خطأ: {e}")
         return {'score': 50, 'should_trade': True, 'reason': 'خطأ', 'stats': {}}
 
 
 def get_hour_score(hour=None):
-    """حساب نقاط الساعة الحالية"""
     try:
         if hour is None:
             hour = datetime.now().hour
@@ -373,90 +444,25 @@ def get_hour_score(hour=None):
         win_rate = stats["wins"] / total
 
         if win_rate < 0.3:
-            return {
-                'score': 20,
-                'should_trade': False,
-                'reason': f"⚠️ ساعة سيئة: {win_rate*100:.0f}% نجاح",
-                'win_rate': round(win_rate * 100, 2)
-            }
+            return {'score': 20, 'should_trade': False, 'reason': f"⚠️ ساعة سيئة", 'win_rate': round(win_rate * 100, 2)}
 
-        return {
-            'score': round(win_rate * 100, 2),
-            'should_trade': True,
-            'reason': f"نسبة نجاح الساعة: {win_rate*100:.0f}%",
-            'win_rate': round(win_rate * 100, 2)
-        }
+        return {'score': round(win_rate * 100, 2), 'should_trade': True, 'reason': f"نسبة نجاح: {win_rate*100:.0f}%", 'win_rate': round(win_rate * 100, 2)}
 
     except Exception as e:
         logger.error(f"خطأ: {e}")
         return {'score': 50, 'should_trade': True, 'reason': 'خطأ'}
 
 
-def get_best_symbols(min_trades=3, top_n=10):
-    """الحصول على أفضل العملات"""
-    try:
-        memory = load_memory()
-
-        symbols_with_stats = []
-        for symbol, stats in memory["symbol_stats"].items():
-            total = stats["wins"] + stats["losses"]
-            if total >= min_trades:
-                win_rate = stats["wins"] / total
-                symbols_with_stats.append({
-                    'symbol': symbol,
-                    'win_rate': round(win_rate * 100, 2),
-                    'total_pnl': stats["total_pnl"],
-                    'total_trades': total
-                })
-
-        symbols_with_stats.sort(key=lambda x: (x['win_rate'], x['total_pnl']), reverse=True)
-        return symbols_with_stats[:top_n]
-
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
-        return []
-
-
-def get_worst_symbols(min_trades=3, bottom_n=10):
-    """الحصول على أسوأ العملات"""
-    try:
-        memory = load_memory()
-
-        symbols_with_stats = []
-        for symbol, stats in memory["symbol_stats"].items():
-            total = stats["wins"] + stats["losses"]
-            if total >= min_trades:
-                win_rate = stats["wins"] / total
-                symbols_with_stats.append({
-                    'symbol': symbol,
-                    'win_rate': round(win_rate * 100, 2),
-                    'total_pnl': stats["total_pnl"],
-                    'total_trades': total
-                })
-
-        symbols_with_stats.sort(key=lambda x: (x['win_rate'], x['total_pnl']))
-        return symbols_with_stats[:bottom_n]
-
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
-        return []
-
-
 def get_memory_stats():
-    """إحصائيات شاملة"""
     try:
         memory = load_memory()
-
         total = memory["total_trades"]
         wins = memory["total_wins"]
         losses = memory["total_losses"]
-
         win_rate = (wins / total * 100) if total > 0 else 0
 
-        # آخر 24 ساعة
         yesterday = (datetime.now() - timedelta(days=1)).isoformat()
         recent_trades = [t for t in memory["trades"] if t.get("entry_time", "") >= yesterday]
-
         recent_wins = len([t for t in recent_trades if t["is_win"]])
         recent_pnl = sum(t["pnl"] for t in recent_trades)
 
@@ -478,46 +484,28 @@ def get_memory_stats():
 
 
 def get_today_pnl():
-    """
-    🔥 صافي الربح/الخسارة لليوم (مع العمولات)
-    """
     try:
         memory = load_memory()
         today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         today_trades = [t for t in memory["trades"] if t.get("entry_time", "") >= today_start]
-
-        # pnl المسجل بالفعل صافي بعد العمولات
         total_pnl = sum(t.get("pnl", 0) for t in today_trades)
         return round(total_pnl, 4)
-
     except Exception as e:
-        logger.error(f"خطأ في حساب أرباح اليوم: {e}")
+        logger.error(f"خطأ: {e}")
         return 0.0
 
 
-def clear_old_trades(days=30):
-    """حذف الصفقات القديمة"""
+def get_all_trades_for_analysis(min_trades=10):
+    """🔥 جلب كل الصفقات للتحليل"""
     try:
-        with _lock:
-            memory = load_memory()
-            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-
-            old_count = len(memory["trades"])
-            memory["trades"] = [t for t in memory["trades"] if t.get("entry_time", "") >= cutoff]
-            new_count = len(memory["trades"])
-
-            save_memory(memory)
-
-            logger.info(f"🧹 تم حذف {old_count - new_count} صفقة قديمة")
-            return old_count - new_count
-
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
-        return 0
+        memory = load_memory()
+        trades = memory.get("trades", [])
+        return trades[-min_trades:] if len(trades) >= min_trades else trades
+    except:
+        return []
 
 
 def get_symbol_history(symbol, limit=10):
-    """تاريخ صفقات عملة معينة"""
     try:
         memory = load_memory()
         trades = [t for t in memory["trades"] if t["symbol"] == symbol]
@@ -527,12 +515,8 @@ def get_symbol_history(symbol, limit=10):
 
 
 def is_symbol_blacklisted(symbol, min_trades=5, max_win_rate=0.25, max_consecutive_losses=3):
-    """
-    🔥 التحقق من أن العملة محظورة (مع عقوبات إضافية)
-    """
     try:
         memory = load_memory()
-
         if symbol not in memory["symbol_stats"]:
             return False, ""
 
@@ -544,19 +528,15 @@ def is_symbol_blacklisted(symbol, min_trades=5, max_win_rate=0.25, max_consecuti
 
         win_rate = stats["wins"] / total
 
-        # حظر بنسبة النجاح
         if win_rate < max_win_rate:
             return True, f"نسبة نجاح منخفضة: {win_rate*100:.1f}%"
 
-        # حظر بالخسائر المتتالية
         if stats["consecutive_losses"] >= max_consecutive_losses:
             return True, f"{stats['consecutive_losses']} خسائر متتالية"
 
-        # 🔥 حظر بالخسارة الكلية
         if stats["total_pnl"] < -1.0:
             return True, f"خسارة كلية: {stats['total_pnl']:.2f}$"
 
-        # 🔥 حظر بمتوسط الخسارة
         avg_pnl = stats["total_pnl"] / total if total > 0 else 0
         if avg_pnl < -0.5:
             return True, f"متوسط خسارة: {avg_pnl:.2f}$"
@@ -568,16 +548,11 @@ def is_symbol_blacklisted(symbol, min_trades=5, max_win_rate=0.25, max_consecuti
         return False, ""
 
 
-# ==================== 🔥 مزامنة profit_history ====================
+# ==================== مزامنة profit_history ====================
 
 def sync_profit_history():
-    """
-    🔥 مزامنة profit_history.json مع trade_memory.json
-    """
     try:
         memory = load_memory()
-
-        # بناء daily_profits من الصفقات
         daily_profits = {}
         weekly_profits = {}
         monthly_profits = {}
@@ -586,7 +561,6 @@ def sync_profit_history():
             entry_time = trade.get("entry_time", "")
             if not entry_time:
                 continue
-
             try:
                 dt = datetime.fromisoformat(entry_time)
             except:
@@ -595,7 +569,6 @@ def sync_profit_history():
             date_key = dt.strftime("%Y-%m-%d")
             week_key = f"{dt.year}-W{dt.isocalendar()[1]:02d}"
             month_key = dt.strftime("%Y-%m")
-
             pnl = trade.get("pnl", 0)
 
             daily_profits[date_key] = round(daily_profits.get(date_key, 0) + pnl, 4)
@@ -618,23 +591,16 @@ def sync_profit_history():
         return True
 
     except Exception as e:
-        logger.error(f"خطأ في مزامنة profit_history: {e}")
+        logger.error(f"خطأ: {e}")
         return False
 
 
 if __name__ == "__main__":
-    print("🧪 اختبار ذاكرة الصفقات v4.0...")
-
-    # اختبار حساب العمولات
-    net = calculate_net_pnl(
-        entry_price=100,
-        exit_price=101,
-        quantity=1,
-        direction="BUY"
-    )
-    print(f"صافي الربح: {net}$ (إجمالي: 1$ - عمولات)")
-
-    print("\n📊 إحصائيات:")
+    logging.basicConfig(level=logging.INFO)
+    print("🧪 اختبار ذاكرة الصفقات v5.3...")
+    net = calculate_net_pnl(entry_price=100, exit_price=101, quantity=1, direction="BUY")
+    print(f"صافي الربح: {net}$")
     stats = get_memory_stats()
-    for k, v in stats.items():
-        print(f"  {k}: {v}")
+    print(f"إحصائيات: {stats}")
+    print("\n🧪 اختبار GitHub backup:")
+    backup_to_github(force=True)

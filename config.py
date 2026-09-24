@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.2
+config.py - الإعدادات النهائية v5.3
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v5.2:
-    - دمج Gemini مع الإعدادات التي تعمل (v5.0)
-    - الحفاظ على TRADE_USDT=15, LEVERAGE=10, MAX=5
-    - الحفاظ على MIN_VOLUME_FACTOR=1.0 (يعمل)
-    - إضافة Gemini كبديل احتياطي
+🔧 التعديلات v5.3:
+    - إضافة إعدادات GitHub Backup
+    - تقليل AUTO_LEARN_MIN_TRADES من 30 → 10
+    - إضافة AUTO_LEARN_MIN_PER_SYMBOL
+    - الحفاظ على كل الإعدادات التي تعمل
 
-📅 آخر تعديل: 2026-09-22
+📅 آخر تعديل: 2026-09-24
 """
 
 import os
@@ -55,11 +55,18 @@ ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# 🔥 آلية التبديل بين Groq و Gemini
-AI_PROVIDER = "auto"                        # "auto" | "groq" | "gemini"
-AI_FALLBACK_ENABLED = True                  # استخدام البديل عند فشل الأساسي
+# آلية التبديل بين Groq و Gemini
+AI_PROVIDER = "auto"
+AI_FALLBACK_ENABLED = True
 
-USE_TESTNET = _get_bool("USE_TESTNET", default=True)
+# ==================== 🔥 GitHub Backup ====================
+GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
+GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalak/mybot1")
+GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
+ENABLE_AUTO_BACKUP = _get_bool("ENABLE_AUTO_BACKUP", default=True)
+BACKUP_INTERVAL_MINUTES = 10
+
+USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 15
@@ -202,10 +209,11 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== 🔥 نظام التعلم التلقائي ====================
+# ==================== 🔥 نظام التعلم التلقائي v5.3 ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 24
-AUTO_LEARN_MIN_TRADES = 30
+AUTO_LEARN_MIN_TRADES = 10                 # 🔥 من 30 → 10
+AUTO_LEARN_MIN_PER_SYMBOL = 3              # 🔥 جديد: تحليل كل عملة على حدة
 AUTO_TUNE_WEIGHTS = True
 AUTO_RESTART_AFTER_TUNE = True
 AUTO_PROTECTION_ENABLED = True
