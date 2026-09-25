@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.3
+config.py - الإعدادات النهائية v5.5
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v5.3:
-    - إضافة إعدادات GitHub Backup
-    - تقليل AUTO_LEARN_MIN_TRADES من 30 → 10
-    - إضافة AUTO_LEARN_MIN_PER_SYMBOL
-    - الحفاظ على كل الإعدادات التي تعمل
+🔧 التعديلات v5.5:
+    - 🔥 تعطيل GitHub Backup مؤقتاً (للاختبار)
+    - 🔥 AUTO_RESTART_AFTER_TUNE = False
+    - 🔥 GITHUB_REPO default = elmalakfahd2/mybot1
+    - 🔥 BACKUP_INTERVAL_MINUTES = 30
 
-📅 آخر تعديل: 2026-09-24
+📅 آخر تعديل: 2026-09-25
 """
 
 import os
@@ -55,16 +55,15 @@ ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# آلية التبديل بين Groq و Gemini
 AI_PROVIDER = "auto"
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 GitHub Backup ====================
+# ==================== 🔥 GitHub Backup (مُعطّل مؤقتاً للاختبار) ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
-GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalak/mybot1")
+GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")  # 🔥 محدّث
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
-ENABLE_AUTO_BACKUP = _get_bool("ENABLE_AUTO_BACKUP", default=True)
-BACKUP_INTERVAL_MINUTES = 10
+ENABLE_AUTO_BACKUP = False              # 🔥 مُعطّل للاختبار
+BACKUP_INTERVAL_MINUTES = 30            # 🔥 من 10 → 30
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
@@ -73,7 +72,7 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== TP المتعدد (محسّن R:R) ====================
+# ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
 TP_MULTIPLE_LEVELS = [1.5, 2.5, 4.0]
 TP_QUANTITY_RATIOS = [0.4, 0.3, 0.3]
@@ -209,13 +208,13 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== 🔥 نظام التعلم التلقائي v5.3 ====================
+# ==================== 🔥 نظام التعلم التلقائي v5.5 ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 24
-AUTO_LEARN_MIN_TRADES = 10                 # 🔥 من 30 → 10
-AUTO_LEARN_MIN_PER_SYMBOL = 3              # 🔥 جديد: تحليل كل عملة على حدة
+AUTO_LEARN_MIN_TRADES = 10
+AUTO_LEARN_MIN_PER_SYMBOL = 3
 AUTO_TUNE_WEIGHTS = True
-AUTO_RESTART_AFTER_TUNE = True
+AUTO_RESTART_AFTER_TUNE = False         # 🔥 من True → False
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
 AUTO_LEARN_MAX_ADJUSTMENT = 0.30
