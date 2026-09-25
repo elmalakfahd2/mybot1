@@ -1,12 +1,11 @@
 # ==================================================
-# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.3
-# 🔧 التعديلات v5.3:
-#    - 🔥 إضافة backup_to_github (حفظ تلقائي)
-#    - 🔥 إضافة auto_backup_thread (حفظ دوري)
-#    - 🔥 إضافة get_all_trades_for_analysis
-#    - حساب العمولات (v4.0)
-#    - جلب exit_price الحقيقي (v4.0)
-# 📅 التاريخ: 2026-09-24
+# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.4
+# 🔧 التعديلات v5.4:
+#    - 🔥 backup_to_github محسّن (Memory-Efficient)
+#    - 🔥 حد أقصى لحجم الملف (1 MB)
+#    - 🔥 تنظيف الذاكرة بعد كل عملية
+#    - 🔥 auto_backup_loop محسّن
+# 📅 التاريخ: 2026-09-25
 # ==================================================
 
 import json
@@ -16,21 +15,24 @@ import base64
 import requests
 import threading
 import time
+import gc
 from datetime import datetime, timedelta
 from threading import Lock
 
 logger = logging.getLogger("trade_memory")
 
 MEMORY_FILE = "trade_memory.json"
+MAX_FILE_SIZE = 1024 * 1024  # 1 MB
+MAX_TRADES_TO_KEEP = 100
 _lock = Lock()
 
-# 🔥 معدل العمولة
+# معدل العمولة
 try:
     from config import COMMISSION_RATE
 except ImportError:
     COMMISSION_RATE = 0.0004
 
-# 🔥 GitHub Backup
+# GitHub Backup
 try:
     from config import (
         GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH,
@@ -41,7 +43,7 @@ except ImportError:
     GITHUB_REPO = ""
     GITHUB_BRANCH = "main"
     ENABLE_AUTO_BACKUP = False
-    BACKUP_INTERVAL_MINUTES = 10
+    BACKUP_INTERVAL_MINUTES = 30
 
 _backup_thread_running = False
 
@@ -49,15 +51,10 @@ _backup_thread_running = False
 def _ensure_memory_file():
     if not os.path.exists(MEMORY_FILE):
         initial_data = {
-            "trades": [],
-            "symbol_stats": {},
-            "hourly_stats": {},
-            "condition_stats": {},
-            "last_updated": datetime.now().isoformat(),
-            "total_trades": 0,
-            "total_wins": 0,
-            "total_losses": 0,
-            "total_pnl": 0.0
+            "trades": [], "symbol_stats": {}, "hourly_stats": {},
+            "condition_stats": {}, "last_updated": datetime.now().isoformat(),
+            "total_trades": 0, "total_wins": 0,
+            "total_losses": 0, "total_pnl": 0.0
         }
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(initial_data, f, indent=2, ensure_ascii=False)
@@ -90,19 +87,45 @@ def save_memory(data):
 
 # ==================== 🔥 GitHub Backup ====================
 
+def _trim_memory_if_needed():
+    """تقليم الذاكرة إذا كانت كبيرة"""
+    try:
+        if not os.path.exists(MEMORY_FILE):
+            return
+
+        file_size = os.path.getsize(MEMORY_FILE)
+
+        if file_size > MAX_FILE_SIZE:
+            logger.warning(f"⚠️ الملف كبير ({file_size} bytes) - تقليم")
+            memory = load_memory()
+            trades = memory.get("trades", [])
+
+            if len(trades) > MAX_TRADES_TO_KEEP:
+                memory["trades"] = trades[-MAX_TRADES_TO_KEEP:]
+                save_memory(memory)
+                logger.info(f"✅ تم الاحتفاظ بآخر {MAX_TRADES_TO_KEEP} صفقة")
+
+    except Exception as e:
+        logger.error(f"خطأ في التقليم: {e}")
+
+
 def backup_to_github(force=False):
     """
-    🔥 رفع trade_memory.json إلى GitHub
+    🔥 v5.4: GitHub Backup محسّن (Memory-Efficient)
     """
     try:
         if not GITHUB_TOKEN:
             if force:
-                logger.warning("⚠️ GITHUB_TOKEN غير موجود - تخطي الرفع")
+                logger.warning("⚠️ GITHUB_TOKEN غير موجود")
             return False
 
         if not os.path.exists(MEMORY_FILE):
-            logger.warning("⚠️ trade_memory.json غير موجود")
+            if force:
+                logger.warning("⚠️ trade_memory.json غير موجود")
             return False
+
+        # تقليم إذا لزم
+        _trim_memory_if_needed()
 
         # قراءة الملف
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
@@ -110,6 +133,10 @@ def backup_to_github(force=False):
 
         # Base64
         content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+
+        # تنظيف فوري للمحتوى الأصلي
+        del content
+        gc.collect()
 
         # API URL
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/trade_memory.json"
@@ -121,39 +148,46 @@ def backup_to_github(force=False):
         # جلب SHA الحالي
         sha = None
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 sha = response.json().get("sha")
+            response.close()
         except:
             pass
 
         # رفع
         data = {
-            "message": f"Auto-save: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "message": f"Auto-save: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             "content": content_b64,
             "branch": GITHUB_BRANCH
         }
         if sha:
             data["sha"] = sha
 
-        response = requests.put(url, headers=headers, json=data, timeout=30)
+        response = requests.put(url, headers=headers, json=data, timeout=20)
+        status = response.status_code
+        response.close()
 
-        if response.status_code in [200, 201]:
+        # تنظيف كامل
+        del data
+        del content_b64
+        gc.collect()
+
+        if status in [200, 201]:
             logger.info(f"💾 تم حفظ trade_memory.json في GitHub")
             return True
         else:
-            logger.warning(f"⚠️ فشل الحفظ في GitHub: {response.status_code}")
+            logger.warning(f"⚠️ فشل الحفظ: {status}")
             return False
 
     except Exception as e:
         logger.error(f"خطأ في backup_to_github: {e}")
+        gc.collect()
         return False
 
 
 def auto_backup_loop():
-    """
-    🔥 خيط الحفظ الدوري في GitHub
-    """
+    """خيط الحفظ الدوري المحسّن"""
     global _backup_thread_running
 
     if not ENABLE_AUTO_BACKUP:
@@ -161,7 +195,7 @@ def auto_backup_loop():
         return
 
     if not GITHUB_TOKEN:
-        logger.warning("⚠️ GITHUB_TOKEN غير موجود - الحفظ التلقائي معطل")
+        logger.warning("⚠️ GITHUB_TOKEN غير موجود - الحفظ معطل")
         return
 
     _backup_thread_running = True
@@ -172,8 +206,9 @@ def auto_backup_loop():
             time.sleep(BACKUP_INTERVAL_MINUTES * 60)
 
             if _backup_thread_running:
-                logger.info("💾 حفظ دوري في GitHub...")
+                logger.info("💾 حفظ دوري...")
                 backup_to_github()
+                gc.collect()
 
         except Exception as e:
             logger.error(f"خطأ في الحفظ الدوري: {e}")
@@ -181,7 +216,7 @@ def auto_backup_loop():
 
 
 def start_auto_backup():
-    """بدء الحفظ التلقائي في خيط منفصل"""
+    """بدء الحفظ التلقائي"""
     try:
         if not ENABLE_AUTO_BACKUP:
             logger.info("ℹ️ الحفظ التلقائي معطل")
@@ -192,7 +227,7 @@ def start_auto_backup():
         logger.info("✅ تم تشغيل الحفظ التلقائي في GitHub")
         return True
     except Exception as e:
-        logger.error(f"❌ فشل تشغيل الحفظ التلقائي: {e}")
+        logger.error(f"❌ فشل: {e}")
         return False
 
 
@@ -221,7 +256,7 @@ def get_exit_price(symbol, entry_time_iso):
         return float(trades[-1].get('price', 0))
 
     except Exception as e:
-        logger.warning(f"⚠️ تعذر جلب exit_price لـ {symbol}: {e}")
+        logger.warning(f"⚠️ تعذر جلب exit_price: {e}")
         return 0.0
 
 
@@ -240,11 +275,10 @@ def calculate_net_pnl(entry_price, exit_price, quantity, direction):
         total_commission = entry_commission + exit_commission
 
         net_pnl = gross_pnl - total_commission
-
         return round(net_pnl, 6)
 
     except Exception as e:
-        logger.error(f"خطأ في حساب الربح الصافي: {e}")
+        logger.error(f"خطأ: {e}")
         return 0.0
 
 
@@ -276,8 +310,7 @@ def record_trade(symbol, direction, entry_price, exit_price,
 
             trade_record = {
                 "id": len(memory["trades"]) + 1,
-                "symbol": symbol,
-                "direction": direction,
+                "symbol": symbol, "direction": direction,
                 "entry_price": entry_price,
                 "exit_price": round(exit_price, 8) if exit_price else 0,
                 "quantity": quantity,
@@ -340,9 +373,13 @@ def record_trade(symbol, direction, entry_price, exit_price,
             hour_stats["wins" if is_win else "losses"] += 1
             hour_stats["total_pnl"] = round(hour_stats["total_pnl"] + net_pnl, 4)
 
+            # تقليم قبل الحفظ
+            if len(memory["trades"]) > MAX_TRADES_TO_KEEP:
+                memory["trades"] = memory["trades"][-MAX_TRADES_TO_KEEP:]
+
             save_memory(memory)
 
-            # 🔥 حفظ فوري في GitHub (بعد كل صفقة)
+            # حفظ فوري في GitHub
             if ENABLE_AUTO_BACKUP:
                 try:
                     backup_to_github()
@@ -352,10 +389,11 @@ def record_trade(symbol, direction, entry_price, exit_price,
             status = "✅" if is_win else "❌"
             logger.info(f"📝 تسجيل: {symbol} {status} صافي: {net_pnl:+.4f}$")
 
+            gc.collect()
             return True
 
     except Exception as e:
-        logger.error(f"خطأ في تسجيل الصفقة: {e}")
+        logger.error(f"خطأ: {e}")
         return False
 
 
@@ -396,17 +434,17 @@ def get_symbol_score(symbol):
         score = max(0, min(100, score))
 
         should_trade = True
-        reason = f"نسبة نجاح: {win_rate*100:.1f}% ({stats['wins']}/{total}) | PnL: {stats['total_pnl']:+.2f}$"
+        reason = f"نسبة نجاح: {win_rate*100:.1f}% ({stats['wins']}/{total})"
 
         if score < 30:
             should_trade = False
             reason = f"⚠️ أداء ضعيف"
         elif stats["consecutive_losses"] >= 3:
             should_trade = False
-            reason = f"⚠️ {stats['consecutive_losses']} خسائر متتالية"
+            reason = f"⚠️ {stats['consecutive_losses']} خسائر"
         elif stats["total_pnl"] < -1.0:
             should_trade = False
-            reason = f"⚠️ خسارة كلية: {stats['total_pnl']:.2f}$"
+            reason = f"⚠️ خسارة كلية"
 
         return {
             'score': round(score, 2),
@@ -496,7 +534,6 @@ def get_today_pnl():
 
 
 def get_all_trades_for_analysis(min_trades=10):
-    """🔥 جلب كل الصفقات للتحليل"""
     try:
         memory = load_memory()
         trades = memory.get("trades", [])
@@ -548,8 +585,6 @@ def is_symbol_blacklisted(symbol, min_trades=5, max_win_rate=0.25, max_consecuti
         return False, ""
 
 
-# ==================== مزامنة profit_history ====================
-
 def sync_profit_history():
     try:
         memory = load_memory()
@@ -597,10 +632,8 @@ def sync_profit_history():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار ذاكرة الصفقات v5.3...")
+    print("🧪 اختبار trade_memory v5.4...")
     net = calculate_net_pnl(entry_price=100, exit_price=101, quantity=1, direction="BUY")
     print(f"صافي الربح: {net}$")
     stats = get_memory_stats()
     print(f"إحصائيات: {stats}")
-    print("\n🧪 اختبار GitHub backup:")
-    backup_to_github(force=True)

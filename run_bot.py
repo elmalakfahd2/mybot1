@@ -1,14 +1,16 @@
 # ==================================================
-# 📁 ملف: run_bot.py
-# 🔧 التعديلات:
-# 1. تشغيل main_enhanced.py مباشرة
-# 2. معالجة أفضل للأخطاء
-# 3. إزالة input() في النهاية (كان بيعلّق التشغيل على سيرفر بدون طرفية تفاعلية مثل Railway)
+# 📁 ملف: run_bot.py - v5.4
+# 🔧 التعديلات v5.4:
+#    - إزالة إعادة التشغيل التلقائي
+#    - الاعتماد على Railway
+#    - بسيط وآمن
+# 📅 التاريخ: 2026-09-25
 # ==================================================
 
 import sys
 import os
 import time
+import traceback
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -23,23 +25,27 @@ def main():
         bot_main()
 
     except IndentationError as e:
-        print(f"❌ خطأ في المسافات في الملف: {e}")
+        print(f"❌ خطأ في المسافات: {e}")
+        traceback.print_exc()
+        sys.exit(1)
     except SyntaxError as e:
         print(f"❌ خطأ في الصيغة: {e}")
+        traceback.print_exc()
+        sys.exit(1)
     except ImportError as e:
         print(f"❌ خطأ في الاستيراد: {e}")
-        print("🔧 تأكد من تثبيت جميع المكتبات المطلوبة: pip install -r requirements.txt")
+        print("🔧 تأكد من تثبيت المكتبات: pip install -r requirements.txt")
+        traceback.print_exc()
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\n⏹️ تم إيقاف البوت بواسطة المستخدم")
+        sys.exit(0)
     except Exception as e:
         print(f"❌ خطأ غير متوقع: {e}")
-        print("🔧 جاري إعادة التشغيل تلقائياً خلال 10 ثواني...")
-        time.sleep(10)
-        main()
+        traceback.print_exc()
+        # 🔥 لا إعادة تشغيل تلقائي — نترك Railway يديرها
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-    # ملاحظة: تم إزالة input() المتبقي من النسخة القديمة عمدًا،
-    # لأن السيرفر (زي Railway) بيشغّل الملف بدون طرفية تفاعلية،
-    # وأي استدعاء لـ input() هيفضل عالق للأبد.

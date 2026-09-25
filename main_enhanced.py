@@ -1,13 +1,12 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v5.3
-# 🔧 التعديلات v5.3:
-#    - 🔥 تشغيل GitHub Backup التلقائي
-#    - 🔥 عرض حالة Backup في حالة النظام
-#    - 🔥 حفظ فوري بعد كل صفقة
-# 🔧 التعديلات v5.2:
-#    - دعم Gemini
-#    - إصلاحات متنوعة
-# 📅 التاريخ: 2026-09-24
+# 📁 ملف: main_enhanced.py - الإصدار v5.4
+# 🔧 التعديلات v5.4:
+#    - 🔥 Health Check Server (لـ Railway)
+#    - 🔥 تقليل الخيوط من 8 إلى 5
+#    - 🔥 دمج TP/SL في Monitor
+#    - 🔥 تنظيف الذاكرة gc.collect()
+#    - 🔥 لا إعادة تشغيل تلقائي
+# 📅 التاريخ: 2026-09-25
 # ==================================================
 
 import logging
@@ -16,6 +15,7 @@ import time
 import asyncio
 import json
 import os
+import gc
 import traceback
 from datetime import datetime
 
@@ -236,10 +236,8 @@ def send_startup():
         weekly = core.get_accurate_weekly_pnl()
         monthly = core.get_accurate_monthly_pnl()
 
-        # 🔥 v5.3: حالة Backup
         backup_status = "✅ مفعل" if ENABLE_AUTO_BACKUP and GITHUB_TOKEN else "❌ معطل"
 
-        # 🔥 v5.3: عدد الصفقات في الذاكرة
         memory_trades = 0
         if MEMORY_AVAILABLE:
             try:
@@ -249,12 +247,13 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v5.3</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v5.4</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
             f"💾 <b>GitHub Backup:</b> {backup_status}\n"
-            f"📊 <b>الصفقات في الذاكرة:</b> {memory_trades}\n\n"
+            f"📊 <b>الصفقات في الذاكرة:</b> {memory_trades}\n"
+            f"🏥 <b>Health Check:</b> ✅\n\n"
             f"📊 <b>الحالة:</b>\n"
             f"   • الأزواج: {count}\n"
             f"   • الرصيد المتاح: {available:.2f} USDT\n"
@@ -287,23 +286,31 @@ def check_trading_pause():
     return False
 
 
-# ==================== خيط مراقبة TP/SL ====================
+# ==================== 🔥 خيط المراقبة الشاملة (v5.4) ====================
 
-def monitor_tp_sl_loop():
+def monitor_positions_loop():
+    """
+    🔥 v5.4: مراقبة شاملة (Trailing SL + TP/SL + الصفقات المغلقة)
+    تم دمج 3 خيوط في خيط واحد لتقليل الاستهلاك
+    """
     try:
-        logger.info("🔍 [THREAD] بدء مراقبة TP/SL...")
+        logger.info("📈 [THREAD] بدء المراقبة الشاملة...")
 
         global _last_tp_sl_monitor
 
         while _auto_scan_enabled:
             try:
-                current_time = time.time()
+                # ==================== 1. Trailing SL ====================
+                updated = core.monitor_trailing_sl()
+                if updated > 0:
+                    logger.info(f"📊 تحديث Trailing: {updated} صفقة")
 
+                # ==================== 2. TP/SL Check (كل دقيقة) ====================
+                current_time = time.time()
                 if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                     _last_tp_sl_monitor = current_time
 
                     bot_positions = get_bot_owned_positions()
-
                     if bot_positions:
                         for position in bot_positions:
                             symbol = position['symbol']
@@ -312,46 +319,25 @@ def monitor_tp_sl_loop():
                             has_tp, has_sl, details = core.verify_tp_sl_created(symbol, position_side)
 
                             if not has_sl or not has_tp:
-                                logger.warning(f"⚠️ {symbol} {position_side} ناقص TP/SL")
-                                fixed = core.check_and_add_tp_sl_to_existing_positions()
-                                if fixed > 0:
-                                    break
+                                logger.warning(f"⚠️ {symbol} ناقص TP/SL")
+                                core.check_and_add_tp_sl_to_existing_positions()
+                                break
+
+                # ==================== 3. الصفقات المغلقة ====================
+                check_closed_trades()
+
+                # 🔥 v5.4: تنظيف دوري للذاكرة
+                gc.collect()
 
             except Exception as e:
                 logger.error(f"خطأ في المراقبة: {e}")
 
             time.sleep(30)
 
-        logger.info("🛑 [THREAD] توقف مراقبة TP/SL")
+        logger.info("🛑 [THREAD] توقف المراقبة")
 
     except Exception as e:
-        logger.error(f"❌ [THREAD] فشل مراقبة TP/SL: {e}")
-        traceback.print_exc()
-
-
-# ==================== خيط مراقبة Trailing SL + الصفقات المغلقة ====================
-
-def monitor_positions_loop():
-    try:
-        logger.info("📈 [THREAD] بدء مراقبة Trailing SL...")
-
-        while _auto_scan_enabled:
-            try:
-                updated = core.monitor_trailing_sl()
-                if updated > 0:
-                    logger.info(f"📊 تحديث {updated} صفقة")
-
-                check_closed_trades()
-
-            except Exception as e:
-                logger.error(f"خطأ في Trailing: {e}")
-
-            time.sleep(30)
-
-        logger.info("🛑 [THREAD] توقف Trailing SL")
-
-    except Exception as e:
-        logger.error(f"❌ [THREAD] فشل Trailing SL: {e}")
+        logger.error(f"❌ [THREAD] فشل المراقبة: {e}")
         traceback.print_exc()
 
 
@@ -572,6 +558,9 @@ def auto_sniper_scanner():
 
                     logger.info(f"⏰ الدورة التالية: {AUTO_SCAN_INTERVAL // 60} دقيقة")
 
+                    # 🔥 v5.4: تنظيف الذاكرة بعد كل مسح
+                    gc.collect()
+
                 time.sleep(30)
 
             except Exception as e:
@@ -715,7 +704,6 @@ def send_trade_notification(signal, result):
 
         emoji = "🟢" if signal['direction'] == 'BUY' else "🔴"
         score = signal.get('score_details', {})
-        verification = result.get('verification', {})
 
         entry_price = safe_float(result.get('entry_price', 0))
         position_side = result.get('positionSide', 'LONG')
@@ -809,93 +797,75 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== التشغيل v5.3 ====================
+# ==================== 🔥 التشغيل v5.4 ====================
 
 def start_scanner_threads():
-    """تشغيل كل الخيوط"""
+    """
+    🔥 v5.4: تقليل الخيوط + Health Check Server
+    """
     logger.info("=" * 60)
-    logger.info("🔧 [START] بدء تشغيل الخيوط...")
+    logger.info("🔧 [START] بدء تشغيل الخيوط v5.4...")
     logger.info("=" * 60)
 
-    # 1. WebSocket
-    if ENABLE_REALTIME_DATA and REALTIME_AVAILABLE:
-        def init_websocket_background():
-            try:
-                logger.info("⚡ [WS-THREAD] بدء WebSocket...")
-                all_symbols = core.get_all_futures_symbols()
-                if not all_symbols:
-                    all_symbols = FALLBACK_SYMBOLS
-                top_symbols = all_symbols[:min(REALTIME_MAX_SUBSCRIPTIONS, TOP_SYMBOLS_TO_SCAN)]
-                if realtime_data.init_realtime(top_symbols):
-                    logger.info(f"✅ [WS-THREAD] WebSocket مفعل ({len(top_symbols)} عملة)")
-                else:
-                    logger.warning("⚠️ [WS-THREAD] فشل WebSocket")
-            except Exception as e:
-                logger.error(f"❌ [WS-THREAD] خطأ: {e}")
+    # ==================== 1. Health Check Server ====================
+    try:
+        import health_server
+        if health_server.run_in_background():
+            logger.info("✅ [START] Health Check Server")
+        else:
+            logger.warning("⚠️ [START] فشل Health Check")
+    except Exception as e:
+        logger.error(f"❌ [START] خطأ Health Check: {e}")
 
-        ws_thread = threading.Thread(target=init_websocket_background, daemon=True, name="WebSocketInit")
-        ws_thread.start()
-        logger.info("✅ [START] تم بدء WebSocket في الخلفية")
-    else:
-        logger.info("ℹ️ [START] WebSocket معطل")
-
-    # 2. Scanner
+    # ==================== 2. Scanner (رئيسي) ====================
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
-        logger.info("✅ [START] تم بدء scanner thread")
+        logger.info("✅ [START] SniperScanner")
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
-    # 3. Monitor Trailing
+    # ==================== 3. Monitor (Trailing + TP/SL + Closed) ====================
     try:
-        monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="TrailingMonitor")
+        monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor")
         monitor.start()
-        logger.info("✅ [START] تم بدء monitor thread")
+        logger.info("✅ [START] Monitor (Trailing + TP/SL)")
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
-    # 4. Monitor TP/SL
-    try:
-        tp_sl_monitor = threading.Thread(target=monitor_tp_sl_loop, daemon=True, name="TPSLMonitor")
-        tp_sl_monitor.start()
-        logger.info("✅ [START] تم بدء tp_sl_monitor thread")
-    except Exception as e:
-        logger.error(f"❌ [START] فشل tp_sl_monitor: {e}")
-
-    # 5. Smart Scheduler
+    # ==================== 4. Smart Scheduler (التعلم) ====================
     if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
         try:
             if smart_scheduler.start_scheduler():
-                logger.info("✅ [START] تم بدء smart_scheduler (التعلم التلقائي)")
+                logger.info("✅ [START] Smart Scheduler")
             else:
-                logger.warning("⚠️ [START] فشل بدء smart_scheduler")
+                logger.warning("⚠️ [START] فشل scheduler")
         except Exception as e:
             logger.error(f"❌ [START] فشل scheduler: {e}")
     else:
         logger.info("ℹ️ [START] التعلم التلقائي معطل")
 
-    # 6. 🔥 v5.3: GitHub Backup
+    # ==================== 5. GitHub Backup ====================
     if MEMORY_AVAILABLE and ENABLE_AUTO_BACKUP:
         try:
             if memory.start_auto_backup():
-                logger.info("✅ [START] تم بدء GitHub Backup التلقائي")
+                logger.info("✅ [START] GitHub Backup")
             else:
-                logger.warning("⚠️ [START] فشل بدء GitHub Backup")
+                logger.warning("⚠️ [START] فشل Backup")
         except Exception as e:
-            logger.error(f"❌ [START] فشل GitHub Backup: {e}")
+            logger.error(f"❌ [START] فشل Backup: {e}")
     else:
         logger.info("ℹ️ [START] GitHub Backup معطل")
 
     time.sleep(2)
-    logger.info(f"✅ [START] عدد الخيوط النشطة: {threading.active_count()}")
+    logger.info(f"✅ [START] عدد الخيوط: {threading.active_count()}")
     logger.info("=" * 60)
 
 
 def main():
     try:
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v5.3...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.4...")
         logger.info("=" * 60)
 
         send_startup()
@@ -914,17 +884,15 @@ def main():
             except Exception as e:
                 logger.warning(f"⚠️ [MAIN] فشل مزامنة profit_history: {e}")
 
-        # 🔥 v5.3: عرض عدد الصفقات في الذاكرة
-        if MEMORY_AVAILABLE:
             try:
                 mem_stats = memory.get_memory_stats()
-                logger.info(f"📊 [MAIN] عدد الصفقات في الذاكرة: {mem_stats.get('total_trades', 0)}")
+                logger.info(f"📊 [MAIN] عدد الصفقات: {mem_stats.get('total_trades', 0)}")
                 logger.info(f"📊 [MAIN] نسبة النجاح: {mem_stats.get('win_rate', 0):.1f}%")
             except:
                 pass
 
         logger.info("=" * 60)
-        logger.info("🎯 [MAIN] نظام القناص v5.3 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v5.4 مفعل")
         logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
@@ -936,6 +904,7 @@ def main():
         logger.info(f"📊 [MAIN] التقارير اليومية: {'✅' if ENABLE_DAILY_REPORT else '❌'}")
         logger.info(f"🛡️ [MAIN] الحماية الذاتية: {'✅' if AUTO_PROTECTION_ENABLED else '❌'}")
         logger.info(f"💾 [MAIN] GitHub Backup: {'✅' if ENABLE_AUTO_BACKUP else '❌'}")
+        logger.info(f"🏥 [MAIN] Health Check: ✅")
         logger.info("=" * 60)
 
         logger.info("🚀 [MAIN] بدء البوت...")
