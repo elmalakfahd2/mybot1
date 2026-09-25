@@ -1,10 +1,10 @@
 # ==================================================
-# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.4
-# 🔧 التعديلات v5.4:
-#    - 🔥 backup_to_github محسّن (Memory-Efficient)
-#    - 🔥 حد أقصى لحجم الملف (1 MB)
-#    - 🔥 تنظيف الذاكرة بعد كل عملية
-#    - 🔥 auto_backup_loop محسّن
+# 📁 ملف: trade_memory.py - v5.5
+# 🔧 التعديلات v5.5:
+#    - 🔥 backup_to_github آمن (بدون gc.collect)
+#    - 🔥 timeout أطول + retry
+#    - 🔥 معالجة أخطاء محسّنة
+#    - 🔥 auto_backup_loop آمن
 # 📅 التاريخ: 2026-09-25
 # ==================================================
 
@@ -15,7 +15,6 @@ import base64
 import requests
 import threading
 import time
-import gc
 from datetime import datetime, timedelta
 from threading import Lock
 
@@ -26,13 +25,11 @@ MAX_FILE_SIZE = 1024 * 1024  # 1 MB
 MAX_TRADES_TO_KEEP = 100
 _lock = Lock()
 
-# معدل العمولة
 try:
     from config import COMMISSION_RATE
 except ImportError:
     COMMISSION_RATE = 0.0004
 
-# GitHub Backup
 try:
     from config import (
         GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH,
@@ -85,7 +82,7 @@ def save_memory(data):
         return False
 
 
-# ==================== 🔥 GitHub Backup ====================
+# ==================== 🔥 GitHub Backup الآمن ====================
 
 def _trim_memory_if_needed():
     """تقليم الذاكرة إذا كانت كبيرة"""
@@ -111,7 +108,10 @@ def _trim_memory_if_needed():
 
 def backup_to_github(force=False):
     """
-    🔥 v5.4: GitHub Backup محسّن (Memory-Efficient)
+    🔥 v5.5: GitHub Backup آمن
+    - بدون gc.collect()
+    - timeout أطول
+    - معالجة أخطاء محسّنة
     """
     try:
         if not GITHUB_TOKEN:
@@ -120,8 +120,6 @@ def backup_to_github(force=False):
             return False
 
         if not os.path.exists(MEMORY_FILE):
-            if force:
-                logger.warning("⚠️ trade_memory.json غير موجود")
             return False
 
         # تقليم إذا لزم
@@ -134,26 +132,23 @@ def backup_to_github(force=False):
         # Base64
         content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
 
-        # تنظيف فوري للمحتوى الأصلي
-        del content
-        gc.collect()
-
         # API URL
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/trade_memory.json"
         headers = {
             "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json"
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "mybot1-backup"
         }
 
-        # جلب SHA الحالي
+        # جلب SHA
         sha = None
         try:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 sha = response.json().get("sha")
             response.close()
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️ فشل جلب SHA: {e}")
 
         # رفع
         data = {
@@ -164,30 +159,48 @@ def backup_to_github(force=False):
         if sha:
             data["sha"] = sha
 
-        response = requests.put(url, headers=headers, json=data, timeout=20)
-        status = response.status_code
-        response.close()
+        # 🔥 محاولة الرفع (retry)
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.put(url, headers=headers, json=data, timeout=30)
+                status = response.status_code
+                response.close()
 
-        # تنظيف كامل
-        del data
-        del content_b64
-        gc.collect()
+                if status in [200, 201]:
+                    logger.info(f"💾 تم حفظ trade_memory.json")
+                    return True
+                elif status == 409:
+                    # Conflict — SHA قديم
+                    logger.warning(f"⚠️ Conflict - إعادة محاولة")
+                    continue
+                else:
+                    logger.warning(f"⚠️ فشل: {status}")
+                    return False
 
-        if status in [200, 201]:
-            logger.info(f"💾 تم حفظ trade_memory.json في GitHub")
-            return True
-        else:
-            logger.warning(f"⚠️ فشل الحفظ: {status}")
-            return False
+            except requests.exceptions.Timeout:
+                logger.warning(f"⚠️ Timeout (محاولة {attempt+1})")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                return False
+
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"⚠️ خطأ: {e}")
+                return False
+
+        # 🔥 لا gc.collect()!
+        return False
 
     except Exception as e:
         logger.error(f"خطأ في backup_to_github: {e}")
-        gc.collect()
         return False
 
 
 def auto_backup_loop():
-    """خيط الحفظ الدوري المحسّن"""
+    """
+    🔥 v5.5: Backup آمن بدون تعطيل البوت
+    """
     global _backup_thread_running
 
     if not ENABLE_AUTO_BACKUP:
@@ -195,24 +208,28 @@ def auto_backup_loop():
         return
 
     if not GITHUB_TOKEN:
-        logger.warning("⚠️ GITHUB_TOKEN غير موجود - الحفظ معطل")
+        logger.warning("⚠️ GITHUB_TOKEN غير موجود")
         return
 
     _backup_thread_running = True
     logger.info(f"💾 بدء الحفظ الدوري (كل {BACKUP_INTERVAL_MINUTES} دقيقة)")
 
+    # انتظار أولي قبل أول Backup
+    time.sleep(60)
+
     while _backup_thread_running:
         try:
+            # انتظار
             time.sleep(BACKUP_INTERVAL_MINUTES * 60)
 
             if _backup_thread_running:
                 logger.info("💾 حفظ دوري...")
                 backup_to_github()
-                gc.collect()
+                # 🔥 لا gc.collect()!
 
         except Exception as e:
             logger.error(f"خطأ في الحفظ الدوري: {e}")
-            time.sleep(60)
+            time.sleep(120)
 
 
 def start_auto_backup():
@@ -224,7 +241,7 @@ def start_auto_backup():
 
         thread = threading.Thread(target=auto_backup_loop, daemon=True, name="GitHubBackup")
         thread.start()
-        logger.info("✅ تم تشغيل الحفظ التلقائي في GitHub")
+        logger.info("✅ تم تشغيل الحفظ التلقائي")
         return True
     except Exception as e:
         logger.error(f"❌ فشل: {e}")
@@ -379,17 +396,19 @@ def record_trade(symbol, direction, entry_price, exit_price,
 
             save_memory(memory)
 
-            # حفظ فوري في GitHub
+            # 🔥 حفظ فوري (في خيط منفصل لعدم التعطيل)
             if ENABLE_AUTO_BACKUP:
                 try:
-                    backup_to_github()
+                    threading.Thread(
+                        target=backup_to_github,
+                        daemon=True
+                    ).start()
                 except:
                     pass
 
             status = "✅" if is_win else "❌"
             logger.info(f"📝 تسجيل: {symbol} {status} صافي: {net_pnl:+.4f}$")
 
-            gc.collect()
             return True
 
     except Exception as e:
@@ -632,7 +651,7 @@ def sync_profit_history():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار trade_memory v5.4...")
+    print("🧪 اختبار trade_memory v5.5...")
     net = calculate_net_pnl(entry_price=100, exit_price=101, quantity=1, direction="BUY")
     print(f"صافي الربح: {net}$")
     stats = get_memory_stats()

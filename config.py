@@ -4,10 +4,10 @@ config.py - الإعدادات النهائية v5.5
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
 🔧 التعديلات v5.5:
-    - 🔥 تعطيل GitHub Backup مؤقتاً (للاختبار)
+    - 🔥 تفعيل GitHub Backup (النسخة الآمنة)
+    - 🔥 BACKUP_INTERVAL_MINUTES = 30
     - 🔥 AUTO_RESTART_AFTER_TUNE = False
     - 🔥 GITHUB_REPO default = elmalakfahd2/mybot1
-    - 🔥 BACKUP_INTERVAL_MINUTES = 30
 
 📅 آخر تعديل: 2026-09-25
 """
@@ -58,12 +58,12 @@ GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 AI_PROVIDER = "auto"
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 GitHub Backup (مُعطّل مؤقتاً للاختبار) ====================
+# ==================== 🔥 GitHub Backup ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
 GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")  # 🔥 محدّث
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
-ENABLE_AUTO_BACKUP = False              # 🔥 مُعطّل للاختبار
-BACKUP_INTERVAL_MINUTES = 30            # 🔥 من 10 → 30
+ENABLE_AUTO_BACKUP = True                # 🔥 مُفعّل (النسخة الآمنة)
+BACKUP_INTERVAL_MINUTES = 30             # 🔥 من 10 → 30
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
@@ -214,7 +214,7 @@ AUTO_LEARN_INTERVAL_HOURS = 24
 AUTO_LEARN_MIN_TRADES = 10
 AUTO_LEARN_MIN_PER_SYMBOL = 3
 AUTO_TUNE_WEIGHTS = True
-AUTO_RESTART_AFTER_TUNE = False         # 🔥 من True → False
+AUTO_RESTART_AFTER_TUNE = False          # 🔥 مُعطّل (يمنع Crash)
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
 AUTO_LEARN_MAX_ADJUSTMENT = 0.30
