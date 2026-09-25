@@ -1,10 +1,8 @@
 # ==================================================
-# 📁 ملف: firebase_backup.py - الإصدار v1.0
-# 🔧 الوصف:
-#    - حفظ/تحميل trade_memory.json من Firebase Firestore
-#    - لا يستهلك ذاكرة
-#    - لا يسبب توقف البوت
-#    - بديل احترافي لـ GitHub Backup
+# 📁 ملف: firebase_backup.py - الإصدار v5.5.1
+# 🔧 التعديلات v5.5.1:
+#    - 🔥 استخدام getattr (لا يفشل الاستيراد أبداً)
+#    - 🔥 معالجة آمنة للمتغيرات المفقودة
 # 📅 التاريخ: 2026-09-25
 # ==================================================
 
@@ -26,17 +24,21 @@ except ImportError:
     FIREBASE_AVAILABLE = False
     logger.warning("⚠️ firebase-admin غير مثبت")
 
-# 🔥 إعدادات
+# 🔥 إعدادات آمنة (getattr لا يفشل أبداً)
 try:
-    from config import (
-        FIREBASE_KEY_JSON, FIREBASE_PROJECT_ID,
-        ENABLE_FIREBASE_BACKUP, FIREBASE_BACKUP_INTERVAL,
-        MEMORY_FILE
-    )
-except ImportError:
+    import config
+
+    FIREBASE_KEY_JSON = getattr(config, 'FIREBASE_KEY_JSON', '')
+    FIREBASE_PROJECT_ID = getattr(config, 'FIREBASE_PROJECT_ID', 'mybot1-backup-91f59')
+    ENABLE_FIREBASE_BACKUP = getattr(config, 'ENABLE_FIREBASE_BACKUP', True)
+    FIREBASE_BACKUP_INTERVAL = getattr(config, 'FIREBASE_BACKUP_INTERVAL', 30)
+    MEMORY_FILE = getattr(config, 'MEMORY_FILE', 'trade_memory.json')
+
+except ImportError as e:
+    logger.error(f"❌ فشل استيراد config: {e}")
     FIREBASE_KEY_JSON = ""
-    FIREBASE_PROJECT_ID = ""
-    ENABLE_FIREBASE_BACKUP = False
+    FIREBASE_PROJECT_ID = "mybot1-backup-91f59"
+    ENABLE_FIREBASE_BACKUP = True
     FIREBASE_BACKUP_INTERVAL = 30
     MEMORY_FILE = "trade_memory.json"
 
@@ -188,23 +190,19 @@ def sync_from_firebase_on_startup():
 
         # 3. قرار
         if firebase_data:
-            # تحقق من عدد الصفقات
             fb_trades = len(firebase_data.get("trades", []))
             local_trades = len(local_data.get("trades", [])) if local_data else 0
 
             if fb_trades >= local_trades:
-                # Firebase أحدث — استخدمه
                 save_local_memory(firebase_data)
                 logger.info(f"✅ مزامنة من Firebase: {fb_trades} صفقة")
                 return True
             else:
-                # محلي أحدث — احفظ في Firebase
                 logger.info(f"⚠️ محلي أحدث ({local_trades} vs {fb_trades})")
                 save_to_firebase(local_data)
                 return True
 
         elif local_data:
-            # Firebase فارغ — ارفع المحلي
             logger.info("📤 رفع البيانات المحلية إلى Firebase")
             save_to_firebase(local_data)
             return True
@@ -241,7 +239,6 @@ def backup_loop():
             time.sleep(FIREBASE_BACKUP_INTERVAL * 60)
 
             if _backup_thread_running:
-                # قراءة المحلي
                 local_data = load_local_memory()
                 if local_data:
                     save_to_firebase(local_data)
@@ -304,6 +301,8 @@ def get_status():
         'project_id': FIREBASE_PROJECT_ID,
         'interval': FIREBASE_BACKUP_INTERVAL,
         'thread_running': _backup_thread_running,
+        'key_length': len(FIREBASE_KEY_JSON) if FIREBASE_KEY_JSON else 0,
+        'memory_file': MEMORY_FILE,
     }
 
 
@@ -317,7 +316,6 @@ if __name__ == "__main__":
     if initialize_firebase():
         print("✅ Firebase جاهز")
 
-        # اختبار حفظ
         test_data = {
             "trades": [],
             "total_trades": 0,
@@ -326,7 +324,6 @@ if __name__ == "__main__":
         }
         save_to_firebase(test_data)
 
-        # اختبار تحميل
         loaded = load_from_firebase()
         print(f"تم التحميل: {loaded}")
     else:

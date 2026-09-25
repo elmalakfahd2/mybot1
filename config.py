@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.5
+config.py - الإعدادات النهائية v5.5.1
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v5.5:
-    - 🔥 Firebase Backup (بدل GitHub)
+🔧 التعديلات v5.5.1:
+    - 🔥 إضافة MEMORY_FILE
+    - 🔥 Firebase Backup
     - 🔥 GitHub Backup مُعطّل
-    - 🔥 AUTO_RESTART_AFTER_TUNE = False
 
 📅 آخر تعديل: 2026-09-25
 """
@@ -57,9 +57,9 @@ GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 AI_PROVIDER = "auto"
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 Firebase Backup (جديد) ====================
+# ==================== 🔥 Firebase Backup ====================
 FIREBASE_KEY_JSON = _get_env("FIREBASE_KEY", default="")
-FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup")
+FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f59")
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
 FIREBASE_BACKUP_INTERVAL = 30            # كل 30 دقيقة
 
@@ -69,6 +69,13 @@ GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
 ENABLE_AUTO_BACKUP = False               # 🔥 مُعطّل
 BACKUP_INTERVAL_MINUTES = 30
+
+# ==================== 🔥 إعدادات الملفات ====================
+MEMORY_FILE = "trade_memory.json"
+PROFIT_HISTORY_FILE = "profit_history.json"
+OPEN_POSITIONS_FILE = "open_positions.json"
+LEARNING_HISTORY_FILE = "learning_history.json"
+TUNING_HISTORY_FILE = "tuning_history.json"
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
