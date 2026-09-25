@@ -169,6 +169,44 @@
       "hour": 16,
       "day_of_week": 4,
       "date": "2026-09-18"
+    },
+    {
+      "id": 6,
+      "symbol": "NEARUSDT",
+      "direction": "BUY",
+      "entry_price": 4.854,
+      "exit_price": 4.939,
+      "quantity": 30.0,
+      "pnl_gross": 1.53,
+      "pnl": 2.4325,
+      "pnl_percent": 1.6704,
+      "is_win": true,
+      "confidence": 85.0,
+      "timeframe_alignment": 10.0,
+      "volume_ratio": 4.29,
+      "groq_recommendation": "تحذير",
+      "groq_confidence": 78.0,
+      "score_details": {
+        "timeframe_points": 20,
+        "volume_points": 17,
+        "groq_points": 5,
+        "rsi_points": 0,
+        "momentum_points": 8,
+        "price_action_points": 3,
+        "market_points": 5,
+        "order_book_points": 7,
+        "funding_oi_points": 3,
+        "realtime_adjustment": 0,
+        "total": 68,
+        "max_total": 100,
+        "rejected": false,
+        "reject_reason": ""
+      },
+      "exit_reason": "auto_detected",
+      "entry_time": "2026-09-25T09:26:43.685781",
+      "hour": 9,
+      "day_of_week": 4,
+      "date": "2026-09-25"
     }
   ],
   "symbol_stats": {
@@ -216,6 +254,15 @@
       "consecutive_losses": 0,
       "avg_confidence": 69.5,
       "avg_pnl": 0.372
+    },
+    "NEARUSDT": {
+      "wins": 1,
+      "losses": 0,
+      "total_pnl": 2.4325,
+      "last_trade": "2026-09-25T09:34:27.585137",
+      "consecutive_losses": 0,
+      "avg_confidence": 85.0,
+      "avg_pnl": 2.4325
     }
   },
   "hourly_stats": {
@@ -233,12 +280,17 @@
       "wins": 1,
       "losses": 0,
       "total_pnl": 0.372
+    },
+    "9": {
+      "wins": 1,
+      "losses": 0,
+      "total_pnl": 2.4325
     }
   },
   "condition_stats": {},
-  "last_updated": "2026-09-18T16:14:11.844464",
-  "total_trades": 5,
-  "total_wins": 3,
+  "last_updated": "2026-09-25T09:34:27.585148",
+  "total_trades": 6,
+  "total_wins": 4,
   "total_losses": 2,
-  "total_pnl": -1.4883
+  "total_pnl": 0.9442
 }
