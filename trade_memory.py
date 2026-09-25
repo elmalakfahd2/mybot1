@@ -1,18 +1,16 @@
 # ==================================================
-# 📁 ملف: trade_memory.py - v5.5
+# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.5
 # 🔧 التعديلات v5.5:
-#    - 🔥 backup_to_github آمن (بدون gc.collect)
-#    - 🔥 timeout أطول + retry
-#    - 🔥 معالجة أخطاء محسّنة
-#    - 🔥 auto_backup_loop آمن
+#    - 🔥 Firebase Backup بدل GitHub
+#    - 🔥 مزامنة عند البدء
+#    - 🔥 حفظ فوري بعد كل صفقة
+#    - 🔥 بدون gc.collect (لا يسبب توقف)
 # 📅 التاريخ: 2026-09-25
 # ==================================================
 
 import json
 import os
 import logging
-import base64
-import requests
 import threading
 import time
 from datetime import datetime, timedelta
@@ -21,7 +19,6 @@ from threading import Lock
 logger = logging.getLogger("trade_memory")
 
 MEMORY_FILE = "trade_memory.json"
-MAX_FILE_SIZE = 1024 * 1024  # 1 MB
 MAX_TRADES_TO_KEEP = 100
 _lock = Lock()
 
@@ -30,19 +27,23 @@ try:
 except ImportError:
     COMMISSION_RATE = 0.0004
 
+# 🔥 Firebase Backup
+try:
+    import firebase_backup
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    firebase_backup = None
+
+# 🔥 إعدادات Firebase
 try:
     from config import (
-        GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH,
-        ENABLE_AUTO_BACKUP, BACKUP_INTERVAL_MINUTES
+        ENABLE_FIREBASE_BACKUP,
+        FIREBASE_BACKUP_INTERVAL
     )
 except ImportError:
-    GITHUB_TOKEN = ""
-    GITHUB_REPO = ""
-    GITHUB_BRANCH = "main"
-    ENABLE_AUTO_BACKUP = False
-    BACKUP_INTERVAL_MINUTES = 30
-
-_backup_thread_running = False
+    ENABLE_FIREBASE_BACKUP = False
+    FIREBASE_BACKUP_INTERVAL = 30
 
 
 def _ensure_memory_file():
@@ -82,169 +83,64 @@ def save_memory(data):
         return False
 
 
-# ==================== 🔥 GitHub Backup الآمن ====================
+# ==================== 🔥 Firebase Backup ====================
 
-def _trim_memory_if_needed():
-    """تقليم الذاكرة إذا كانت كبيرة"""
-    try:
-        if not os.path.exists(MEMORY_FILE):
-            return
-
-        file_size = os.path.getsize(MEMORY_FILE)
-
-        if file_size > MAX_FILE_SIZE:
-            logger.warning(f"⚠️ الملف كبير ({file_size} bytes) - تقليم")
-            memory = load_memory()
-            trades = memory.get("trades", [])
-
-            if len(trades) > MAX_TRADES_TO_KEEP:
-                memory["trades"] = trades[-MAX_TRADES_TO_KEEP:]
-                save_memory(memory)
-                logger.info(f"✅ تم الاحتفاظ بآخر {MAX_TRADES_TO_KEEP} صفقة")
-
-    except Exception as e:
-        logger.error(f"خطأ في التقليم: {e}")
-
-
-def backup_to_github(force=False):
+def backup_to_firebase(memory_data=None):
     """
-    🔥 v5.5: GitHub Backup آمن
-    - بدون gc.collect()
-    - timeout أطول
-    - معالجة أخطاء محسّنة
+    🔥 حفظ الذاكرة في Firebase
     """
     try:
-        if not GITHUB_TOKEN:
-            if force:
-                logger.warning("⚠️ GITHUB_TOKEN غير موجود")
+        if not FIREBASE_AVAILABLE:
             return False
 
-        if not os.path.exists(MEMORY_FILE):
+        if not firebase_backup.is_available():
             return False
 
-        # تقليم إذا لزم
-        _trim_memory_if_needed()
+        if memory_data is None:
+            memory_data = load_memory()
 
-        # قراءة الملف
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # Base64
-        content_b64 = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-
-        # API URL
-        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/trade_memory.json"
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "mybot1-backup"
-        }
-
-        # جلب SHA
-        sha = None
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                sha = response.json().get("sha")
-            response.close()
-        except Exception as e:
-            logger.warning(f"⚠️ فشل جلب SHA: {e}")
-
-        # رفع
-        data = {
-            "message": f"Auto-save: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            "content": content_b64,
-            "branch": GITHUB_BRANCH
-        }
-        if sha:
-            data["sha"] = sha
-
-        # 🔥 محاولة الرفع (retry)
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                response = requests.put(url, headers=headers, json=data, timeout=30)
-                status = response.status_code
-                response.close()
-
-                if status in [200, 201]:
-                    logger.info(f"💾 تم حفظ trade_memory.json")
-                    return True
-                elif status == 409:
-                    # Conflict — SHA قديم
-                    logger.warning(f"⚠️ Conflict - إعادة محاولة")
-                    continue
-                else:
-                    logger.warning(f"⚠️ فشل: {status}")
-                    return False
-
-            except requests.exceptions.Timeout:
-                logger.warning(f"⚠️ Timeout (محاولة {attempt+1})")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                    continue
-                return False
-
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"⚠️ خطأ: {e}")
-                return False
-
-        # 🔥 لا gc.collect()!
-        return False
+        return firebase_backup.save_to_firebase(memory_data)
 
     except Exception as e:
-        logger.error(f"خطأ في backup_to_github: {e}")
+        logger.error(f"❌ فشل backup_to_firebase: {e}")
         return False
 
 
-def auto_backup_loop():
+def sync_from_firebase():
     """
-    🔥 v5.5: Backup آمن بدون تعطيل البوت
+    🔥 مزامنة مع Firebase عند بدء البوت
     """
-    global _backup_thread_running
+    try:
+        if not FIREBASE_AVAILABLE:
+            logger.info("ℹ️ Firebase غير متاح")
+            return False
 
-    if not ENABLE_AUTO_BACKUP:
-        logger.info("ℹ️ الحفظ التلقائي معطل")
-        return
+        if not firebase_backup.is_available():
+            logger.info("ℹ️ Firebase غير مهيأ")
+            return False
 
-    if not GITHUB_TOKEN:
-        logger.warning("⚠️ GITHUB_TOKEN غير موجود")
-        return
+        return firebase_backup.sync_from_firebase_on_startup()
 
-    _backup_thread_running = True
-    logger.info(f"💾 بدء الحفظ الدوري (كل {BACKUP_INTERVAL_MINUTES} دقيقة)")
-
-    # انتظار أولي قبل أول Backup
-    time.sleep(60)
-
-    while _backup_thread_running:
-        try:
-            # انتظار
-            time.sleep(BACKUP_INTERVAL_MINUTES * 60)
-
-            if _backup_thread_running:
-                logger.info("💾 حفظ دوري...")
-                backup_to_github()
-                # 🔥 لا gc.collect()!
-
-        except Exception as e:
-            logger.error(f"خطأ في الحفظ الدوري: {e}")
-            time.sleep(120)
+    except Exception as e:
+        logger.error(f"❌ فشل sync_from_firebase: {e}")
+        return False
 
 
 def start_auto_backup():
     """بدء الحفظ التلقائي"""
     try:
-        if not ENABLE_AUTO_BACKUP:
-            logger.info("ℹ️ الحفظ التلقائي معطل")
+        if not ENABLE_FIREBASE_BACKUP:
+            logger.info("ℹ️ Firebase Backup معطل")
             return False
 
-        thread = threading.Thread(target=auto_backup_loop, daemon=True, name="GitHubBackup")
-        thread.start()
-        logger.info("✅ تم تشغيل الحفظ التلقائي")
-        return True
+        if not FIREBASE_AVAILABLE:
+            logger.warning("⚠️ Firebase غير متاح")
+            return False
+
+        return firebase_backup.start_auto_backup()
+
     except Exception as e:
-        logger.error(f"❌ فشل: {e}")
+        logger.error(f"❌ فشل start_auto_backup: {e}")
         return False
 
 
@@ -390,17 +286,18 @@ def record_trade(symbol, direction, entry_price, exit_price,
             hour_stats["wins" if is_win else "losses"] += 1
             hour_stats["total_pnl"] = round(hour_stats["total_pnl"] + net_pnl, 4)
 
-            # تقليم قبل الحفظ
+            # تقليم
             if len(memory["trades"]) > MAX_TRADES_TO_KEEP:
                 memory["trades"] = memory["trades"][-MAX_TRADES_TO_KEEP:]
 
             save_memory(memory)
 
-            # 🔥 حفظ فوري (في خيط منفصل لعدم التعطيل)
-            if ENABLE_AUTO_BACKUP:
+            # 🔥 حفظ فوري في Firebase (في خيط منفصل)
+            if ENABLE_FIREBASE_BACKUP and FIREBASE_AVAILABLE:
                 try:
                     threading.Thread(
-                        target=backup_to_github,
+                        target=backup_to_firebase,
+                        args=(memory,),
                         daemon=True
                     ).start()
                 except:

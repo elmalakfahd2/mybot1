@@ -4,10 +4,9 @@ config.py - الإعدادات النهائية v5.5
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
 🔧 التعديلات v5.5:
-    - 🔥 تفعيل GitHub Backup (النسخة الآمنة)
-    - 🔥 BACKUP_INTERVAL_MINUTES = 30
+    - 🔥 Firebase Backup (بدل GitHub)
+    - 🔥 GitHub Backup مُعطّل
     - 🔥 AUTO_RESTART_AFTER_TUNE = False
-    - 🔥 GITHUB_REPO default = elmalakfahd2/mybot1
 
 📅 آخر تعديل: 2026-09-25
 """
@@ -49,7 +48,7 @@ TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 # ==================== Groq AI ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
 
-# ==================== 🔥 Gemini AI (بديل Groq) ====================
+# ==================== Gemini AI ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -58,12 +57,18 @@ GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 AI_PROVIDER = "auto"
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 GitHub Backup ====================
+# ==================== 🔥 Firebase Backup (جديد) ====================
+FIREBASE_KEY_JSON = _get_env("FIREBASE_KEY", default="")
+FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup")
+ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
+FIREBASE_BACKUP_INTERVAL = 30            # كل 30 دقيقة
+
+# ==================== 🔥 GitHub Backup (مُعطّل) ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
-GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")  # 🔥 محدّث
+GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
-ENABLE_AUTO_BACKUP = True                # 🔥 مُفعّل (النسخة الآمنة)
-BACKUP_INTERVAL_MINUTES = 30             # 🔥 من 10 → 30
+ENABLE_AUTO_BACKUP = False               # 🔥 مُعطّل
+BACKUP_INTERVAL_MINUTES = 30
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
@@ -208,25 +213,25 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== 🔥 نظام التعلم التلقائي v5.5 ====================
+# ==================== نظام التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 24
 AUTO_LEARN_MIN_TRADES = 10
 AUTO_LEARN_MIN_PER_SYMBOL = 3
 AUTO_TUNE_WEIGHTS = True
-AUTO_RESTART_AFTER_TUNE = False          # 🔥 مُعطّل (يمنع Crash)
+AUTO_RESTART_AFTER_TUNE = False
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
 AUTO_LEARN_MAX_ADJUSTMENT = 0.30
 AUTO_LEARN_BACKUP_ENABLED = True
 
-# ==================== 🔥 الحماية الذاتية ====================
+# ==================== الحماية الذاتية ====================
 AUTO_PAUSE_ON_LOSS_STREAK = 5
 AUTO_PAUSE_DURATION_MINUTES = 120
 AUTO_REDUCE_RISK_ON_LOSS = True
 AUTO_RISK_REDUCTION_FACTOR = 0.5
 
-# ==================== 🔥 التقارير ====================
+# ==================== التقارير ====================
 ENABLE_DAILY_REPORT = True
 ENABLE_WEEKLY_REPORT = True
 REPORT_INCLUDE_SUGGESTIONS = True

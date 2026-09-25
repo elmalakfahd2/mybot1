@@ -1,10 +1,10 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v5.4
-# 🔧 التعديلات v5.4:
-#    - 🔥 Health Check Server (لـ Railway)
+# 📁 ملف: main_enhanced.py - الإصدار v5.5
+# 🔧 التعديلات v5.5:
+#    - 🔥 Firebase Backup بدل GitHub
+#    - 🔥 Health Check Server
 #    - 🔥 تقليل الخيوط من 8 إلى 5
 #    - 🔥 دمج TP/SL في Monitor
-#    - 🔥 تنظيف الذاكرة gc.collect()
 #    - 🔥 لا إعادة تشغيل تلقائي
 # 📅 التاريخ: 2026-09-25
 # ==================================================
@@ -104,6 +104,16 @@ try:
     logger.info("✅ daily_reporter متاح")
 except ImportError:
     REPORTER_AVAILABLE = False
+
+# 🔥 Firebase
+try:
+    import firebase_backup
+    FIREBASE_AVAILABLE = True
+    logger.info("✅ firebase_backup متاح")
+except ImportError as e:
+    FIREBASE_AVAILABLE = False
+    firebase_backup = None
+    logger.warning(f"⚠️ firebase_backup غير متاح: {e}")
 
 
 _last_auto_scan = 0
@@ -236,7 +246,7 @@ def send_startup():
         weekly = core.get_accurate_weekly_pnl()
         monthly = core.get_accurate_monthly_pnl()
 
-        backup_status = "✅ مفعل" if ENABLE_AUTO_BACKUP and GITHUB_TOKEN else "❌ معطل"
+        firebase_status = "✅ مفعل" if ENABLE_FIREBASE_BACKUP and FIREBASE_AVAILABLE else "❌ معطل"
 
         memory_trades = 0
         if MEMORY_AVAILABLE:
@@ -247,11 +257,11 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v5.4</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v5.5</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
-            f"💾 <b>GitHub Backup:</b> {backup_status}\n"
+            f"🔥 <b>Firebase Backup:</b> {firebase_status}\n"
             f"📊 <b>الصفقات في الذاكرة:</b> {memory_trades}\n"
             f"🏥 <b>Health Check:</b> ✅\n\n"
             f"📊 <b>الحالة:</b>\n"
@@ -291,7 +301,6 @@ def check_trading_pause():
 def monitor_positions_loop():
     """
     🔥 v5.4: مراقبة شاملة (Trailing SL + TP/SL + الصفقات المغلقة)
-    تم دمج 3 خيوط في خيط واحد لتقليل الاستهلاك
     """
     try:
         logger.info("📈 [THREAD] بدء المراقبة الشاملة...")
@@ -300,12 +309,12 @@ def monitor_positions_loop():
 
         while _auto_scan_enabled:
             try:
-                # ==================== 1. Trailing SL ====================
+                # 1. Trailing SL
                 updated = core.monitor_trailing_sl()
                 if updated > 0:
                     logger.info(f"📊 تحديث Trailing: {updated} صفقة")
 
-                # ==================== 2. TP/SL Check (كل دقيقة) ====================
+                # 2. TP/SL Check (كل دقيقة)
                 current_time = time.time()
                 if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                     _last_tp_sl_monitor = current_time
@@ -323,7 +332,7 @@ def monitor_positions_loop():
                                 core.check_and_add_tp_sl_to_existing_positions()
                                 break
 
-                # ==================== 3. الصفقات المغلقة ====================
+                # 3. الصفقات المغلقة
                 check_closed_trades()
 
                 # 🔥 v5.4: تنظيف دوري للذاكرة
@@ -377,7 +386,6 @@ def record_closed_trade(trade_data):
 
         logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
 
-        # جلب PnL
         pnl = 0.0
         try:
             client_obj = core.get_client()
@@ -392,7 +400,6 @@ def record_closed_trade(trade_data):
         except Exception as e:
             logger.warning(f"⚠️ فشل جلب PnL: {e}")
 
-        # تسجيل
         if MEMORY_AVAILABLE:
             try:
                 memory.record_trade(
@@ -420,7 +427,6 @@ def record_closed_trade(trade_data):
 
         core.record_trade_result(pnl)
 
-        # إشعار الإغلاق
         try:
             opened_at = safe_float(trade_data.get('opened_at', time.time()), time.time())
             duration_minutes = safe_int((time.time() - opened_at) / 60, 0)
@@ -558,7 +564,6 @@ def auto_sniper_scanner():
 
                     logger.info(f"⏰ الدورة التالية: {AUTO_SCAN_INTERVAL // 60} دقيقة")
 
-                    # 🔥 v5.4: تنظيف الذاكرة بعد كل مسح
                     gc.collect()
 
                 time.sleep(30)
@@ -797,14 +802,14 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== 🔥 التشغيل v5.4 ====================
+# ==================== 🔥 التشغيل v5.5 ====================
 
 def start_scanner_threads():
     """
-    🔥 v5.4: تقليل الخيوط + Health Check Server
+    🔥 v5.5: Health Check + Firebase + تقليل الخيوط
     """
     logger.info("=" * 60)
-    logger.info("🔧 [START] بدء تشغيل الخيوط v5.4...")
+    logger.info("🔧 [START] بدء تشغيل الخيوط v5.5...")
     logger.info("=" * 60)
 
     # ==================== 1. Health Check Server ====================
@@ -817,7 +822,35 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] خطأ Health Check: {e}")
 
-    # ==================== 2. Scanner (رئيسي) ====================
+    # ==================== 2. Firebase ====================
+    if FIREBASE_AVAILABLE:
+        try:
+            # تهيئة Firebase
+            if firebase_backup.initialize_firebase():
+                logger.info("✅ [START] Firebase متصل")
+
+                # مزامنة البيانات من Firebase
+                if MEMORY_AVAILABLE:
+                    try:
+                        if memory.sync_from_firebase():
+                            logger.info("✅ [START] مزامنة من Firebase")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [START] فشل المزامنة: {e}")
+
+                # بدء الحفظ الدوري
+                if ENABLE_FIREBASE_BACKUP:
+                    if firebase_backup.start_auto_backup():
+                        logger.info("✅ [START] Firebase Backup")
+                    else:
+                        logger.warning("⚠️ [START] فشل Firebase Backup")
+            else:
+                logger.warning("⚠️ [START] Firebase غير متاح")
+        except Exception as e:
+            logger.error(f"❌ [START] خطأ Firebase: {e}")
+    else:
+        logger.info("ℹ️ [START] Firebase غير متاح")
+
+    # ==================== 3. Scanner ====================
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
@@ -825,7 +858,7 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
-    # ==================== 3. Monitor (Trailing + TP/SL + Closed) ====================
+    # ==================== 4. Monitor ====================
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor")
         monitor.start()
@@ -833,7 +866,7 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
-    # ==================== 4. Smart Scheduler (التعلم) ====================
+    # ==================== 5. Smart Scheduler ====================
     if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
         try:
             if smart_scheduler.start_scheduler():
@@ -845,18 +878,6 @@ def start_scanner_threads():
     else:
         logger.info("ℹ️ [START] التعلم التلقائي معطل")
 
-    # ==================== 5. GitHub Backup ====================
-    if MEMORY_AVAILABLE and ENABLE_AUTO_BACKUP:
-        try:
-            if memory.start_auto_backup():
-                logger.info("✅ [START] GitHub Backup")
-            else:
-                logger.warning("⚠️ [START] فشل Backup")
-        except Exception as e:
-            logger.error(f"❌ [START] فشل Backup: {e}")
-    else:
-        logger.info("ℹ️ [START] GitHub Backup معطل")
-
     time.sleep(2)
     logger.info(f"✅ [START] عدد الخيوط: {threading.active_count()}")
     logger.info("=" * 60)
@@ -865,7 +886,7 @@ def start_scanner_threads():
 def main():
     try:
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v5.4...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.5...")
         logger.info("=" * 60)
 
         send_startup()
@@ -892,7 +913,7 @@ def main():
                 pass
 
         logger.info("=" * 60)
-        logger.info("🎯 [MAIN] نظام القناص v5.4 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v5.5 مفعل")
         logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
@@ -903,7 +924,7 @@ def main():
         logger.info(f"🧠 [MAIN] التعلم التلقائي: {'✅' if ENABLE_AUTO_LEARNING else '❌'}")
         logger.info(f"📊 [MAIN] التقارير اليومية: {'✅' if ENABLE_DAILY_REPORT else '❌'}")
         logger.info(f"🛡️ [MAIN] الحماية الذاتية: {'✅' if AUTO_PROTECTION_ENABLED else '❌'}")
-        logger.info(f"💾 [MAIN] GitHub Backup: {'✅' if ENABLE_AUTO_BACKUP else '❌'}")
+        logger.info(f"🔥 [MAIN] Firebase Backup: {'✅' if ENABLE_FIREBASE_BACKUP else '❌'}")
         logger.info(f"🏥 [MAIN] Health Check: ✅")
         logger.info("=" * 60)
 
