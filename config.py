@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.8
+config.py - الإعدادات النهائية v5.9 (Scalp Quick Wins)
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.8:
-    - 🔥 إصلاح فلتر الحجم (0.5 بدل 1.0)
-    - 🔥 MIN_SCORE_REQUIRED = 62
-    - 🔥 تخفيف دفتر الأوامر
-    - 🔥 تنظيف الأوامر اليتيمة
-    - 🔥 حماية الصفقات اليدوية
+🔧 التعديلات v5.9:
+    - 🔥 استراتيجية "Scalp Quick Wins"
+    - 🔥 TP1 مضغوط (0.8%)
+    - 🔥 Breakeven سريع (0.4%)
+    - 🔥 Cooldown ذكي (15 د + مضاعفة)
+    - 🔥 RSI مشروط حسب النطاق
 
 📅 آخر تعديل: 2026-09-26
 """
@@ -83,18 +83,18 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== TP المتعدد ====================
+# ==================== 🔥 TP المتعدد - Scalp Quick Wins ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.5, 2.5, 4.0]
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
-SL_PERCENT = 1.5
-TP_PERCENT = 1.5
+TP_MULTIPLE_LEVELS = [0.8, 1.5, 2.5]      # 🔥 مضغوط للخطف السريع
+TP_QUANTITY_RATIOS = [0.6, 0.25, 0.15]    # 🔥 60% للـ TP1 (خطف سريع)
+SL_PERCENT = 1.2
+TP_PERCENT = 0.8
 
-# ==================== SL ديناميكي ====================
+# ==================== 🔥 SL ديناميكي - Scalp Mode ====================
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.5
-SL_MIN_PERCENT = 1.2
-SL_MAX_PERCENT = 2.0
+SL_ATR_MULTIPLIER = 2.0                    # من 2.5 → 2.0
+SL_MIN_PERCENT = 0.8                       # من 1.2 → 0.8
+SL_MAX_PERCENT = 1.5                       # من 2.0 → 1.5
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -103,24 +103,31 @@ CLOSE_ON_TP_SL_FAIL = True
 TP_SL_RETRY_DELAY_SECONDS = 1
 MONITOR_TP_SL_INTERVAL = 60
 
-# ==================== 🔥 تنظيف الأوامر اليتيمة ====================
+# ==================== تنظيف الأوامر اليتيمة ====================
 ENABLE_ORPHAN_CLEANUP = True
-ORPHAN_CLEANUP_INTERVAL = 300  # كل 5 دقائق
+ORPHAN_CLEANUP_INTERVAL = 300
 
 # ==================== فلتر السيولة ====================
 ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول (مخففة) ====================
+# ==================== شروط الدخول ====================
 MIN_TIMEFRAME_ALIGNMENT = 3.0
 MIN_VOLUME_FACTOR = 0.5
 MIN_GROQ_CONFIDENCE = 55
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 5
 
-# ==================== نظام النقاط (متوازن) ====================
-MIN_SCORE_REQUIRED = 62
+# ==================== 🔥 RSI - Scalp Mode ====================
+# يسمح بـ RSI عالي لكن مع TP ضيق جداً
+RSI_BUY_HARD_REJECT = 90                  # رفض فوق هذا
+RSI_SELL_HARD_REJECT = 10                 # رفض تحت هذا
+RSI_BUY_WARNING = 78                      # تحذير فوق هذا (يتطلب TP ضيق)
+RSI_SELL_WARNING = 22                     # تحذير تحت هذا
+
+# ==================== نظام النقاط ====================
+MIN_SCORE_REQUIRED = 60                   # من 62 → 60 (مع RSI معقول)
 MIN_ORDER_BOOK_POINTS = 0
 MIN_RSI_POINTS = 0
 
@@ -148,7 +155,7 @@ FUNDING_RATE_EXTREME_PERCENT = 0.05
 
 # ==================== فلتر الارتباط ====================
 ENABLE_CORRELATION_FILTER = True
-MAX_CORRELATION = 0.75
+MAX_CORRELATION = 0.80                    # من 0.75 → 0.80
 
 # ==================== منع الصفقات المتعاكسة ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = True
@@ -157,12 +164,12 @@ ENABLE_OPPOSITE_DIRECTION_FILTER = True
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
 DAILY_MAX_LOSS_PERCENT = 10.0
 
-# ==================== Trailing SL ====================
+# ==================== 🔥 Trailing SL - سريع للخطف ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 1.8
-TRAILING_SL_DISTANCE = 0.6
-BREAKEVEN_TRIGGER = 1.5
-BREAKEVEN_OFFSET_PERCENT = 0.1
+TRAILING_SL_TRIGGER = 0.6                 # 🔥 من 1.8 → 0.6 (بعد TP1 مباشرة)
+TRAILING_SL_DISTANCE = 0.4                # 🔥 من 0.6 → 0.4 (ضيق)
+BREAKEVEN_TRIGGER = 0.4                   # 🔥 من 1.5 → 0.4 (سريع جداً)
+BREAKEVEN_OFFSET_PERCENT = 0.05           # من 0.1 → 0.05
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 4
@@ -189,7 +196,11 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 # ==================== المسح ====================
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
-COOLDOWN_MINUTES = 5
+
+# ==================== 🔥 Cooldown ذكي ====================
+COOLDOWN_MINUTES = 15                     # 🔥 من 5 → 15 (أطول)
+COOLDOWN_MULTIPLIER_AFTER_LOSS = 2        # 🔥 مضاعفة بعد خسارة
+COOLDOWN_MINUTES_AFTER_LOSS = 30          # 🔥 تبريد بعد خسارة مباشرة
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']

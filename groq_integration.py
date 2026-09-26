@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v5.3
-🔧 التعديلات v5.3:
-   - 🔥 Prompt محسّن (تقليل "تحذير")
-   - 🔥 تعليمات واضحة للـ AI
-   - دعم Gemini API كبديل لـ Groq
-   - التبديل التلقائي عند فشل الأساسي
+groq_integration.py - الإصدار v5.4 (Scalp Mode)
+🔧 التعديلات v5.4:
+   - 🔥 Prompt محسّن لقبول الإشارات مع TP ضيق
+   - 🔥 RSI متشبع مسموح مع تحذير
+   - 🔥 "تأكيد" أكثر تكراراً
 """
 
 import logging
@@ -19,7 +18,9 @@ from config import (
     GROQ_API_KEY, ENABLE_GROQ_ANALYSIS, GROQ_MODEL,
     GROQ_API_BASE_URL, GROQ_SEND_FULL_DATA,
     GEMINI_API_KEY, ENABLE_GEMINI_ANALYSIS, GEMINI_MODEL,
-    GEMINI_API_BASE_URL, AI_PROVIDER, AI_FALLBACK_ENABLED
+    GEMINI_API_BASE_URL, AI_PROVIDER, AI_FALLBACK_ENABLED,
+    RSI_BUY_HARD_REJECT, RSI_SELL_HARD_REJECT,
+    RSI_BUY_WARNING, RSI_SELL_WARNING
 )
 
 logger = logging.getLogger("groq_integration")
@@ -233,7 +234,6 @@ def parse_ai_response(response_content, provider="groq"):
                     'ai_provider': provider
                 }
 
-        # استخراج نصي
         recommendation = "تحذير"
         confidence = 50
 
@@ -266,7 +266,7 @@ def parse_ai_response(response_content, provider="groq"):
         return None
 
 
-# ==================== بناء الـ Prompt (محسّن v5.3) ====================
+# ==================== بناء الـ Prompt (Scalp Mode) ====================
 
 def build_rich_prompt(signal_data, analysis_data=None):
     try:
@@ -306,7 +306,7 @@ def build_rich_prompt(signal_data, analysis_data=None):
         alignment = signal_data.get('timeframe_alignment', 0)
         volatility = technical.get('volatility', 'غير معروف')
 
-        prompt = f"""أنت محلل فني خبير في تداول العملات الرقمية. مهمتك **تأكيد الإشارات الجيدة** وليس رفض كل شيء.
+        prompt = f"""أنت محلل فني خبير في **Scalp Trading** (خطف أرباح صغيرة سريعة). مهمتك **تأكيد الإشارات الجيدة بسرعة**.
 
 📊 **بيانات الإشارة:**
 - العملة: {symbol}
@@ -339,24 +339,31 @@ def build_rich_prompt(signal_data, analysis_data=None):
 
 ---
 
-**⚠️ قواعد الإجابة (مهمة جداً):**
+**⚠️ قواعد الإجابة (Scalp Mode - مهم جداً):**
 
-1. **"تأكيد"** إذا كان **60% أو أكثر** من المعايير إيجابية:
-   - ترابط الفريمات >= 6/10
+**هذه استراتيجية Scalp - نهدف لأرباح صغيرة سريعة (0.8% للـ TP1) قبل الانعكاس المحتمل.**
+
+1. **"تأكيد"** إذا كان **50% أو أكثر** من المعايير إيجابية:
+   - ترابط الفريمات >= 5/10
    - MACD متوافق مع الاتجاه
-   - RSI في نطاق معقول
-   - الحجم >= 1.0x أو متوسط
-   
-2. **"تحذير"** فقط عند وجود **تعارض حقيقي واحد**:
-   - مثال: ترابط قوي + RSI متشبع جداً
-   - مثال: حجم ممتاز + MACD معاكس
+   - الحجم >= 0.8x
+   - **حتى لو RSI متشبع (75-88)، هذا مقبول** لأن TP ضيق
 
-3. **"رفض"** فقط عند **خطر واضح**:
-   - السوق هابط قوي وأنت تشتري (أو العكس)
-   - RSI في تشبع عنيف (>80 أو <20)
-   - كل المؤشرات معاكسة
+2. **"تحذير"** فقط عند تعارض حقيقي واحد:
+   - مثال: كل المؤشرات معاكسة
+   - مثال: RSI > 88 (خطر انعكاس فوري)
 
-4. **⚠️ مهم:** التردد الزائد = فقدان فرص. **كن حازماً**. إذا رأيت 3 من 4 معايير إيجابية → **"تأكيد"**.
+3. **"رفض" فقط عند خطر واضح جداً:**
+   - RSI >= 90 (تشبع عنيف جداً)
+   - MACD معاكس + ترابط معاكس
+   - السوق هابط قوي وأنت تشتري
+
+4. **⚠️ مهم جداً في Scalp Mode:**
+   - **التردد الزائد = فقدان الفرص**
+   - **إذا 3 من 4 معايير إيجابية → "تأكيد"**
+   - **RSI 70-85 مقبول** مع TP ضيق (0.8%)
+   - **RSI 85-90 مقبول** مع TP ضيق جداً (0.5%)
+   - **RSI >= 90 → "رفض"** إجباري
 
 **المطلوب:**
 1. القرار: تأكيد / تحذير / رفض
@@ -466,7 +473,7 @@ def _call_gemini(prompt):
 # ==================== الدالة الرئيسية ====================
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
-    """تحليل إشارة بـ AI (Groq أو Gemini)"""
+    """تحليل إشارة بـ AI"""
     try:
         if GROQ_SEND_FULL_DATA:
             prompt = build_rich_prompt(signal_data, analysis_data)
@@ -481,7 +488,6 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
 
         result = None
 
-        # Gemini أولاً
         if use_gemini_first or (use_auto and gemini_available and not groq_available):
             if gemini_available:
                 logger.info("🧠 استخدام Gemini...")
@@ -491,13 +497,12 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                     if result:
                         return result
 
-        # Groq
         if groq_available:
             logger.info("🧠 استخدام Groq...")
             messages = [
                 {
                     "role": "system",
-                    "content": "أنت محلل فني محترف. مهمتك تأكيد الإشارات الجيدة بحزم وليس رفض كل شيء. أجب بـ JSON فقط."
+                    "content": "أنت محلل فني محترف في Scalp Trading. مهمتك تأكيد الإشارات الجيدة بسرعة. RSI 70-88 مقبول إذا TP ضيق. أجب بـ JSON فقط."
                 },
                 {"role": "user", "content": prompt}
             ]
@@ -509,7 +514,6 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # Fallback
         if AI_FALLBACK_ENABLED:
             if not use_gemini_first and gemini_available:
                 logger.info("🔄 Fallback → Gemini...")
