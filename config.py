@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.5.1
-🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
+config.py - الإعدادات النهائية v5.6
+🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.5.1:
-    - 🔥 إضافة MEMORY_FILE
-    - 🔥 Firebase Backup
-    - 🔥 GitHub Backup مُعطّل
+🔧 التعديلات v5.6:
+    - 🔥 إصلاح R:R (TP أعلى)
+    - 🔥 TP1 ratio = 50%
+    - 🔥 SL محسّن
+    - 🔥 MIN_SCORE_REQUIRED = 70
 
-📅 آخر تعديل: 2026-09-25
+📅 آخر تعديل: 2026-09-26
 """
 
 import os
@@ -23,10 +24,7 @@ except ImportError:
 def _get_env(name, default=None, required=False):
     value = os.environ.get(name, default)
     if required and not value:
-        raise RuntimeError(
-            f"❌ متغير البيئة '{name}' غير موجود. "
-            f"أضفه في ملف .env محليًا أو في Variables على Railway."
-        )
+        raise RuntimeError(f"❌ متغير البيئة '{name}' غير موجود.")
     return value
 
 
@@ -57,20 +55,20 @@ GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 AI_PROVIDER = "auto"
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 Firebase Backup ====================
+# ==================== Firebase Backup ====================
 FIREBASE_KEY_JSON = _get_env("FIREBASE_KEY", default="")
 FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f59")
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
-FIREBASE_BACKUP_INTERVAL = 30            # كل 30 دقيقة
+FIREBASE_BACKUP_INTERVAL = 30
 
-# ==================== 🔥 GitHub Backup (مُعطّل) ====================
+# ==================== GitHub Backup (مُعطّل) ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
 GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
-ENABLE_AUTO_BACKUP = False               # 🔥 مُعطّل
+ENABLE_AUTO_BACKUP = False
 BACKUP_INTERVAL_MINUTES = 30
 
-# ==================== 🔥 إعدادات الملفات ====================
+# ==================== إعدادات الملفات ====================
 MEMORY_FILE = "trade_memory.json"
 PROFIT_HISTORY_FILE = "profit_history.json"
 OPEN_POSITIONS_FILE = "open_positions.json"
@@ -84,18 +82,18 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== TP المتعدد ====================
+# ==================== 🔥 TP المتعدد (إصلاح R:R) ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.5, 2.5, 4.0]
-TP_QUANTITY_RATIOS = [0.4, 0.3, 0.3]
-SL_PERCENT = 1.5
-TP_PERCENT = 1.5
+TP_MULTIPLE_LEVELS = [2.0, 3.5, 5.0]     # 🔥 من [1.5, 2.5, 4.0] → [2.0, 3.5, 5.0]
+TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]     # 🔥 من [0.4, 0.3, 0.3] → [0.5, 0.3, 0.2]
+SL_PERCENT = 1.5                          # ثابت
+TP_PERCENT = 2.0                          # 🔥 من 1.5 → 2.0
 
-# ==================== SL ديناميكي ====================
+# ==================== SL ديناميكي (محسّن) ====================
 DYNAMIC_SL_ENABLED = True
 SL_ATR_MULTIPLIER = 2.5
-SL_MIN_PERCENT = 1.2
-SL_MAX_PERCENT = 2.0
+SL_MIN_PERCENT = 1.5                      # 🔥 من 1.2 → 1.5 (لا SL ضيق)
+SL_MAX_PERCENT = 2.0                      # ثابت
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -109,28 +107,29 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول ====================
+# ==================== شروط الدخول (محسّنة) ====================
 MIN_TIMEFRAME_ALIGNMENT = 4.0
 MIN_VOLUME_FACTOR = 1.0
 MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 58
+MIN_CONFIDENCE_AUTO = 60                  # 🔥 من 58 → 60
 MIN_SIGNAL_STRENGTH = 5
 
-# ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 67
+# ==================== نظام النقاط (محسّن) ====================
+MIN_SCORE_REQUIRED = 70                   # 🔥 من 67 → 70
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
+# 🔥 الأوزان (متوازنة حسب التحليل)
 SCORE_WEIGHTS = {
-    'timeframe_alignment': 20,
-    'volume': 17,
-    'groq': 20,
-    'rsi_ideal': 12,
-    'momentum': 8,
-    'price_action': 3,
-    'market_regime': 5,
-    'order_book': 10,
-    'funding_oi': 5,
+    'timeframe_alignment': 18,            # 🔥 من 20 → 18
+    'volume': 17,                         # ثابت
+    'groq': 15,                           # 🔥 من 20 → 15
+    'rsi_ideal': 10,                      # 🔥 من 12 → 10
+    'momentum': 10,                       # 🔥 من 8 → 10
+    'price_action': 5,                    # 🔥 من 3 → 5
+    'market_regime': 5,                   # ثابت
+    'order_book': 12,                     # 🔥 من 10 → 12
+    'funding_oi': 8,                      # 🔥 من 5 → 8
     'max_score': 100
 }
 
@@ -154,11 +153,11 @@ ENABLE_OPPOSITE_DIRECTION_FILTER = True
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
 DAILY_MAX_LOSS_PERCENT = 8.0
 
-# ==================== Trailing SL ====================
+# ==================== 🔥 Trailing SL (إصلاح منطقي) ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 1.0
-TRAILING_SL_DISTANCE = 0.5
-BREAKEVEN_TRIGGER = 1.5
+TRAILING_SL_TRIGGER = 2.0                 # 🔥 من 1.0 → 2.0 (بعد TP1)
+TRAILING_SL_DISTANCE = 0.8                # 🔥 من 0.5 → 0.8
+BREAKEVEN_TRIGGER = 1.8                   # 🔥 من 1.5 → 1.8 (عند TP1 تقريباً)
 BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
@@ -210,7 +209,7 @@ LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
-# ==================== البيانات اللحظية (WebSocket) ====================
+# ==================== البيانات اللحظية ====================
 ENABLE_REALTIME_DATA = False
 REALTIME_ADJUSTMENT_ENABLED = True
 REALTIME_MIN_ADJUSTMENT = -5
@@ -220,7 +219,7 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== نظام التعلم التلقائي ====================
+# ==================== التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 24
 AUTO_LEARN_MIN_TRADES = 10

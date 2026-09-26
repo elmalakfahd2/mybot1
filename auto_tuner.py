@@ -1,14 +1,10 @@
 # ==================================================
-# 📁 ملف: auto_tuner.py - الإصدار v5.2.2
-# 🔧 التعديلات v5.2.2:
-#    - 🔥 إصلاح restart_bot (بدون os._exit)
-#    - 🔥 إصلاح regex في update_weight_in_config
-#    - 🔥 تحديث الأوزان في الذاكرة مباشرة
-# 🔧 التعديلات v5.0:
-#    - تحديث config.py تلقائياً
-#    - نسخة احتياطية قبل التعديل
-#    - إشعار Telegram
-# 📅 التاريخ: 2026-09-24
+# 📁 ملف: auto_tuner.py - الإصدار v5.6
+# 🔧 التعديلات v5.6:
+#    - 🔥 إصلاح regex (يتعامل مع الأعداد الصحيحة والعشرية)
+#    - 🔥 إصلاح تحديث الأوزان في config.py
+#    - 🔥 إصلاح تحديث الأوزان في الذاكرة
+# 📅 التاريخ: 2026-09-26
 # ==================================================
 
 import os
@@ -39,13 +35,10 @@ def create_backup():
         ensure_backup_dir()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = os.path.join(BACKUP_DIR, f"config_{timestamp}.py")
-
         shutil.copy2(CONFIG_FILE, backup_path)
         logger.info(f"✅ نسخة احتياطية: {backup_path}")
-
         cleanup_old_backups(max_keep=10)
         return backup_path
-
     except Exception as e:
         logger.error(f"❌ فشل النسخ الاحتياطي: {e}")
         return None
@@ -54,18 +47,13 @@ def create_backup():
 def cleanup_old_backups(max_keep=10):
     try:
         ensure_backup_dir()
-        backups = sorted([
-            f for f in os.listdir(BACKUP_DIR)
-            if f.startswith("config_") and f.endswith(".py")
-        ])
-
+        backups = sorted([f for f in os.listdir(BACKUP_DIR)
+                         if f.startswith("config_") and f.endswith(".py")])
         if len(backups) > max_keep:
             for old in backups[:-max_keep]:
                 os.remove(os.path.join(BACKUP_DIR, old))
-                logger.info(f"🗑️ حذف نسخة قديمة: {old}")
-
     except Exception as e:
-        logger.error(f"خطأ في حذف النسخ: {e}")
+        logger.error(f"خطأ: {e}")
 
 
 # ==================== تعديل config.py ====================
@@ -92,11 +80,12 @@ def write_config(content):
 
 def update_weight_in_config(content, weight_name, new_value):
     """
-    🔥 v5.2.2: regex مبسط يعمل بشكل أفضل
+    🔥 v5.6: regex يعمل مع الأعداد الصحيحة والعشرية
     """
     try:
-        # نمط مرن: يتعامل مع المسافات والاقتباسات المختلفة
-        pattern = rf"('{weight_name}'\s*:\s*)([\d.]+)"
+        # 🔥 النمط: يتعامل مع 20 أو 20.5 أو 20.55
+        # يبحث عن: 'weight_name': <number>
+        pattern = rf"('{weight_name}'\s*:\s*)(-?\d+(?:\.\d+)?)"
 
         match = re.search(pattern, content)
         if not match:
@@ -104,15 +93,15 @@ def update_weight_in_config(content, weight_name, new_value):
             return content
 
         old_value = match.group(2)
-        new_content = re.sub(
-            pattern,
-            rf"\g<1>{new_value:.1f}",
-            content,
-            count=1
-        )
+
+        # 🔥 استبدال
+        def replace(m):
+            return f"{m.group(1)}{new_value:.1f}"
+
+        new_content = re.sub(pattern, replace, content, count=1)
 
         if new_content == content:
-            logger.warning(f"⚠️ لم يتم تعديل الوزن: {weight_name}")
+            logger.warning(f"⚠️ لم يتم تعديل: {weight_name}")
             return content
 
         logger.info(f"   ✅ {weight_name}: {old_value} → {new_value:.1f}")
@@ -124,9 +113,7 @@ def update_weight_in_config(content, weight_name, new_value):
 
 
 def apply_weight_changes(weight_changes):
-    """
-    تطبيق كل التغييرات في الأوزان
-    """
+    """تطبيق التغييرات على config.py"""
     try:
         content = read_config()
         if not content:
@@ -137,7 +124,7 @@ def apply_weight_changes(weight_changes):
         for weight_name, new_value in weight_changes.items():
             content = update_weight_in_config(content, weight_name, new_value)
 
-        # إضافة تعليق بالتحديث
+        # إضافة تعليق
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         comment = f"\n# 🔥 تم التحديث تلقائياً: {timestamp}\n"
 
@@ -168,8 +155,7 @@ def save_tuning_history(history):
         with open(TUNING_HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(history, f, indent=2, ensure_ascii=False)
         return True
-    except Exception as e:
-        logger.error(f"خطأ في حفظ السجل: {e}")
+    except:
         return False
 
 
@@ -183,26 +169,20 @@ def record_tuning(analysis, weight_changes):
         })
         save_tuning_history(history)
         return True
-    except Exception as e:
-        logger.error(f"خطأ في التسجيل: {e}")
+    except:
         return False
 
 
-# ==================== إشعارات Telegram ====================
+# ==================== Telegram ====================
 
 def send_telegram_message(text):
     try:
         from telegram import Bot
         from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
-
         bot = Bot(token=TELEGRAM_TOKEN)
 
         async def send_async():
-            await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=text,
-                parse_mode="HTML"
-            )
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="HTML")
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -213,7 +193,6 @@ def send_telegram_message(text):
 
         logger.info("✅ تم إرسال الإشعار")
         return True
-
     except Exception as e:
         logger.error(f"❌ فشل الإشعار: {e}")
         return False
@@ -222,7 +201,6 @@ def send_telegram_message(text):
 def format_tuning_report(analysis, weight_changes, old_weights):
     try:
         msg = "🧠 <b>تم تحديث الأوزان تلقائياً</b>\n\n"
-
         msg += f"📊 <b>التحليل:</b>\n"
         msg += f"   • صفقات: {analysis.get('trades_analyzed', 0)}\n"
         msg += f"   • نسبة النجاح: {analysis.get('win_rate', 0):.1f}%\n"
@@ -231,14 +209,13 @@ def format_tuning_report(analysis, weight_changes, old_weights):
         msg += f"   • متوسط الخسارة: {analysis.get('avg_loss', 0):+.4f}\n\n"
 
         msg += f"🔧 <b>الأوزان الجديدة:</b>\n"
-
         for name, new_val in weight_changes.items():
             old_val = old_weights.get(name, 10)
             change = new_val - old_val
 
-            if change > 0:
+            if change > 0.1:
                 arrow = "🔼"
-            elif change < 0:
+            elif change < -0.1:
                 arrow = "🔽"
             else:
                 arrow = "➡️"
@@ -259,32 +236,24 @@ def format_tuning_report(analysis, weight_changes, old_weights):
                 msg += f"   {w}\n"
 
         msg += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
         return msg
-
     except Exception as e:
-        logger.error(f"خطأ في تنسيق التقرير: {e}")
+        logger.error(f"خطأ: {e}")
         return f"🧠 تم تحديث الأوزان\n{datetime.now()}"
 
 
-# ==================== 🔥 تحديث في الذاكرة (بدون إعادة تشغيل) ====================
+# ==================== تحديث في الذاكرة ====================
 
 def restart_bot():
-    """
-    🔥 v5.2.2: بدلاً من إعادة التشغيل (الذي يوقف البوت على Railway)
-    نحدّث الأوزان في الذاكرة مباشرة.
-    """
+    """تحديث الأوزان في الذاكرة (بدون إعادة تشغيل)"""
     try:
         logger.info("🔄 تحديث الأوزان في الذاكرة...")
 
-        # إعادة تحميل config في الذاكرة
         import importlib
         import config
         importlib.reload(config)
-
         logger.info("✅ تم إعادة تحميل config")
 
-        # تحديث الأوزان في bot_strategies_enhanced
         try:
             import bot_strategies_enhanced as strat
             importlib.reload(strat)
@@ -292,15 +261,13 @@ def restart_bot():
         except Exception as e:
             logger.warning(f"⚠️ فشل تحديث bot_strategies: {e}")
 
-        # مزامنة profit_history
         try:
             import trade_memory
             trade_memory.sync_profit_history()
-            logger.info("✅ تم مزامنة profit_history")
         except:
             pass
 
-        logger.info("✅ تم التحديث بنجاح (البوت مستمر في العمل)")
+        logger.info("✅ تم التحديث (البوت مستمر)")
 
     except Exception as e:
         logger.error(f"❌ فشل التحديث: {e}")
@@ -311,54 +278,39 @@ def restart_bot():
 # ==================== الدالة الرئيسية ====================
 
 def run_tuning():
-    """
-    تشغيل التعديل التلقائي
-    """
     try:
         logger.info("=" * 60)
-        logger.info("🧠 بدء التعديل التلقائي للأوزان...")
+        logger.info("🧠 بدء التعديل التلقائي...")
         logger.info("=" * 60)
 
         from config import (
-            ENABLE_AUTO_LEARNING,
-            AUTO_LEARN_MIN_TRADES,
-            AUTO_TUNE_WEIGHTS,
-            AUTO_RESTART_AFTER_TUNE,
-            AUTO_LEARN_MAX_ADJUSTMENT,
-            AUTO_LEARN_BACKUP_ENABLED,
-            SCORE_WEIGHTS,
+            ENABLE_AUTO_LEARNING, AUTO_LEARN_MIN_TRADES,
+            AUTO_TUNE_WEIGHTS, AUTO_RESTART_AFTER_TUNE,
+            AUTO_LEARN_BACKUP_ENABLED, SCORE_WEIGHTS,
         )
 
-        if not ENABLE_AUTO_LEARNING:
-            logger.info("ℹ️ التعلم التلقائي معطل")
+        if not ENABLE_AUTO_LEARNING or not AUTO_TUNE_WEIGHTS:
+            logger.info("ℹ️ التعلم معطل")
             return False
 
-        if not AUTO_TUNE_WEIGHTS:
-            logger.info("ℹ️ تعديل الأوزان معطل")
-            return False
-
-        # تحليل الأداء
         import auto_learner
         analysis = auto_learner.analyze_performance(min_trades=AUTO_LEARN_MIN_TRADES)
         if not analysis:
-            logger.info("⏳ لا يوجد ما يكفي من البيانات")
             return False
 
         weight_changes = analysis.get('recommendations', {}).get('weight_changes', {})
         if not weight_changes:
-            logger.info("ℹ️ لا توجد تغييرات مقترحة")
+            logger.info("ℹ️ لا توجد تغييرات")
             return False
 
         old_weights = {k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'}
 
         if AUTO_LEARN_BACKUP_ENABLED:
-            backup_path = create_backup()
-            if not backup_path:
-                logger.warning("⚠️ فشل النسخ الاحتياطي - استمرار")
+            create_backup()
 
         success = apply_weight_changes(weight_changes)
         if not success:
-            logger.error("❌ فشل تطبيق التغييرات")
+            logger.error("❌ فشل التطبيق")
             return False
 
         record_tuning(analysis, weight_changes)
@@ -367,43 +319,33 @@ def run_tuning():
             report = format_tuning_report(analysis, weight_changes, old_weights)
             send_telegram_message(report)
         except Exception as e:
-            logger.error(f"فشل إرسال الإشعار: {e}")
+            logger.error(f"فشل الإشعار: {e}")
 
         logger.info("✅ تم التعديل بنجاح")
 
-        # 🔥 v5.2.2: تحديث في الذاكرة (بدون إعادة تشغيل)
         if AUTO_RESTART_AFTER_TUNE:
             restart_bot()
 
         return True
 
     except Exception as e:
-        logger.error(f"❌ فشل التعديل: {e}")
+        logger.error(f"❌ فشل: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
-# ==================== API خارجي ====================
-
 def get_tuning_stats():
     try:
         history = load_tuning_history()
         if not history:
-            return {
-                'total_tunings': 0,
-                'last_tuning': None,
-                'recent_changes': []
-            }
+            return {'total_tunings': 0, 'last_tuning': None, 'recent_changes': []}
 
         return {
             'total_tunings': len(history),
             'last_tuning': history[-1].get('timestamp'),
             'recent_changes': [
-                {
-                    'time': h.get('timestamp'),
-                    'changes': h.get('weight_changes', {})
-                }
+                {'time': h.get('timestamp'), 'changes': h.get('weight_changes', {})}
                 for h in history[-5:]
             ]
         }
@@ -411,27 +353,8 @@ def get_tuning_stats():
         return {'total_tunings': 0, 'last_tuning': None, 'recent_changes': []}
 
 
-def rollback_to_backup(backup_filename):
-    try:
-        backup_path = os.path.join(BACKUP_DIR, backup_filename)
-        if not os.path.exists(backup_path):
-            logger.error(f"❌ النسخة غير موجودة: {backup_filename}")
-            return False
-
-        shutil.copy2(backup_path, CONFIG_FILE)
-        logger.info(f"✅ تم الاسترجاع من: {backup_filename}")
-        return True
-
-    except Exception as e:
-        logger.error(f"خطأ في الاسترجاع: {e}")
-        return False
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار auto_tuner...")
+    print("🧪 اختبار auto_tuner v5.6...")
     result = run_tuning()
-    if result:
-        print("✅ تم التعديل")
-    else:
-        print("ℹ️ لا توجد تعديلات")
+    print(f"النتيجة: {result}")
