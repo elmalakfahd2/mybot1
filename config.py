@@ -1,16 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.9 (Scalp Quick Wins)
+config.py - الإعدادات النهائية v6.1
 🔒 آمن للرفع على GitHub.
-
-🔧 التعديلات v5.9:
-    - 🔥 استراتيجية "Scalp Quick Wins"
-    - 🔥 TP1 مضغوط (0.8%)
-    - 🔥 Breakeven سريع (0.4%)
-    - 🔥 Cooldown ذكي (15 د + مضاعفة)
-    - 🔥 RSI مشروط حسب النطاق
-
-📅 آخر تعديل: 2026-09-26
 """
 
 import os
@@ -44,16 +35,37 @@ BINANCE_API_SECRET = _get_env("BINANCE_API_SECRET", required=True)
 TELEGRAM_TOKEN = _get_env("TELEGRAM_TOKEN", required=True)
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 
-# ==================== Groq AI ====================
-GROQ_API_KEY = _get_env("GROQ_API_KEY", required=True)
+# ==================== 🔥 OpenRouter (الأساسي) ====================
+OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
+ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
+OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="meta-llama/llama-3.3-70b-instruct:free")
+OPENROUTER_FALLBACK_MODELS = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "deepseek/deepseek-chat:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "mistralai/mistral-small-24b-instruct-2501:free",
+]
+OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
-# ==================== Gemini AI ====================
+# ==================== Groq AI (احتياطي) ====================
+GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
+ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
+
+# ==================== Gemini AI (احتياطي) ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash-exp"
+GEMINI_FALLBACK_MODELS = [
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-AI_PROVIDER = "auto"
+AI_PROVIDER = _get_env("AI_PROVIDER", default="openrouter")
 AI_FALLBACK_ENABLED = True
 
 # ==================== Firebase Backup ====================
@@ -62,14 +74,14 @@ FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
 FIREBASE_BACKUP_INTERVAL = 30
 
-# ==================== GitHub Backup (معطل) ====================
+# ==================== GitHub Backup ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
 GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
 ENABLE_AUTO_BACKUP = False
 BACKUP_INTERVAL_MINUTES = 30
 
-# ==================== إعدادات الملفات ====================
+# ==================== الملفات ====================
 MEMORY_FILE = "trade_memory.json"
 PROFIT_HISTORY_FILE = "profit_history.json"
 OPEN_POSITIONS_FILE = "open_positions.json"
@@ -83,27 +95,27 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== 🔥 TP المتعدد - Scalp Quick Wins ====================
+# ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [0.8, 1.5, 2.5]      # 🔥 مضغوط للخطف السريع
-TP_QUANTITY_RATIOS = [0.6, 0.25, 0.15]    # 🔥 60% للـ TP1 (خطف سريع)
+TP_MULTIPLE_LEVELS = [0.8, 1.5, 2.5]
+TP_QUANTITY_RATIOS = [0.6, 0.25, 0.15]
 SL_PERCENT = 1.2
 TP_PERCENT = 0.8
 
-# ==================== 🔥 SL ديناميكي - Scalp Mode ====================
+# ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.0                    # من 2.5 → 2.0
-SL_MIN_PERCENT = 0.8                       # من 1.2 → 0.8
-SL_MAX_PERCENT = 1.5                       # من 2.0 → 1.5
+SL_ATR_MULTIPLIER = 2.0
+SL_MIN_PERCENT = 0.8
+SL_MAX_PERCENT = 1.5
 
-# ==================== إصلاح TP/SL ====================
+# ==================== TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
 TP_SL_MAX_RETRIES = 3
 CLOSE_ON_TP_SL_FAIL = True
 TP_SL_RETRY_DELAY_SECONDS = 1
 MONITOR_TP_SL_INTERVAL = 60
 
-# ==================== تنظيف الأوامر اليتيمة ====================
+# ==================== تنظيف الأوامر ====================
 ENABLE_ORPHAN_CLEANUP = True
 ORPHAN_CLEANUP_INTERVAL = 300
 
@@ -119,15 +131,14 @@ MIN_GROQ_CONFIDENCE = 55
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 5
 
-# ==================== 🔥 RSI - Scalp Mode ====================
-# يسمح بـ RSI عالي لكن مع TP ضيق جداً
-RSI_BUY_HARD_REJECT = 90                  # رفض فوق هذا
-RSI_SELL_HARD_REJECT = 10                 # رفض تحت هذا
-RSI_BUY_WARNING = 78                      # تحذير فوق هذا (يتطلب TP ضيق)
-RSI_SELL_WARNING = 22                     # تحذير تحت هذا
+# ==================== RSI Scalp Mode ====================
+RSI_BUY_HARD_REJECT = 90
+RSI_SELL_HARD_REJECT = 10
+RSI_BUY_WARNING = 78
+RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 60                   # من 62 → 60 (مع RSI معقول)
+MIN_SCORE_REQUIRED = 60
 MIN_ORDER_BOOK_POINTS = 0
 MIN_RSI_POINTS = 0
 
@@ -144,32 +155,37 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== فلتر دفتر الأوامر ====================
+# ==================== Memory Blacklist ====================
+MEMORY_MIN_TRADES_FOR_SCORE = 2
+MEMORY_MIN_WIN_RATE = 25
+MEMORY_MAX_CONSECUTIVE_LOSSES = 2
+MEMORY_MAX_LOSSES_TOTAL = 2
+MEMORY_BLOCK_LOSS_THRESHOLD = -0.5
+MEMORY_AVG_PNL_THRESHOLD = -0.3
+
+# ==================== فلاتر ====================
 ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.20
 MIN_DEPTH_MULTIPLIER = 5
 
-# ==================== فلتر Funding Rate + Open Interest ====================
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط ====================
 ENABLE_CORRELATION_FILTER = True
-MAX_CORRELATION = 0.80                    # من 0.75 → 0.80
+MAX_CORRELATION = 0.80
 
-# ==================== منع الصفقات المتعاكسة ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = True
 
-# ==================== قاطع الخسارة اليومية ====================
+# ==================== قاطع الخسارة ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
 DAILY_MAX_LOSS_PERCENT = 10.0
 
-# ==================== 🔥 Trailing SL - سريع للخطف ====================
+# ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 0.6                 # 🔥 من 1.8 → 0.6 (بعد TP1 مباشرة)
-TRAILING_SL_DISTANCE = 0.4                # 🔥 من 0.6 → 0.4 (ضيق)
-BREAKEVEN_TRIGGER = 0.4                   # 🔥 من 1.5 → 0.4 (سريع جداً)
-BREAKEVEN_OFFSET_PERCENT = 0.05           # من 0.1 → 0.05
+TRAILING_SL_TRIGGER = 0.6
+TRAILING_SL_DISTANCE = 0.4
+BREAKEVEN_TRIGGER = 0.4
+BREAKEVEN_OFFSET_PERCENT = 0.05
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 4
@@ -177,12 +193,9 @@ PAUSE_DURATION_MINUTES = 45
 
 # ==================== ذاكرة الصفقات ====================
 ENABLE_TRADE_MEMORY = True
-MEMORY_MIN_TRADES_FOR_SCORE = 3
-MEMORY_MIN_WIN_RATE = 30
-MEMORY_MAX_CONSECUTIVE_LOSSES = 3
 COMMISSION_RATE = 0.0004
 
-# ==================== كشف حالة السوق ====================
+# ==================== كشف السوق ====================
 ENABLE_MARKET_REGIME = True
 MARKET_REGIME_CACHE_SECONDS = 300
 BLOCK_IN_STRONG_BEARISH = False
@@ -197,20 +210,17 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== 🔥 Cooldown ذكي ====================
-COOLDOWN_MINUTES = 15                     # 🔥 من 5 → 15 (أطول)
-COOLDOWN_MULTIPLIER_AFTER_LOSS = 2        # 🔥 مضاعفة بعد خسارة
-COOLDOWN_MINUTES_AFTER_LOSS = 30          # 🔥 تبريد بعد خسارة مباشرة
+# ==================== Cooldown ====================
+COOLDOWN_MINUTES = 15
+COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
+COOLDOWN_MINUTES_AFTER_LOSS = 30
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== Groq AI ====================
-ENABLE_GROQ_ANALYSIS = True
-GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
+# ==================== Groq Settings ====================
 GROQ_SEND_FULL_DATA = True
 GROQ_MIN_SCORE_BEFORE_CALL = 45
 GROQ_REJECT_IS_VETO = True
