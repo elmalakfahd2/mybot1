@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v5.4 (Scalp Mode)
-🔧 التعديلات v5.4:
-   - 🔥 Prompt محسّن لقبول الإشارات مع TP ضيق
-   - 🔥 RSI متشبع مسموح مع تحذير
-   - 🔥 "تأكيد" أكثر تكراراً
+groq_integration.py - الإصدار v6.1
+🔧 OpenRouter كأساسي + Fallback إلى Gemini/Groq
 """
 
 import logging
@@ -12,197 +9,189 @@ import json
 import traceback
 import requests
 import re
-import os
+import time
 
 from config import (
+    OPENROUTER_API_KEY, ENABLE_OPENROUTER_ANALYSIS,
+    OPENROUTER_MODEL, OPENROUTER_FALLBACK_MODELS, OPENROUTER_API_BASE_URL,
     GROQ_API_KEY, ENABLE_GROQ_ANALYSIS, GROQ_MODEL,
     GROQ_API_BASE_URL, GROQ_SEND_FULL_DATA,
     GEMINI_API_KEY, ENABLE_GEMINI_ANALYSIS, GEMINI_MODEL,
-    GEMINI_API_BASE_URL, AI_PROVIDER, AI_FALLBACK_ENABLED,
-    RSI_BUY_HARD_REJECT, RSI_SELL_HARD_REJECT,
-    RSI_BUY_WARNING, RSI_SELL_WARNING
+    GEMINI_FALLBACK_MODELS, GEMINI_API_BASE_URL,
+    AI_PROVIDER, AI_FALLBACK_ENABLED
 )
 
 logger = logging.getLogger("groq_integration")
 logger.setLevel(logging.INFO)
 
+openrouter_available = False
+openrouter_working_model = None
 groq_available = False
 gemini_available = False
-client = None
-_client_type = None
+gemini_working_model = None
+
+_groq_rate_limited_until = 0
+_groq_daily_limit_reached = False
 
 
-# ==================== تهيئة Groq ====================
+# ==================== OpenRouter ====================
 
-def _try_init_groq_library():
-    global groq_available, client, _client_type
+def _try_init_openrouter():
+    global openrouter_available, openrouter_working_model
+
+    if not OPENROUTER_API_KEY:
+        logger.info("ℹ️ OPENROUTER_API_KEY غير موجود")
+        return False
+
+    if not ENABLE_OPENROUTER_ANALYSIS:
+        logger.info("ℹ️ OpenRouter معطل")
+        return False
 
     try:
-        import groq
-        logger.info("تم استيراد groq")
+        url = f"{OPENROUTER_API_BASE_URL}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://mybot1.railway.app",
+            "X-Title": "Trading Bot"
+        }
 
-        try:
-            client = groq.Groq(api_key=GROQ_API_KEY)
-            _client_type = "Groq"
-            groq_available = True
-            logger.info("✅ تهيئة Groq (Groq)")
-            return True
-        except Exception as e:
-            logger.warning(f"محاولة 1 فشلت: {e}")
-
-        try:
-            client = groq.Client(api_key=GROQ_API_KEY)
-            _client_type = "Client"
-            groq_available = True
-            logger.info("✅ تهيئة Groq (Client)")
-            return True
-        except Exception as e:
-            logger.warning(f"محاولة 2 فشلت: {e}")
-
-        return False
-
-    except ImportError:
-        return False
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
-        return False
-
-
-def _init_groq_http_fallback():
-    global groq_available, client, _client_type
-
-    if not GROQ_API_KEY:
-        return False
-
-    class GroqHTTPClient:
-        def __init__(self, api_key):
-            self.api_key = api_key
-            self.base_url = GROQ_API_BASE_URL
-            self.headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-
-        def chat_completions_create(self, model, messages, temperature=0.3,
-                                    max_tokens=1000, top_p=0.9):
-            url = f"{self.base_url}/chat/completions"
-            payload = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "top_p": top_p
-            }
-
-            response = requests.post(url, headers=self.headers, json=payload, timeout=45)
-            response.raise_for_status()
-            return response.json()
-
-    try:
-        test_client = GroqHTTPClient(GROQ_API_KEY)
-        test_payload = {
-            "model": GROQ_MODEL,
+        payload = {
+            "model": OPENROUTER_MODEL,
             "messages": [{"role": "user", "content": "test"}],
             "max_tokens": 5
         }
 
-        test_response = requests.post(
-            f"{GROQ_API_BASE_URL}/chat/completions",
-            headers=test_client.headers,
-            json=test_payload,
-            timeout=15
-        )
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
 
-        if test_response.status_code == 200:
-            client = test_client
-            _client_type = "http_client"
-            groq_available = True
-            logger.info("✅ تهيئة Groq HTTP")
+        if response.status_code == 200:
+            openrouter_available = True
+            openrouter_working_model = OPENROUTER_MODEL
+            logger.info(f"✅ تهيئة OpenRouter: {OPENROUTER_MODEL}")
             return True
         else:
-            logger.error(f"فشل اختبار Groq: {test_response.status_code}")
+            logger.warning(f"⚠️ فشل OpenRouter: {response.status_code} - {response.text[:200]}")
+
+            for model in OPENROUTER_FALLBACK_MODELS:
+                if model == OPENROUTER_MODEL:
+                    continue
+                try:
+                    payload["model"] = model
+                    response = requests.post(url, headers=headers, json=payload, timeout=20)
+                    if response.status_code == 200:
+                        openrouter_available = True
+                        openrouter_working_model = model
+                        logger.info(f"✅ تهيئة OpenRouter: {model}")
+                        return True
+                except:
+                    continue
             return False
 
     except Exception as e:
-        logger.error(f"فشل Groq HTTP: {e}")
+        logger.error(f"❌ فشل OpenRouter: {e}")
         return False
 
 
-# ==================== تهيئة Gemini ====================
+# ==================== Groq ====================
 
-def _try_init_gemini():
-    global gemini_available
+def _try_init_groq():
+    global groq_available
 
-    if not GEMINI_API_KEY:
-        logger.info("ℹ️ GEMINI_API_KEY غير موجود")
-        return False
-
-    if not ENABLE_GEMINI_ANALYSIS:
-        logger.info("ℹ️ Gemini معطل")
+    if not GROQ_API_KEY or not ENABLE_GROQ_ANALYSIS:
         return False
 
     try:
-        url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}?key={GEMINI_API_KEY}"
-        response = requests.get(url, timeout=15)
-
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": "test"}],
+            "max_tokens": 5
+        }
+        response = requests.post(
+            f"{GROQ_API_BASE_URL}/chat/completions",
+            headers=headers, json=payload, timeout=15
+        )
         if response.status_code == 200:
-            gemini_available = True
-            logger.info("✅ تهيئة Gemini")
+            groq_available = True
+            logger.info("✅ تهيئة Groq")
             return True
         else:
-            logger.warning(f"⚠️ فشل اختبار Gemini: {response.status_code}")
+            logger.warning(f"⚠️ فشل Groq: {response.status_code}")
             return False
-
     except Exception as e:
-        logger.warning(f"⚠️ فشل Gemini: {e}")
+        logger.warning(f"⚠️ فشل Groq: {e}")
         return False
+
+
+# ==================== Gemini ====================
+
+def _try_init_gemini():
+    global gemini_available, gemini_working_model
+
+    if not GEMINI_API_KEY or not ENABLE_GEMINI_ANALYSIS:
+        return False
+
+    models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
+
+    for model in models_to_try:
+        try:
+            url = f"{GEMINI_API_BASE_URL}/models/{model}?key={GEMINI_API_KEY}"
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                gemini_available = True
+                gemini_working_model = model
+                logger.info(f"✅ تهيئة Gemini: {model}")
+                return True
+        except:
+            continue
+
+    return False
 
 
 # ==================== التهيئة ====================
 
-if ENABLE_GROQ_ANALYSIS and GROQ_API_KEY:
-    logger.info("🔄 تهيئة Groq...")
-    if not _try_init_groq_library():
-        if not _init_groq_http_fallback():
-            logger.error("❌ فشل كل محاولات Groq")
+logger.info("🔄 تهيئة OpenRouter...")
+if _try_init_openrouter():
+    logger.info("✅ OpenRouter جاهز (الأساسي)")
 else:
-    if not ENABLE_GROQ_ANALYSIS:
-        logger.info("ℹ️ Groq معطل")
-    if not GROQ_API_KEY:
-        logger.warning("⚠️ GROQ_API_KEY مفقود")
+    logger.warning("⚠️ OpenRouter غير متاح")
+
+logger.info("🔄 تهيئة Groq...")
+if _try_init_groq():
+    logger.info("✅ Groq جاهز (احتياطي)")
+else:
+    logger.warning("⚠️ Groq غير متاح")
 
 logger.info("🔄 تهيئة Gemini...")
 if _try_init_gemini():
-    logger.info("✅ Gemini جاهز")
+    logger.info(f"✅ Gemini جاهز (احتياطي): {gemini_working_model}")
 else:
-    logger.warning("⚠️ Gemini غير متاح - سيتم استخدام Groq فقط")
+    logger.warning("⚠️ Gemini غير متاح")
 
 
-# ==================== استخراج JSON ====================
+# ==================== JSON Parsing ====================
 
 def extract_json_from_response(response_content):
     try:
         json_pattern = r'\{[\s\S]*\}'
         matches = re.findall(json_pattern, response_content)
-
         if matches:
             return max(matches, key=len)
 
         code_block_pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
         code_matches = re.findall(code_block_pattern, response_content)
-
         if code_matches:
             return code_matches[0]
 
         return None
-
-    except Exception as e:
-        logger.error(f"خطأ: {e}")
+    except:
         return None
 
 
-def parse_ai_response(response_content, provider="groq"):
-    """تحليل استجابة AI"""
+def parse_ai_response(response_content, provider="unknown"):
     try:
         if not response_content:
             return None
@@ -210,7 +199,19 @@ def parse_ai_response(response_content, provider="groq"):
         json_str = extract_json_from_response(response_content)
 
         if json_str:
-            data = json.loads(json_str)
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                json_str = re.sub(r':\s*thirty\s*', ': 30', json_str)
+                json_str = re.sub(r':\s*forty\s*', ': 40', json_str)
+                json_str = re.sub(r':\s*fifty\s*', ': 50', json_str)
+                json_str = re.sub(r':\s*sixty\s*', ': 60', json_str)
+                json_str = re.sub(r':\s*seventy\s*', ': 70', json_str)
+                json_str = re.sub(r':\s*eighty\s*', ': 80', json_str)
+                try:
+                    data = json.loads(json_str)
+                except:
+                    return None
 
             required = ['recommendation', 'confidence', 'analysis']
             if all(k in data for k in required):
@@ -218,7 +219,7 @@ def parse_ai_response(response_content, provider="groq"):
                     'groq_recommendation': data['recommendation'],
                     'groq_confidence': data['confidence'],
                     'groq_analysis': data['analysis'],
-                    'groq_reasoning': data.get('reasoning', 'لا توجد أسباب'),
+                    'groq_reasoning': data.get('reasoning', ''),
                     'groq_risk_level': data.get('risk_level', 'متوسط'),
                     'ai_provider': provider
                 }
@@ -236,16 +237,14 @@ def parse_ai_response(response_content, provider="groq"):
 
         recommendation = "تحذير"
         confidence = 50
-
-        if "تأكيد" in response_content or "موافق" in response_content:
+        if "تأكيد" in response_content:
             recommendation = "تأكيد"
             confidence = 75
-        elif "رفض" in response_content or "تجنب" in response_content:
+        elif "رفض" in response_content:
             recommendation = "رفض"
             confidence = 65
 
-        confidence_pattern = r'ثقة[:\s]*(\d+)'
-        match = re.search(confidence_pattern, response_content)
+        match = re.search(r'ثقة[:\s]*(\d+)', response_content)
         if match:
             confidence = int(match.group(1))
 
@@ -257,271 +256,242 @@ def parse_ai_response(response_content, provider="groq"):
             'groq_risk_level': 'متوسط',
             'ai_provider': provider
         }
-
-    except json.JSONDecodeError as e:
-        logger.error(f"خطأ JSON: {e}")
-        return None
     except Exception as e:
-        logger.error(f"خطأ: {e}")
+        logger.error(f"خطأ في parse: {e}")
         return None
 
 
-# ==================== بناء الـ Prompt (Scalp Mode) ====================
+# ==================== Prompt ====================
 
-def build_rich_prompt(signal_data, analysis_data=None):
+def build_prompt(signal_data, analysis_data=None):
     try:
         symbol = signal_data.get('symbol', 'UNKNOWN')
         direction = signal_data.get('direction', 'UNKNOWN')
         confidence = signal_data.get('confidence', 0)
-        strength = signal_data.get('strength', 0)
         entry_price = signal_data.get('entry_price', 0)
-
         analysis = analysis_data or signal_data.get('analysis', {})
 
         technical = analysis.get('technical_indicators', {})
         volume = analysis.get('volume_analysis', {})
-        timeframes = analysis.get('timeframes', {})
         momentum = analysis.get('momentum', {})
         price_action = analysis.get('price_action', {})
 
         rsi = technical.get('rsi', 0)
         macd_trend = technical.get('macd_trend', 'محايد')
         vol_ratio = volume.get('volume_5m_ratio', 0)
-        vol_conf = volume.get('volume_confidence', 'غير معروف')
-
-        tf_summary = []
-        for tf in ['1m', '3m', '5m', '15m']:
-            if tf in timeframes:
-                t = timeframes[tf]
-                tf_summary.append(f"{tf}: {t.get('trend', 'محايد')} ({t.get('trend_strength', 0):.1f}/10)")
-        tf_text = "\n".join(tf_summary) if tf_summary else "غير متاح"
-
         mom_dir = momentum.get('direction', 'محايد')
         mom_strength = momentum.get('strength', 0)
-
         candle_type = price_action.get('candle_type', 'غير معروف')
-        body_strength = price_action.get('body_strength', 'غير معروف')
         body_ratio = price_action.get('body_ratio', 0)
-
         alignment = signal_data.get('timeframe_alignment', 0)
-        volatility = technical.get('volatility', 'غير معروف')
 
-        prompt = f"""أنت محلل فني خبير في **Scalp Trading** (خطف أرباح صغيرة سريعة). مهمتك **تأكيد الإشارات الجيدة بسرعة**.
+        prompt = f"""أنت محلل Scalp محترف. حلل الإشارة وأجب بـ JSON.
 
-📊 **بيانات الإشارة:**
-- العملة: {symbol}
-- الاتجاه: {direction}
-- السعر الحالي: {entry_price}
-- ثقة النظام: {confidence:.1f}%
-- قوة الإشارة: {strength}/10
+📊 {symbol} | {direction} | السعر: {entry_price}
+RSI: {rsi:.1f} | MACD: {macd_trend} | الحجم: {vol_ratio:.2f}x
+ترابط الفريمات: {alignment:.1f}/10
+زخم: {mom_dir} ({mom_strength:.1f})
+شمعة: {candle_type} (body={body_ratio:.2f})
+ثقة النظام: {confidence:.1f}%
 
-📈 **المؤشرات الفنية:**
-- RSI (14): {rsi:.2f}
-- MACD: {macd_trend}
-- Volatility: {volatility}
+**قواعد الإجابة (Scalp Mode):**
+- "تأكيد" إذا 50%+ من المعايير إيجابية
+- "تحذير" عند تعارض واحد
+- "رفض" فقط إذا: RSI>90 للشراء أو RSI<10 للبيع أو ترابط+MACD معاكسان
 
-📊 **تحليل الحجم:**
-- نسبة الحجم (5m): {vol_ratio:.2f}x
-- ثقة الحجم: {vol_conf}
-
-⏰ **تحليل الأطر الزمنية:**
-{tf_text}
-
-⏰ **ترابط الفريمات:** {alignment:.1f}/10
-
-📉 **الزخم:**
-- الاتجاه: {mom_dir}
-- القوة: {mom_strength:.1f}/10
-
-🕯️ **حركة السعر:**
-- نوع الشمعة: {candle_type}
-- قوة الجسم: {body_strength} (body_ratio={body_ratio:.2f})
-
----
-
-**⚠️ قواعد الإجابة (Scalp Mode - مهم جداً):**
-
-**هذه استراتيجية Scalp - نهدف لأرباح صغيرة سريعة (0.8% للـ TP1) قبل الانعكاس المحتمل.**
-
-1. **"تأكيد"** إذا كان **50% أو أكثر** من المعايير إيجابية:
-   - ترابط الفريمات >= 5/10
-   - MACD متوافق مع الاتجاه
-   - الحجم >= 0.8x
-   - **حتى لو RSI متشبع (75-88)، هذا مقبول** لأن TP ضيق
-
-2. **"تحذير"** فقط عند تعارض حقيقي واحد:
-   - مثال: كل المؤشرات معاكسة
-   - مثال: RSI > 88 (خطر انعكاس فوري)
-
-3. **"رفض" فقط عند خطر واضح جداً:**
-   - RSI >= 90 (تشبع عنيف جداً)
-   - MACD معاكس + ترابط معاكس
-   - السوق هابط قوي وأنت تشتري
-
-4. **⚠️ مهم جداً في Scalp Mode:**
-   - **التردد الزائد = فقدان الفرص**
-   - **إذا 3 من 4 معايير إيجابية → "تأكيد"**
-   - **RSI 70-85 مقبول** مع TP ضيق (0.8%)
-   - **RSI 85-90 مقبول** مع TP ضيق جداً (0.5%)
-   - **RSI >= 90 → "رفض"** إجباري
-
-**المطلوب:**
-1. القرار: تأكيد / تحذير / رفض
-2. الثقة: 0-100
-3. تحليل موجز (2-3 جمل)
-4. الأسباب (3-4 نقاط)
-5. المخاطرة: عالي / متوسط / منخفض
-
-**أجب بصيغة JSON فقط:**
+**أجب JSON فقط (بدون نص إضافي):**
 {{
   "recommendation": "تأكيد" أو "تحذير" أو "رفض",
   "confidence": رقم من 0 إلى 100,
   "analysis": "تحليل موجز",
-  "reasoning": "نقاط الأسباب",
+  "reasoning": "الأسباب",
   "risk_level": "عالي" أو "متوسط" أو "منخفض"
-}}
-
-JSON فقط، بدون نص إضافي."""
+}}"""
 
         return prompt
+    except Exception as e:
+        logger.error(f"خطأ في build_prompt: {e}")
+        return f"حلل {signal_data.get('symbol')} {signal_data.get('direction')}"
+
+
+# ==================== OpenRouter Call ====================
+
+def _call_openrouter(prompt):
+    global openrouter_working_model
+
+    try:
+        url = f"{OPENROUTER_API_BASE_URL}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://mybot1.railway.app",
+            "X-Title": "Trading Bot"
+        }
+
+        models_to_try = [openrouter_working_model] if openrouter_working_model else []
+        models_to_try += [m for m in OPENROUTER_FALLBACK_MODELS if m not in models_to_try]
+
+        for model in models_to_try:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 800
+                }
+
+                response = requests.post(url, headers=headers, json=payload, timeout=45)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'choices' in data and data['choices']:
+                        content = data['choices'][0]['message']['content']
+                        openrouter_working_model = model
+                        return content
+                elif response.status_code == 429:
+                    logger.warning(f"⏳ OpenRouter rate limit على {model}")
+                    continue
+                else:
+                    logger.warning(f"⚠️ OpenRouter {model}: {response.status_code}")
+                    continue
+
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ OpenRouter {model}: {e}")
+                continue
+
+        return None
 
     except Exception as e:
-        logger.error(f"خطأ في بناء prompt: {e}")
-        return f"حلل إشارة {signal_data.get('symbol')} {signal_data.get('direction')}"
+        logger.error(f"❌ خطأ OpenRouter: {e}")
+        return None
 
 
 # ==================== Groq Call ====================
 
-def _call_groq(prompt, messages):
+def _call_groq(prompt):
+    global _groq_rate_limited_until, _groq_daily_limit_reached
+
+    current_time = time.time()
+    if _groq_daily_limit_reached and current_time < _groq_rate_limited_until:
+        return None
+
     try:
-        response_content = None
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": GROQ_MODEL,
+            "messages": [
+                {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 800
+        }
 
-        if _client_type in ("Groq", "Client"):
-            response = client.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1000,
-                top_p=0.9
-            )
-            response_content = response.choices[0].message.content
+        response = requests.post(
+            f"{GROQ_API_BASE_URL}/chat/completions",
+            headers=headers, json=payload, timeout=45
+        )
 
-        elif _client_type in ("http_client", "simple_http"):
-            response = client.chat_completions_create(
-                model=GROQ_MODEL,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1000,
-                top_p=0.9
-            )
-            response_content = response['choices'][0]['message']['content']
-
-        return response_content
+        if response.status_code == 200:
+            data = response.json()
+            return data['choices'][0]['message']['content']
+        elif response.status_code == 429:
+            error_text = response.text
+            match = re.search(r'try again in (\d+)m([\d.]+)s', error_text)
+            if match:
+                wait = int(match.group(1)) * 60 + float(match.group(2))
+                _groq_rate_limited_until = time.time() + wait
+                if "tokens per day" in error_text or "TPD" in error_text:
+                    _groq_daily_limit_reached = True
+                    logger.error(f"🚫 Groq: الحصة اليومية انتهت!")
+            else:
+                _groq_rate_limited_until = time.time() + 60
+            return None
+        else:
+            return None
 
     except Exception as e:
-        logger.warning(f"فشل Groq: {e}")
+        logger.warning(f"خطأ Groq: {e}")
         return None
 
 
 # ==================== Gemini Call ====================
 
 def _call_gemini(prompt):
+    global gemini_working_model
+
+    if not gemini_working_model:
+        return None
+
     try:
-        url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        url = f"{GEMINI_API_BASE_URL}/models/{gemini_working_model}:generateContent?key={GEMINI_API_KEY}"
 
         payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt}
-                    ]
-                }
-            ],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.3,
-                "maxOutputTokens": 1000,
-                "topP": 0.9,
-                "responseMimeType": "application/json"
+                "maxOutputTokens": 800,
+                "topP": 0.9
             }
         }
 
         response = requests.post(url, json=payload, timeout=45)
 
         if response.status_code != 200:
-            logger.warning(f"فشل Gemini: {response.status_code} - {response.text[:200]}")
             return None
 
         data = response.json()
-
         if 'candidates' not in data or not data['candidates']:
-            logger.warning("لا يوجد candidates في Gemini")
             return None
 
-        candidate = data['candidates'][0]
-        if 'content' not in candidate or 'parts' not in candidate['content']:
-            logger.warning("لا يوجد content في Gemini")
-            return None
-
-        text = candidate['content']['parts'][0].get('text', '')
-        return text
-
+        return data['candidates'][0]['content']['parts'][0].get('text', '')
     except Exception as e:
         logger.warning(f"خطأ Gemini: {e}")
         return None
 
 
-# ==================== الدالة الرئيسية ====================
+# ==================== Main Function ====================
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
-    """تحليل إشارة بـ AI"""
+    """
+    الأولوية: OpenRouter → Gemini → Groq
+    """
     try:
-        if GROQ_SEND_FULL_DATA:
-            prompt = build_rich_prompt(signal_data, analysis_data)
-        else:
-            symbol = signal_data.get('symbol', 'UNKNOWN')
-            direction = signal_data.get('direction', 'UNKNOWN')
-            confidence = signal_data.get('confidence', 0)
-            prompt = f"حلل {symbol} {direction} ثقة {confidence}%"
-
-        use_gemini_first = (AI_PROVIDER == "gemini")
-        use_auto = (AI_PROVIDER == "auto")
-
+        prompt = build_prompt(signal_data, analysis_data)
         result = None
 
-        if use_gemini_first or (use_auto and gemini_available and not groq_available):
-            if gemini_available:
-                logger.info("🧠 استخدام Gemini...")
-                response_content = _call_gemini(prompt)
-                if response_content:
-                    result = parse_ai_response(response_content, "gemini")
-                    if result:
-                        return result
-
-        if groq_available:
-            logger.info("🧠 استخدام Groq...")
-            messages = [
-                {
-                    "role": "system",
-                    "content": "أنت محلل فني محترف في Scalp Trading. مهمتك تأكيد الإشارات الجيدة بسرعة. RSI 70-88 مقبول إذا TP ضيق. أجب بـ JSON فقط."
-                },
-                {"role": "user", "content": prompt}
-            ]
-
-            response_content = _call_groq(prompt, messages)
-            if response_content:
-                logger.info(f"🧠 Groq raw: {response_content[:200]}...")
-                result = parse_ai_response(response_content, "groq")
+        # 1. OpenRouter
+        if openrouter_available:
+            logger.info(f"🧠 OpenRouter ({openrouter_working_model})...")
+            content = _call_openrouter(prompt)
+            if content:
+                result = parse_ai_response(content, "openrouter")
                 if result:
                     return result
 
-        if AI_FALLBACK_ENABLED:
-            if not use_gemini_first and gemini_available:
-                logger.info("🔄 Fallback → Gemini...")
-                response_content = _call_gemini(prompt)
-                if response_content:
-                    result = parse_ai_response(response_content, "gemini")
-                    if result:
-                        return result
+        # 2. Gemini
+        if AI_FALLBACK_ENABLED and gemini_available:
+            logger.info("🔄 Fallback → Gemini...")
+            content = _call_gemini(prompt)
+            if content:
+                result = parse_ai_response(content, "gemini")
+                if result:
+                    return result
+
+        # 3. Groq
+        if AI_FALLBACK_ENABLED and groq_available and not _groq_daily_limit_reached:
+            logger.info("🔄 Fallback → Groq...")
+            content = _call_groq(prompt)
+            if content:
+                result = parse_ai_response(content, "groq")
+                if result:
+                    return result
 
         logger.warning("⚠️ فشل كل مزودي AI")
         return None
@@ -533,19 +503,26 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
 
 
 def is_groq_available():
-    return (groq_available or gemini_available)
+    groq_ok = groq_available and not _groq_daily_limit_reached
+    return (openrouter_available or groq_ok or gemini_available)
 
 
 def get_ai_status():
     return {
+        'openrouter_available': openrouter_available,
+        'openrouter_working_model': openrouter_working_model,
         'groq_available': groq_available,
+        'groq_daily_limit_reached': _groq_daily_limit_reached,
         'gemini_available': gemini_available,
-        'groq_client_type': _client_type,
-        'groq_api_key_exists': bool(GROQ_API_KEY),
-        'gemini_api_key_exists': bool(GEMINI_API_KEY),
+        'gemini_working_model': gemini_working_model,
         'ai_provider': AI_PROVIDER,
         'fallback_enabled': AI_FALLBACK_ENABLED,
-        'active_provider': 'gemini' if (AI_PROVIDER == "gemini" or (AI_PROVIDER == "auto" and not groq_available and gemini_available)) else 'groq' if groq_available else 'none'
+        'active_provider': (
+            'openrouter' if openrouter_available
+            else 'gemini' if gemini_available
+            else 'groq' if groq_available and not _groq_daily_limit_reached
+            else 'none'
+        )
     }
 
 
@@ -554,17 +531,5 @@ enhance_signal_with_groq = analyze_signal_with_groq
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("اختبار AI:")
-    print(get_ai_status())
-
-    if is_groq_available():
-        test_signal = {
-            'symbol': 'BTCUSDT',
-            'direction': 'BUY',
-            'confidence': 75,
-            'strength': 8,
-            'entry_price': 45000,
-            'timeframe_alignment': 7.5
-        }
-        result = analyze_signal_with_groq(test_signal)
-        print(f"النتيجة: {result}")
+    print("AI Status:")
+    print(json.dumps(get_ai_status(), indent=2, ensure_ascii=False))
