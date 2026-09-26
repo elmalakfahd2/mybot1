@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.6
+config.py - الإعدادات النهائية v5.8
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.6:
-    - 🔥 إصلاح R:R (TP أعلى)
-    - 🔥 TP1 ratio = 50%
-    - 🔥 SL محسّن
-    - 🔥 MIN_SCORE_REQUIRED = 70
+🔧 التعديلات v5.8:
+    - 🔥 إصلاح فلتر الحجم (0.5 بدل 1.0)
+    - 🔥 MIN_SCORE_REQUIRED = 62
+    - 🔥 تخفيف دفتر الأوامر
+    - 🔥 تنظيف الأوامر اليتيمة
+    - 🔥 حماية الصفقات اليدوية
 
 📅 آخر تعديل: 2026-09-26
 """
@@ -61,7 +62,7 @@ FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
 FIREBASE_BACKUP_INTERVAL = 30
 
-# ==================== GitHub Backup (مُعطّل) ====================
+# ==================== GitHub Backup (معطل) ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
 GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
@@ -82,18 +83,18 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== 🔥 TP المتعدد (إصلاح R:R) ====================
+# ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [2.0, 3.5, 5.0]     # 🔥 من [1.5, 2.5, 4.0] → [2.0, 3.5, 5.0]
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]     # 🔥 من [0.4, 0.3, 0.3] → [0.5, 0.3, 0.2]
-SL_PERCENT = 1.5                          # ثابت
-TP_PERCENT = 2.0                          # 🔥 من 1.5 → 2.0
+TP_MULTIPLE_LEVELS = [1.5, 2.5, 4.0]
+TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
+SL_PERCENT = 1.5
+TP_PERCENT = 1.5
 
-# ==================== SL ديناميكي (محسّن) ====================
+# ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
 SL_ATR_MULTIPLIER = 2.5
-SL_MIN_PERCENT = 1.5                      # 🔥 من 1.2 → 1.5 (لا SL ضيق)
-SL_MAX_PERCENT = 2.0                      # ثابت
+SL_MIN_PERCENT = 1.2
+SL_MAX_PERCENT = 2.0
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -102,41 +103,44 @@ CLOSE_ON_TP_SL_FAIL = True
 TP_SL_RETRY_DELAY_SECONDS = 1
 MONITOR_TP_SL_INTERVAL = 60
 
+# ==================== 🔥 تنظيف الأوامر اليتيمة ====================
+ENABLE_ORPHAN_CLEANUP = True
+ORPHAN_CLEANUP_INTERVAL = 300  # كل 5 دقائق
+
 # ==================== فلتر السيولة ====================
 ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول (محسّنة) ====================
-MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 1.0
-MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 60                  # 🔥 من 58 → 60
+# ==================== شروط الدخول (مخففة) ====================
+MIN_TIMEFRAME_ALIGNMENT = 3.0
+MIN_VOLUME_FACTOR = 0.5
+MIN_GROQ_CONFIDENCE = 55
+MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 5
 
-# ==================== نظام النقاط (محسّن) ====================
-MIN_SCORE_REQUIRED = 70                   # 🔥 من 67 → 70
-MIN_ORDER_BOOK_POINTS = 2
+# ==================== نظام النقاط (متوازن) ====================
+MIN_SCORE_REQUIRED = 62
+MIN_ORDER_BOOK_POINTS = 0
 MIN_RSI_POINTS = 0
 
-# 🔥 الأوزان (متوازنة حسب التحليل)
 SCORE_WEIGHTS = {
-    'timeframe_alignment': 18,            # 🔥 من 20 → 18
-    'volume': 17,                         # ثابت
-    'groq': 15,                           # 🔥 من 20 → 15
-    'rsi_ideal': 10,                      # 🔥 من 12 → 10
-    'momentum': 10,                       # 🔥 من 8 → 10
-    'price_action': 5,                    # 🔥 من 3 → 5
-    'market_regime': 5,                   # ثابت
-    'order_book': 12,                     # 🔥 من 10 → 12
-    'funding_oi': 8,                      # 🔥 من 5 → 8
+    'timeframe_alignment': 20,
+    'volume': 15,
+    'groq': 12,
+    'rsi_ideal': 10,
+    'momentum': 10,
+    'price_action': 8,
+    'market_regime': 5,
+    'order_book': 10,
+    'funding_oi': 10,
     'max_score': 100
 }
 
 # ==================== فلتر دفتر الأوامر ====================
 ENABLE_ORDER_BOOK_FILTER = True
-MAX_SPREAD_PERCENT = 0.15
-MIN_DEPTH_MULTIPLIER = 10
+MAX_SPREAD_PERCENT = 0.20
+MIN_DEPTH_MULTIPLIER = 5
 
 # ==================== فلتر Funding Rate + Open Interest ====================
 ENABLE_FUNDING_OI_FILTER = True
@@ -144,25 +148,25 @@ FUNDING_RATE_EXTREME_PERCENT = 0.05
 
 # ==================== فلتر الارتباط ====================
 ENABLE_CORRELATION_FILTER = True
-MAX_CORRELATION = 0.65
+MAX_CORRELATION = 0.75
 
 # ==================== منع الصفقات المتعاكسة ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = True
 
 # ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 8.0
+DAILY_MAX_LOSS_PERCENT = 10.0
 
-# ==================== 🔥 Trailing SL (إصلاح منطقي) ====================
+# ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 2.0                 # 🔥 من 1.0 → 2.0 (بعد TP1)
-TRAILING_SL_DISTANCE = 0.8                # 🔥 من 0.5 → 0.8
-BREAKEVEN_TRIGGER = 1.8                   # 🔥 من 1.5 → 1.8 (عند TP1 تقريباً)
+TRAILING_SL_TRIGGER = 1.8
+TRAILING_SL_DISTANCE = 0.6
+BREAKEVEN_TRIGGER = 1.5
 BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
-MAX_CONSECUTIVE_LOSSES = 3
-PAUSE_DURATION_MINUTES = 60
+MAX_CONSECUTIVE_LOSSES = 4
+PAUSE_DURATION_MINUTES = 45
 
 # ==================== ذاكرة الصفقات ====================
 ENABLE_TRADE_MEMORY = True
@@ -174,8 +178,8 @@ COMMISSION_RATE = 0.0004
 # ==================== كشف حالة السوق ====================
 ENABLE_MARKET_REGIME = True
 MARKET_REGIME_CACHE_SECONDS = 300
-BLOCK_IN_STRONG_BEARISH = True
-BLOCK_IN_STRONG_BULLISH_SELL = True
+BLOCK_IN_STRONG_BEARISH = False
+BLOCK_IN_STRONG_BULLISH_SELL = False
 
 # ==================== أوقات التداول ====================
 ENABLE_TIME_FILTER = False
@@ -197,7 +201,7 @@ ENABLE_GROQ_ANALYSIS = True
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 55
+GROQ_MIN_SCORE_BEFORE_CALL = 45
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================

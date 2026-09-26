@@ -1,11 +1,11 @@
 # ==================================================
-# 📁 ملف: core_functions.py - الإصدار v4.1.4
-# 🔧 التعديلات v4.1.4:
-#    - 🔥 check_and_add_tp_sl_to_existing_positions يتجاهل الصفقات اليدوية
-#    - 🔥 Cache الرموز (10 دقائق)
-# 🔧 التعديلات v4.0:
-#    - Breakeven بعد TP1 + هامش 0.1%
-# 📅 التاريخ: 2026-09-19
+# 📁 ملف: core_functions.py - الإصدار v4.2.0
+# 🔧 التعديلات v4.2.0:
+#    - 🔥 تنظيف الأوامر اليتيمة (cleanup_orphan_algo_orders)
+#    - 🔥 تسجيل algo_ids لكل صفقة
+#    - 🔥 close_position_safe يحذف أوامر الصفقة فقط
+#    - 🔥 حماية الصفقات اليدوية
+# 📅 التاريخ: 2026-09-26
 # ==================================================
 
 import logging
@@ -65,7 +65,7 @@ def _algo_signed_request(method, path, params=None):
 
 
 def create_algo_order(order_params, max_retries=None):
-    """إنشاء أمر شرطي عبر Algo Order API الجديد"""
+    """إنشاء أمر شرطي عبر Algo Order API"""
     if max_retries is None:
         max_retries = TP_SL_MAX_RETRIES
 
@@ -106,7 +106,7 @@ def create_algo_order(order_params, max_retries=None):
 
 
 def cancel_algo_order(symbol, algo_id):
-    """إلغاء أمر شرطي عبر DELETE /fapi/v1/algoOrder"""
+    """إلغاء أمر شرطي"""
     try:
         status_code, data = _algo_signed_request(
             'delete', '/fapi/v1/algoOrder', {'algoId': algo_id}
@@ -153,11 +153,11 @@ except NameError:
 try:
     MAX_SPREAD_PERCENT
 except NameError:
-    MAX_SPREAD_PERCENT = 0.15
+    MAX_SPREAD_PERCENT = 0.20
 try:
     MIN_DEPTH_MULTIPLIER
 except NameError:
-    MIN_DEPTH_MULTIPLIER = 10
+    MIN_DEPTH_MULTIPLIER = 5
 try:
     ENABLE_CORRELATION_FILTER
 except NameError:
@@ -178,6 +178,10 @@ try:
     BREAKEVEN_OFFSET_PERCENT
 except NameError:
     BREAKEVEN_OFFSET_PERCENT = 0.1
+try:
+    ENABLE_ORPHAN_CLEANUP
+except NameError:
+    ENABLE_ORPHAN_CLEANUP = True
 
 
 # ==================== تهيئة Binance ====================
@@ -310,13 +314,46 @@ def get_open_orders(symbol=None):
         return []
 
 
-# ==================== get_all_futures_symbols محسّن ====================
+# ==================== 🔥 قراءة صفقات البوت ====================
+
+def _get_bot_owned_symbols_and_algo_ids():
+    """
+    🔥 v4.2: قراءة صفقات البوت + قائمة algoIds
+    Returns: (set of "SYMBOL_SIDE", set of algoIds)
+    """
+    try:
+        state_file = "open_positions.json"
+        if not os.path.exists(state_file):
+            return set(), set()
+
+        with open(state_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        bot_keys = set()
+        bot_algo_ids = set()
+
+        for p in data:
+            sym = p.get('symbol')
+            side = p.get('positionSide')
+            if sym and side:
+                bot_keys.add(f"{sym}_{side}")
+
+            # 🔥 جمع algo_ids إن وُجدت
+            algo_orders = p.get('algo_orders', {})
+            for key, algo_id in algo_orders.items():
+                if algo_id:
+                    bot_algo_ids.add(int(algo_id))
+
+        return bot_keys, bot_algo_ids
+    except Exception as e:
+        logger.error(f"خطأ في قراءة open_positions: {e}")
+        return set(), set()
+
+
+# ==================== get_all_futures_symbols ====================
 
 def get_all_futures_symbols():
-    """
-    🔥 Cache لمدة 10 دقائق
-    طلب واحد لكل التيكرز (بدل 528 طلب)
-    """
+    """Cache لمدة 10 دقائق"""
     global _symbols_cache, _symbols_cache_time
 
     try:
@@ -359,7 +396,7 @@ def get_all_futures_symbols():
         else:
             filtered_syms = syms
 
-        logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة (حد أدنى: {MIN_VOLUME_24H_USDT/1e6:.0f}M USDT)")
+        logger.info(f"📊 فلتر السيولة: {len(filtered_syms)}/{len(syms)} عملة")
 
         _symbols_cache = filtered_syms
         _symbols_cache_time = current_time
@@ -522,7 +559,7 @@ def check_spread_and_liquidity(symbol, trade_usdt):
 
         min_required_depth = trade_usdt * LEVERAGE * MIN_DEPTH_MULTIPLIER
         if ob['total_depth_usdt'] < min_required_depth:
-            return False, f"سيولة ضعيفة: {ob['total_depth_usdt']:.0f} USDT (المطلوب: {min_required_depth:.0f})"
+            return False, f"سيولة ضعيفة: {ob['total_depth_usdt']:.0f} USDT"
 
         return True, "سيولة مقبولة"
     except Exception as e:
@@ -593,7 +630,7 @@ def get_price_correlation(symbol_a, symbol_b, interval='15m', limit=50):
             return 0.0
         return round(cov / (std_a * std_b), 3)
     except Exception as e:
-        logger.error(f"خطأ حساب الارتباط {symbol_a}/{symbol_b}: {e}")
+        logger.error(f"خطأ حساب الارتباط: {e}")
         return 0.0
 
 
@@ -654,7 +691,7 @@ def check_daily_drawdown():
         loss_percent = (abs(today_pnl) / balance) * 100
 
         if loss_percent >= DAILY_MAX_LOSS_PERCENT:
-            return False, f"🛑 خسارة يومية {loss_percent:.2f}% (الحد: {DAILY_MAX_LOSS_PERCENT}%)"
+            return False, f"🛑 خسارة يومية {loss_percent:.2f}%"
 
         return True, f"خسارة اليوم: {loss_percent:.2f}%"
 
@@ -717,7 +754,7 @@ def create_order_with_retry(order_params, max_retries=None):
             logger.warning(f"⚠️ محاولة {attempt+1}/{max_retries} فشلت: {e.code} - {e.message}")
 
             if e.code in [-1111, -1102, -2019]:
-                logger.error(f"❌ خطأ دائم - إيقاف المحاولات")
+                logger.error(f"❌ خطأ دائم")
                 return None
 
             if attempt < max_retries - 1:
@@ -731,9 +768,63 @@ def create_order_with_retry(order_params, max_retries=None):
     return None
 
 
-# ==================== إغلاق الصفقات ====================
+# ==================== 🔥 إغلاق آمن ====================
 
-def close_position_safe(symbol, position_side):
+def _cleanup_symbol_orders(symbol, algo_ids=None):
+    """
+    🔥 v4.2: حذف الأوامر
+    لو algo_ids موجودة → يحذف فقط هذه الأوامر
+    لو None → يحذف كل أوامر العملة (استخدام حذر!)
+    """
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return 0
+
+        cancelled = 0
+
+        # 🔥 حالة 1: حذف algo_ids محددة فقط
+        if algo_ids:
+            for algo_id in algo_ids:
+                if cancel_algo_order(symbol, algo_id):
+                    cancelled += 1
+                    logger.info(f"🗑️ إلغاء Algo محدد: {algo_id}")
+            return cancelled
+
+        # 🔥 حالة 2: حذف كل الأوامر (fallback)
+        try:
+            open_orders = client_obj.futures_get_open_orders(symbol=symbol)
+            for order in open_orders:
+                try:
+                    client_obj.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
+                    cancelled += 1
+                except:
+                    pass
+        except:
+            pass
+
+        try:
+            algo_orders = get_open_algo_orders(symbol)
+            for order in algo_orders:
+                algo_id = order.get('algoId') or order.get('orderId')
+                if algo_id and cancel_algo_order(symbol, algo_id):
+                    cancelled += 1
+        except:
+            pass
+
+        return cancelled
+
+    except Exception as e:
+        logger.error(f"خطأ تنظيف {symbol}: {e}")
+        return 0
+
+
+def close_position_safe(symbol, position_side, algo_ids=None):
+    """
+    🔥 v4.2: إغلاق آمن
+    - إذا algo_ids محددة → يحذفها فقط
+    - ثم يغلق الصفقة
+    """
     try:
         client_obj = get_client()
         if not client_obj:
@@ -748,31 +839,27 @@ def close_position_safe(symbol, position_side):
 
         if not position:
             logger.error(f"لا صفقة: {symbol} {position_side}")
+            # محاولة تنظيف الأوامر
+            if algo_ids:
+                _cleanup_symbol_orders(symbol, algo_ids)
             return False
 
         quantity = abs(float(position["positionAmt"]))
         if quantity <= 0:
+            if algo_ids:
+                _cleanup_symbol_orders(symbol, algo_ids)
             return False
 
         close_side = "SELL" if position_side == "LONG" else "BUY"
 
-        try:
-            open_orders = get_open_orders(symbol)
-            for order in open_orders:
-                try:
-                    client_obj.futures_cancel_order(symbol=symbol, orderId=order['orderId'])
-                except:
-                    pass
-        except:
-            pass
+        # 🔥 1. حذف الأوامر (بالalgo_ids إن وُجدت)
+        if algo_ids:
+            _cleanup_symbol_orders(symbol, algo_ids)
+        else:
+            # fallback: حذف كل شيء (سلوك قديم)
+            _cleanup_symbol_orders(symbol)
 
-        try:
-            algo_orders = get_open_algo_orders(symbol)
-            for order in algo_orders:
-                cancel_algo_order(symbol, order.get('algoId', order.get('orderId')))
-        except:
-            pass
-
+        # 🔥 2. إغلاق الصفقة
         try:
             client_obj.futures_create_order(
                 symbol=symbol,
@@ -785,6 +872,7 @@ def close_position_safe(symbol, position_side):
             logger.info(f"✅ إغلاق: {symbol} {position_side}")
             remove_trailing_sl_tracking(symbol, position_side)
             return True
+
         except BinanceAPIException as e:
             if e.code == -4061:
                 try:
@@ -893,6 +981,84 @@ def close_losing_positions():
         return 0, 0.0
 
 
+# ==================== 🔥 تنظيف الأوامر اليتيمة ====================
+
+def cleanup_orphan_algo_orders():
+    """
+    🔥 v4.2: حذف الأوامر اليتيمة
+    - الأوامر لعملات مغلقة (لا صفقة مفتوحة)
+    - يتجاهل أوامر الصفقات اليدوية (عبر bot_owned)
+    """
+    try:
+        if not ENABLE_ORPHAN_CLEANUP:
+            return 0
+
+        client_obj = get_client()
+        if not client_obj:
+            return 0
+
+        # 1. جلب الصفقات المفتوحة
+        open_positions = get_open_positions()
+        open_keys = {f"{p['symbol']}_{p['positionSide']}" for p in open_positions}
+        open_symbols = {p['symbol'] for p in open_positions}
+
+        # 2. قراءة صفقات البوت + algo_ids
+        bot_keys, bot_algo_ids = _get_bot_owned_symbols_and_algo_ids()
+
+        # 3. جلب كل الأوامر المشروطة
+        all_algo_orders = get_open_algo_orders()
+        if not all_algo_orders:
+            return 0
+
+        cancelled_count = 0
+
+        # 4. حذف الأوامر اليتيمة
+        for order in all_algo_orders:
+            try:
+                order_symbol = order.get('symbol', '')
+                order_position_side = order.get('positionSide', '')
+                algo_id = order.get('algoId') or order.get('orderId')
+
+                if not algo_id:
+                    continue
+
+                # 🔥 حالة A: العملة ليس لها صفقة مفتوحة
+                if order_symbol not in open_symbols:
+                    if cancel_algo_order(order_symbol, algo_id):
+                        cancelled_count += 1
+                        logger.info(f"🗑️ يتيم (لا صفقة): {order_symbol} #{algo_id}")
+                    continue
+
+                # 🔥 حالة B: العملة لها صفقة، لكن الـ positionSide مختلف
+                pos_key = f"{order_symbol}_{order_position_side}"
+                if pos_key not in open_keys:
+                    if cancel_algo_order(order_symbol, algo_id):
+                        cancelled_count += 1
+                        logger.info(f"🗑️ يتيم (side): {pos_key} #{algo_id}")
+                    continue
+
+                # 🔥 حالة C: العملة لها صفقة، لكن الأمر مش من صفقات البوت
+                # (لمنع حذف أوامر الصفقات اليدوية)
+                if bot_algo_ids and int(algo_id) not in bot_algo_ids:
+                    if pos_key not in bot_keys:
+                        # صفقة يدوية → لا نحذف
+                        logger.info(f"🛡️ أمر صفقة يدوية (محفوظ): {pos_key} #{algo_id}")
+                        continue
+
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ في تنظيف أمر: {e}")
+                continue
+
+        if cancelled_count > 0:
+            logger.info(f"✅ تم حذف {cancelled_count} أمر يتيم")
+
+        return cancelled_count
+
+    except Exception as e:
+        logger.error(f"خطأ في cleanup_orphan_algo_orders: {e}")
+        return 0
+
+
 # ==================== Trailing SL ====================
 
 _trailing_sl_positions = {}
@@ -972,7 +1138,6 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
 
 
 def update_trailing_sl(symbol, position_side, current_price):
-    """v4.0: Breakeven بعد TP1"""
     try:
         if not TRAILING_SL_ENABLED:
             return False
@@ -999,10 +1164,9 @@ def update_trailing_sl(symbol, position_side, current_price):
             if current_price < data['lowest_price']:
                 data['lowest_price'] = current_price
 
-        # Breakeven بعد TP1
         tp1_level = TP_MULTIPLE_LEVELS[0]
 
-        if not data['breakeven_set'] and profit_percent >= tp1_level:
+        if not data['breakeven_set'] and profit_percent >= BREAKEVEN_TRIGGER:
             if position_side == "LONG":
                 breakeven_price = entry_price * (1 + BREAKEVEN_OFFSET_PERCENT / 100)
             else:
@@ -1012,9 +1176,8 @@ def update_trailing_sl(symbol, position_side, current_price):
                 data['current_sl'] = breakeven_price
                 data['breakeven_set'] = True
                 updated = True
-                logger.info(f"🔒 {symbol} - Breakeven +{BREAKEVEN_OFFSET_PERCENT}%")
+                logger.info(f"🔒 {symbol} - Breakeven")
 
-        # Trailing بعد Breakeven
         if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
             if position_side == "LONG":
                 new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
@@ -1208,14 +1371,14 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
     try:
         client_obj = get_client()
         if not client_obj:
-            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
 
         ratios_sum = sum(tp_ratios)
         if abs(ratios_sum - 1.0) > 0.01:
             logger.error(f"❌ مجموع نسب TP = {ratios_sum} يجب أن يكون 1.0")
-            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+            return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
 
-        results = {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+        results = {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
 
         close_side = "SELL" if position_side == "LONG" else "BUY"
 
@@ -1244,6 +1407,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     results['sl_order_id'] = sl_order['orderId']
                     results['sl_price'] = formatted_sl
                     results['sl_percent'] = actual_sl_percent
+                    results['algo_ids']['sl'] = sl_order['orderId']
                     logger.info(f"✅ SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
                 else:
                     logger.error(f"❌ فشل إنشاء SL")
@@ -1286,6 +1450,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                         'success': True
                     })
                     results['total_tp_quantity'] += level_quantity
+                    results['algo_ids'][f'tp{i+1}'] = tp_order['orderId']
                     logger.info(f"✅ TP{i+1}: {tp_percent}% @ {formatted_tp}")
                 else:
                     logger.error(f"❌ فشل TP{i+1}")
@@ -1299,7 +1464,7 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
 
     except Exception as e:
         logger.error(f"خطأ: {e}")
-        return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0}
+        return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
 
 
 def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
@@ -1379,7 +1544,9 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
         if VERIFY_TP_SL_AFTER_CREATION and not has_sl:
             logger.error(f"🚨 فشل SL - إغلاق الصفقة فوراً!")
 
-            close_position_safe(symbol, positionSide)
+            # إغلاق الصفقة + حذف الأوامر التي أُنشئت
+            algo_ids_to_cancel = [v for v in tp_results.get('algo_ids', {}).values() if v]
+            close_position_safe(symbol, positionSide, algo_ids=algo_ids_to_cancel)
 
             return {
                 'symbol': symbol,
@@ -1410,6 +1577,7 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             "tp_results": tp_results,
             "tp_levels": tp_levels,
             "tp_ratios": tp_ratios,
+            "algo_orders": tp_results.get('algo_ids', {}),  # 🔥 حفظ algo_ids
             "verification": {
                 "has_tp": has_tp,
                 "has_sl": has_sl,
@@ -1649,11 +1817,9 @@ def recreate_missing_tp(symbol, position_side, entry_price, quantity):
 
 def check_and_add_tp_sl_to_existing_positions():
     """
-    🔥 v4.1.4: إصلاح TP/SL لصفقات البوت فقط
-    يتجاهل الصفقات اليدوية تماماً
+    🔥 v4.2.0: إصلاح TP/SL لصفقات البوت فقط
     """
     try:
-        # 🔥 نأخذ فقط الصفقات المسجلة في open_positions.json
         state_file = "open_positions.json"
 
         if not os.path.exists(state_file):
@@ -1756,9 +1922,8 @@ def check_and_add_tp_sl_to_existing_positions():
 
 
 if __name__ == "__main__":
-    print("🚀 core_functions.py v4.1.4")
+    print("🚀 core_functions.py v4.2.0")
     print(f"✅ الاتصال: {'ناجح' if client else 'فشل'}")
     print(f"🔍 التحقق من TP/SL: {'مفعل' if VERIFY_TP_SL_AFTER_CREATION else 'معطل'}")
     print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'}")
-    print(f"⚡ Cache الرموز: {_SYMBOLS_CACHE_DURATION} ثانية")
-    print(f"🔥 تمييز الصفقات اليدوية: ✅")
+    print(f"🧹 تنظيف الأوامر اليتيمة: {'مفعل' if ENABLE_ORPHAN_CLEANUP else 'معطل'}")

@@ -1,12 +1,10 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v5.5
-# 🔧 التعديلات v5.5:
-#    - 🔥 Firebase Backup بدل GitHub
-#    - 🔥 Health Check Server
-#    - 🔥 تقليل الخيوط من 8 إلى 5
-#    - 🔥 دمج TP/SL في Monitor
-#    - 🔥 لا إعادة تشغيل تلقائي
-# 📅 التاريخ: 2026-09-25
+# 📁 ملف: main_enhanced.py - الإصدار v5.6
+# 🔧 التعديلات v5.6:
+#    - 🔥 تنظيف الأوامر اليتيمة دورياً
+#    - 🔥 تنظيف عند بدء البوت
+#    - 🔥 حماية الصفقات اليدوية
+# 📅 التاريخ: 2026-09-26
 # ==================================================
 
 import logging
@@ -105,7 +103,6 @@ try:
 except ImportError:
     REPORTER_AVAILABLE = False
 
-# 🔥 Firebase
 try:
     import firebase_backup
     FIREBASE_AVAILABLE = True
@@ -118,20 +115,13 @@ except ImportError as e:
 
 _last_auto_scan = 0
 _last_tp_sl_monitor = 0
+_last_orphan_cleanup = 0
 _auto_scan_enabled = True
 _auto_trading_enabled = True
 
 _open_trades_tracking = {}
 
 STATE_FILE = "open_positions.json"
-
-
-FALLBACK_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
-    "MATICUSDT", "LTCUSDT", "ATOMUSDT", "NEARUSDT", "FILUSDT",
-    "AAVEUSDT", "UNIUSDT", "ETCUSDT", "APTUSDT", "ARBUSDT"
-]
 
 
 # ==================== دوال آمنة ====================
@@ -257,12 +247,13 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v5.5</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v5.6</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
             f"🔥 <b>Firebase Backup:</b> {firebase_status}\n"
             f"📊 <b>الصفقات في الذاكرة:</b> {memory_trades}\n"
+            f"🧹 <b>تنظيف الأوامر:</b> ✅\n"
             f"🏥 <b>Health Check:</b> ✅\n\n"
             f"📊 <b>الحالة:</b>\n"
             f"   • الأزواج: {count}\n"
@@ -296,26 +287,27 @@ def check_trading_pause():
     return False
 
 
-# ==================== 🔥 خيط المراقبة الشاملة (v5.4) ====================
+# ==================== 🔥 خيط المراقبة الشاملة ====================
 
 def monitor_positions_loop():
     """
-    🔥 v5.4: مراقبة شاملة (Trailing SL + TP/SL + الصفقات المغلقة)
+    🔥 v5.6: مراقبة شاملة + تنظيف الأوامر اليتيمة
     """
     try:
         logger.info("📈 [THREAD] بدء المراقبة الشاملة...")
 
-        global _last_tp_sl_monitor
+        global _last_tp_sl_monitor, _last_orphan_cleanup
 
         while _auto_scan_enabled:
             try:
+                current_time = time.time()
+
                 # 1. Trailing SL
                 updated = core.monitor_trailing_sl()
                 if updated > 0:
                     logger.info(f"📊 تحديث Trailing: {updated} صفقة")
 
                 # 2. TP/SL Check (كل دقيقة)
-                current_time = time.time()
                 if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                     _last_tp_sl_monitor = current_time
 
@@ -332,10 +324,20 @@ def monitor_positions_loop():
                                 core.check_and_add_tp_sl_to_existing_positions()
                                 break
 
-                # 3. الصفقات المغلقة
+                # 🔥 3. تنظيف الأوامر اليتيمة (كل 5 دقائق)
+                if current_time - _last_orphan_cleanup >= ORPHAN_CLEANUP_INTERVAL:
+                    _last_orphan_cleanup = current_time
+                    try:
+                        cancelled = core.cleanup_orphan_algo_orders()
+                        if cancelled > 0:
+                            logger.info(f"🧹 تنظيف: {cancelled} أمر يتيم")
+                    except Exception as e:
+                        logger.warning(f"⚠️ فشل تنظيف الأوامر: {e}")
+
+                # 4. الصفقات المغلقة
                 check_closed_trades()
 
-                # 🔥 v5.4: تنظيف دوري للذاكرة
+                # 5. تنظيف الذاكرة
                 gc.collect()
 
             except Exception as e:
@@ -604,7 +606,7 @@ def execute_sniper_trade(signal):
         groq_rec = signal.get('groq_recommendation', '')
         groq_conf = safe_float(signal.get('groq_confidence', 0))
 
-        if groq_rec == 'رفض' and groq_conf >= 70:
+        if groq_rec == 'رفض' and groq_conf >= 75:
             logger.warning(f"🛑 {symbol}: Groq رفض ({groq_conf}%)")
             return False
 
@@ -802,34 +804,27 @@ def toggle_auto_scan():
     return f"✅ <b>المسح التلقائي: {status}</b>"
 
 
-# ==================== 🔥 التشغيل v5.5 ====================
+# ==================== التشغيل ====================
 
 def start_scanner_threads():
-    """
-    🔥 v5.5: Health Check + Firebase + تقليل الخيوط
-    """
     logger.info("=" * 60)
-    logger.info("🔧 [START] بدء تشغيل الخيوط v5.5...")
+    logger.info("🔧 [START] بدء تشغيل الخيوط v5.6...")
     logger.info("=" * 60)
 
-    # ==================== 1. Health Check Server ====================
+    # 1. Health Check
     try:
         import health_server
         if health_server.run_in_background():
             logger.info("✅ [START] Health Check Server")
-        else:
-            logger.warning("⚠️ [START] فشل Health Check")
     except Exception as e:
         logger.error(f"❌ [START] خطأ Health Check: {e}")
 
-    # ==================== 2. Firebase ====================
+    # 2. Firebase
     if FIREBASE_AVAILABLE:
         try:
-            # تهيئة Firebase
             if firebase_backup.initialize_firebase():
                 logger.info("✅ [START] Firebase متصل")
 
-                # مزامنة البيانات من Firebase
                 if MEMORY_AVAILABLE:
                     try:
                         if memory.sync_from_firebase():
@@ -837,20 +832,15 @@ def start_scanner_threads():
                     except Exception as e:
                         logger.warning(f"⚠️ [START] فشل المزامنة: {e}")
 
-                # بدء الحفظ الدوري
                 if ENABLE_FIREBASE_BACKUP:
                     if firebase_backup.start_auto_backup():
                         logger.info("✅ [START] Firebase Backup")
-                    else:
-                        logger.warning("⚠️ [START] فشل Firebase Backup")
             else:
                 logger.warning("⚠️ [START] Firebase غير متاح")
         except Exception as e:
             logger.error(f"❌ [START] خطأ Firebase: {e}")
-    else:
-        logger.info("ℹ️ [START] Firebase غير متاح")
 
-    # ==================== 3. Scanner ====================
+    # 3. Scanner
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
@@ -858,25 +848,21 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
-    # ==================== 4. Monitor ====================
+    # 4. Monitor
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor")
         monitor.start()
-        logger.info("✅ [START] Monitor (Trailing + TP/SL)")
+        logger.info("✅ [START] Monitor (Trailing + TP/SL + Cleanup)")
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
-    # ==================== 5. Smart Scheduler ====================
+    # 5. Smart Scheduler
     if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
         try:
             if smart_scheduler.start_scheduler():
                 logger.info("✅ [START] Smart Scheduler")
-            else:
-                logger.warning("⚠️ [START] فشل scheduler")
         except Exception as e:
             logger.error(f"❌ [START] فشل scheduler: {e}")
-    else:
-        logger.info("ℹ️ [START] التعلم التلقائي معطل")
 
     time.sleep(2)
     logger.info(f"✅ [START] عدد الخيوط: {threading.active_count()}")
@@ -886,7 +872,7 @@ def start_scanner_threads():
 def main():
     try:
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v5.5...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.6...")
         logger.info("=" * 60)
 
         send_startup()
@@ -897,6 +883,17 @@ def main():
             tgbot.cleanup_state_file()
         except Exception as e:
             logger.warning(f"⚠️ [MAIN] فشل التنظيف: {e}")
+
+        # 🔥 تنظيف الأوامر اليتيمة عند البدء
+        try:
+            logger.info("🧹 [MAIN] تنظيف الأوامر اليتيمة...")
+            cancelled = core.cleanup_orphan_algo_orders()
+            if cancelled > 0:
+                logger.info(f"✅ [MAIN] تم حذف {cancelled} أمر يتيم")
+            else:
+                logger.info("✅ [MAIN] لا توجد أوامر يتيمة")
+        except Exception as e:
+            logger.warning(f"⚠️ [MAIN] فشل تنظيف الأوامر: {e}")
 
         if MEMORY_AVAILABLE:
             try:
@@ -913,19 +910,18 @@ def main():
                 pass
 
         logger.info("=" * 60)
-        logger.info("🎯 [MAIN] نظام القناص v5.5 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v5.6 مفعل")
         logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
         logger.info(f"📈 [MAIN] MAX_POSITIONS: {MAX_OPEN_POSITIONS}")
         logger.info(f"💰 [MAIN] TRADE_USDT: {TRADE_USDT}")
         logger.info(f"⚡ [MAIN] LEVERAGE: {LEVERAGE}x")
+        logger.info(f"🧹 [MAIN] تنظيف الأوامر: ✅ (كل {ORPHAN_CLEANUP_INTERVAL // 60} دقيقة)")
         logger.info(f"🔔 [MAIN] إشعار إغلاق: ✅")
         logger.info(f"🧠 [MAIN] التعلم التلقائي: {'✅' if ENABLE_AUTO_LEARNING else '❌'}")
         logger.info(f"📊 [MAIN] التقارير اليومية: {'✅' if ENABLE_DAILY_REPORT else '❌'}")
-        logger.info(f"🛡️ [MAIN] الحماية الذاتية: {'✅' if AUTO_PROTECTION_ENABLED else '❌'}")
         logger.info(f"🔥 [MAIN] Firebase Backup: {'✅' if ENABLE_FIREBASE_BACKUP else '❌'}")
-        logger.info(f"🏥 [MAIN] Health Check: ✅")
         logger.info("=" * 60)
 
         logger.info("🚀 [MAIN] بدء البوت...")

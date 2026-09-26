@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v5.2
-🔧 التعديلات v5.2:
+groq_integration.py - الإصدار v5.3
+🔧 التعديلات v5.3:
+   - 🔥 Prompt محسّن (تقليل "تحذير")
+   - 🔥 تعليمات واضحة للـ AI
    - دعم Gemini API كبديل لـ Groq
    - التبديل التلقائي عند فشل الأساسي
-   - تحويل آمن للأنواع
-   - لا يحتوي على أي مفاتيح
 """
 
 import logging
@@ -22,7 +22,6 @@ from config import (
     GEMINI_API_BASE_URL, AI_PROVIDER, AI_FALLBACK_ENABLED
 )
 
-# 🔥 لا نضيف handler — root logger في bot_enhanced.py يتولى ذلك
 logger = logging.getLogger("groq_integration")
 logger.setLevel(logging.INFO)
 
@@ -142,7 +141,6 @@ def _try_init_gemini():
         return False
 
     try:
-        # اختبار الاتصال
         url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}?key={GEMINI_API_KEY}"
         response = requests.get(url, timeout=15)
 
@@ -161,7 +159,6 @@ def _try_init_gemini():
 
 # ==================== التهيئة ====================
 
-# Groq
 if ENABLE_GROQ_ANALYSIS and GROQ_API_KEY:
     logger.info("🔄 تهيئة Groq...")
     if not _try_init_groq_library():
@@ -173,7 +170,6 @@ else:
     if not GROQ_API_KEY:
         logger.warning("⚠️ GROQ_API_KEY مفقود")
 
-# Gemini
 logger.info("🔄 تهيئة Gemini...")
 if _try_init_gemini():
     logger.info("✅ Gemini جاهز")
@@ -205,7 +201,7 @@ def extract_json_from_response(response_content):
 
 
 def parse_ai_response(response_content, provider="groq"):
-    """تحليل استجابة AI (موحد لـ Groq و Gemini)"""
+    """تحليل استجابة AI"""
     try:
         if not response_content:
             return None
@@ -270,7 +266,7 @@ def parse_ai_response(response_content, provider="groq"):
         return None
 
 
-# ==================== بناء الـ Prompt ====================
+# ==================== بناء الـ Prompt (محسّن v5.3) ====================
 
 def build_rich_prompt(signal_data, analysis_data=None):
     try:
@@ -305,15 +301,16 @@ def build_rich_prompt(signal_data, analysis_data=None):
 
         candle_type = price_action.get('candle_type', 'غير معروف')
         body_strength = price_action.get('body_strength', 'غير معروف')
+        body_ratio = price_action.get('body_ratio', 0)
 
         alignment = signal_data.get('timeframe_alignment', 0)
         volatility = technical.get('volatility', 'غير معروف')
 
-        prompt = f"""أنت محلل فني خبير في تداول العملات الرقمية. قم بتحليل الإشارة التالية بعمق:
+        prompt = f"""أنت محلل فني خبير في تداول العملات الرقمية. مهمتك **تأكيد الإشارات الجيدة** وليس رفض كل شيء.
 
 📊 **بيانات الإشارة:**
 - العملة: {symbol}
-- الاتجاه المقترح: {direction}
+- الاتجاه: {direction}
 - السعر الحالي: {entry_price}
 - ثقة النظام: {confidence:.1f}%
 - قوة الإشارة: {strength}/10
@@ -338,17 +335,35 @@ def build_rich_prompt(signal_data, analysis_data=None):
 
 🕯️ **حركة السعر:**
 - نوع الشمعة: {candle_type}
-- قوة الجسم: {body_strength}
+- قوة الجسم: {body_strength} (body_ratio={body_ratio:.2f})
 
 ---
 
-**المطلوب منك:**
+**⚠️ قواعد الإجابة (مهمة جداً):**
 
-1. هل تؤكد هذه الإشارة أم ترفضها؟ (تأكيد/تحذير/رفض)
-2. ما مستوى ثقتك؟ (0-100)
+1. **"تأكيد"** إذا كان **60% أو أكثر** من المعايير إيجابية:
+   - ترابط الفريمات >= 6/10
+   - MACD متوافق مع الاتجاه
+   - RSI في نطاق معقول
+   - الحجم >= 1.0x أو متوسط
+   
+2. **"تحذير"** فقط عند وجود **تعارض حقيقي واحد**:
+   - مثال: ترابط قوي + RSI متشبع جداً
+   - مثال: حجم ممتاز + MACD معاكس
+
+3. **"رفض"** فقط عند **خطر واضح**:
+   - السوق هابط قوي وأنت تشتري (أو العكس)
+   - RSI في تشبع عنيف (>80 أو <20)
+   - كل المؤشرات معاكسة
+
+4. **⚠️ مهم:** التردد الزائد = فقدان فرص. **كن حازماً**. إذا رأيت 3 من 4 معايير إيجابية → **"تأكيد"**.
+
+**المطلوب:**
+1. القرار: تأكيد / تحذير / رفض
+2. الثقة: 0-100
 3. تحليل موجز (2-3 جمل)
-4. الأسباب المنطقية (3-4 نقاط)
-5. مستوى المخاطرة (عالي/متوسط/منخفض)
+4. الأسباب (3-4 نقاط)
+5. المخاطرة: عالي / متوسط / منخفض
 
 **أجب بصيغة JSON فقط:**
 {{
@@ -371,7 +386,6 @@ JSON فقط، بدون نص إضافي."""
 # ==================== Groq Call ====================
 
 def _call_groq(prompt, messages):
-    """استدعاء Groq"""
     try:
         response_content = None
 
@@ -405,7 +419,6 @@ def _call_groq(prompt, messages):
 # ==================== Gemini Call ====================
 
 def _call_gemini(prompt):
-    """استدعاء Gemini API"""
     try:
         url = f"{GEMINI_API_BASE_URL}/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
@@ -433,7 +446,6 @@ def _call_gemini(prompt):
 
         data = response.json()
 
-        # استخراج النص
         if 'candidates' not in data or not data['candidates']:
             logger.warning("لا يوجد candidates في Gemini")
             return None
@@ -456,7 +468,6 @@ def _call_gemini(prompt):
 def analyze_signal_with_groq(signal_data, analysis_data=None):
     """تحليل إشارة بـ AI (Groq أو Gemini)"""
     try:
-        # بناء الـ prompt
         if GROQ_SEND_FULL_DATA:
             prompt = build_rich_prompt(signal_data, analysis_data)
         else:
@@ -465,14 +476,12 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
             confidence = signal_data.get('confidence', 0)
             prompt = f"حلل {symbol} {direction} ثقة {confidence}%"
 
-        # ==================== تحديد المزود ====================
         use_gemini_first = (AI_PROVIDER == "gemini")
-        use_groq_first = (AI_PROVIDER == "groq")
         use_auto = (AI_PROVIDER == "auto")
 
         result = None
 
-        # ==================== Gemini أولاً ====================
+        # Gemini أولاً
         if use_gemini_first or (use_auto and gemini_available and not groq_available):
             if gemini_available:
                 logger.info("🧠 استخدام Gemini...")
@@ -482,13 +491,13 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                     if result:
                         return result
 
-        # ==================== Groq ====================
+        # Groq
         if groq_available:
             logger.info("🧠 استخدام Groq...")
             messages = [
                 {
                     "role": "system",
-                    "content": "أنت محلل فني محترف في سوق العملات الرقمية. حلل بعمق وأجب بـ JSON صالح فقط."
+                    "content": "أنت محلل فني محترف. مهمتك تأكيد الإشارات الجيدة بحزم وليس رفض كل شيء. أجب بـ JSON فقط."
                 },
                 {"role": "user", "content": prompt}
             ]
@@ -500,7 +509,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== Fallback ====================
+        # Fallback
         if AI_FALLBACK_ENABLED:
             if not use_gemini_first and gemini_available:
                 logger.info("🔄 Fallback → Gemini...")
@@ -520,12 +529,10 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
 
 
 def is_groq_available():
-    """التحقق من التوفر (Groq أو Gemini)"""
     return (groq_available or gemini_available)
 
 
 def get_ai_status():
-    """حالة مزودي AI"""
     return {
         'groq_available': groq_available,
         'gemini_available': gemini_available,
@@ -538,7 +545,6 @@ def get_ai_status():
     }
 
 
-# الاسم المستخدم في bot_strategies_enhanced
 enhance_signal_with_groq = analyze_signal_with_groq
 
 
