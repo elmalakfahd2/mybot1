@@ -1,11 +1,9 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - الإصدار v4.3
-# 🔧 التعديلات v4.3 (Scalp Quick Wins):
-#    - 🔥 RSI مشروط حسب النطاق
-#    - 🔥 فيتو RSI > 90
-#    - 🔥 TP1 مضغوط للخطف
-#    - 🔥 تبريد مضاعف بعد خسارة
-#    - 🔥 تسجيل سبب التبريد
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار v4.4
+# 🔧 التعديلات v4.4:
+#    - 🔥 تطبيق فعلي لفلتر الذاكرة
+#    - 🔥 تبريد ذكي (15-30-60 دقيقة)
+#    - 🔥 رفض العملات الخاسرة متكررة
 # 📅 التاريخ: 2026-09-26
 # ==================================================
 
@@ -35,9 +33,9 @@ try:
     from groq_integration import enhance_signal_with_groq, is_groq_available
     GROQ_AVAILABLE = is_groq_available()
     if GROQ_AVAILABLE:
-        logger.info("✅ تم تحميل Groq")
+        logger.info("✅ تم تحميل AI")
 except ImportError as e:
-    logger.warning(f"❌ Groq: {e}")
+    logger.warning(f"❌ AI: {e}")
     GROQ_AVAILABLE = False
     enhance_signal_with_groq = lambda x: None
 
@@ -78,7 +76,6 @@ except ImportError as e:
     realtime_data = None
 
 
-# متغيرات
 _symbol_cooldown = {}
 _pending_auto_signals = {}
 
@@ -119,28 +116,26 @@ def calculate_atr(symbol, period=14):
         return 0
 
 
-# ==================== 🔥 التبريد الذكي ====================
+# ==================== التبريد الذكي ====================
 
 def add_symbol_cooldown(symbol, duration_minutes=None):
-    """
-    🔥 v4.3: تبريد ذكي
-    - 15 دقيقة عادي
-    - 30 دقيقة بعد خسارة مباشرة
-    """
     try:
         if duration_minutes is None:
             duration_minutes = COOLDOWN_MINUTES
 
-        # 🔥 فحص آخر صفقة على العملة
         if MEMORY_AVAILABLE:
             try:
-                recent = memory.get_symbol_history(symbol, limit=1)
+                recent = memory.get_symbol_history(symbol, limit=2)
                 if recent:
                     last_trade = recent[-1]
                     if not last_trade.get('is_win', True):
-                        # خسارة → تبريد مضاعف
                         duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS
                         logger.info(f"⚠️ {symbol} - تبريد مضاعف بعد خسارة: {duration_minutes} د")
+
+                    if len(recent) >= 2:
+                        if not recent[-1].get('is_win', True) and not recent[-2].get('is_win', True):
+                            duration_minutes = 60
+                            logger.warning(f"🚫 {symbol} - خسارتان متتاليتان - تبريد 60 د")
             except Exception as e:
                 logger.warning(f"⚠️ فشل قراءة تاريخ {symbol}: {e}")
 
@@ -190,7 +185,6 @@ def get_cooldown_status():
 # ==================== محرك التحليل ====================
 
 class SmartAnalysisEngine:
-    """محرك التحليل"""
 
     @staticmethod
     def analyze_symbol_detailed(symbol):
@@ -328,7 +322,6 @@ class SmartAnalysisEngine:
 
     @staticmethod
     def analyze_volume(symbol):
-        """🔥 v4.3: تحليل الحجم بمتوسط 3 شمعات"""
         try:
             klines_5m = core.get_klines(symbol, "5m", limit=35)
 
@@ -485,7 +478,6 @@ class SmartAnalysisEngine:
 # ==================== دوال التحليل ====================
 
 def calculate_enhanced_timeframe_alignment(timeframes):
-    """ترابط الفريمات"""
     try:
         if not timeframes:
             return 0.0
@@ -534,7 +526,6 @@ def calculate_enhanced_timeframe_alignment(timeframes):
 
 
 def generate_balanced_recommendation(analysis):
-    """التوصية"""
     try:
         symbol = analysis['symbol']
         timeframes = analysis.get('timeframes', {})
@@ -623,36 +614,23 @@ def generate_balanced_recommendation(analysis):
         return {'action': 'HOLD', 'confidence': 0, 'reasons': []}
 
 
-# ==================== 🔥 نظام النقاط v4.3 (Scalp Mode) ====================
+# ==================== نظام النقاط ====================
 
 def calculate_total_score(signal, analysis):
-    """
-    حساب النقاط (من 100)
-    🔥 v4.3: RSI مشروط + فيتو > 90
-    """
     try:
         symbol = signal['symbol']
         direction = signal['direction']
 
         score = 0
         details = {
-            'timeframe_points': 0,
-            'volume_points': 0,
-            'groq_points': 0,
-            'rsi_points': 0,
-            'momentum_points': 0,
-            'price_action_points': 0,
-            'market_points': 0,
-            'order_book_points': 0,
-            'funding_oi_points': 0,
-            'realtime_adjustment': 0,
-            'total': 0,
-            'max_total': 100,
-            'rejected': False,
-            'reject_reason': ''
+            'timeframe_points': 0, 'volume_points': 0, 'groq_points': 0,
+            'rsi_points': 0, 'momentum_points': 0, 'price_action_points': 0,
+            'market_points': 0, 'order_book_points': 0, 'funding_oi_points': 0,
+            'realtime_adjustment': 0, 'total': 0, 'max_total': 100,
+            'rejected': False, 'reject_reason': ''
         }
 
-        # ==================== 1. ترابط الفريمات (20) ====================
+        # 1. ترابط (20)
         timeframes = analysis.get('timeframes', {})
         alignment = calculate_enhanced_timeframe_alignment(timeframes)
 
@@ -670,7 +648,7 @@ def calculate_total_score(signal, analysis):
         score += details['timeframe_points']
         logger.info(f"📊 ترابط: {alignment:.1f}/10 → {details['timeframe_points']}/20")
 
-        # ==================== 2. الحجم (15) ====================
+        # 2. الحجم (15)
         volume = analysis.get('volume_analysis', {})
         vol_ratio = volume.get('volume_5m_ratio', 0)
 
@@ -694,25 +672,23 @@ def calculate_total_score(signal, analysis):
         score += details['volume_points']
         logger.info(f"📊 حجم: {vol_ratio:.2f}x → {details['volume_points']}/15")
 
-        # ==================== 3. 🔥 RSI (10) - Scalp Mode ====================
+        # 3. RSI (10)
         technical = analysis.get('technical_indicators', {})
         rsi = technical.get('rsi', 50)
 
-        # 🔥 فيتو أول: RSI متشبع عنيف
         if direction == "BUY":
             if rsi >= RSI_BUY_HARD_REJECT:
-                logger.warning(f"🛑 {symbol}: RSI متشبع شرائي عنيف ({rsi:.1f}) - رفض")
+                logger.warning(f"🛑 {symbol}: RSI متشبع ({rsi:.1f}) - رفض")
                 details['rejected'] = True
-                details['reject_reason'] = f'RSI متشبع عنيف: {rsi:.1f}'
+                details['reject_reason'] = f'RSI متشبع: {rsi:.1f}'
                 return 0, details
         else:
             if rsi <= RSI_SELL_HARD_REJECT:
-                logger.warning(f"🛑 {symbol}: RSI متشبع بيعي عنيف ({rsi:.1f}) - رفض")
+                logger.warning(f"🛑 {symbol}: RSI متشبع ({rsi:.1f}) - رفض")
                 details['rejected'] = True
-                details['reject_reason'] = f'RSI متشبع عنيف: {rsi:.1f}'
+                details['reject_reason'] = f'RSI متشبع: {rsi:.1f}'
                 return 0, details
 
-        # 🔥 نقاط RSI حسب النطاق
         if direction == "BUY":
             if 40 <= rsi <= 60:
                 details['rsi_points'] = 10
@@ -721,13 +697,13 @@ def calculate_total_score(signal, analysis):
             elif 30 <= rsi <= 70:
                 details['rsi_points'] = 5
             elif 25 <= rsi <= RSI_BUY_WARNING:
-                details['rsi_points'] = 3  # مقبول لكن ليس مثالي
+                details['rsi_points'] = 3
             elif RSI_BUY_WARNING < rsi < RSI_BUY_HARD_REJECT:
-                details['rsi_points'] = 1  # خطر لكن مسموح مع TP ضيق
-                logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - تجاوز {RSI_BUY_WARNING} - TP ضيق")
+                details['rsi_points'] = 1
+                logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - TP ضيق")
             else:
                 details['rsi_points'] = 0
-        else:  # SELL
+        else:
             if 40 <= rsi <= 60:
                 details['rsi_points'] = 10
             elif 35 <= rsi <= 65:
@@ -738,14 +714,14 @@ def calculate_total_score(signal, analysis):
                 details['rsi_points'] = 3
             elif RSI_SELL_HARD_REJECT < rsi < RSI_SELL_WARNING:
                 details['rsi_points'] = 1
-                logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - تجاوز {RSI_SELL_WARNING} - TP ضيق")
+                logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - TP ضيق")
             else:
                 details['rsi_points'] = 0
 
         score += details['rsi_points']
         logger.info(f"📊 RSI: {rsi:.1f} → {details['rsi_points']}/10")
 
-        # ==================== 4. Momentum (10) ====================
+        # 4. Momentum (10)
         momentum = analysis.get('momentum', {})
         mom_strength = momentum.get('strength', 0)
         mom_dir = momentum.get('direction', 'محايد')
@@ -773,7 +749,7 @@ def calculate_total_score(signal, analysis):
         score += details['momentum_points']
         logger.info(f"📊 Momentum: {mom_dir} ({mom_strength:.1f}) → {details['momentum_points']}/10")
 
-        # ==================== 5. Price Action (8) ====================
+        # 5. Price Action (8)
         price_action = analysis.get('price_action', {})
         body_ratio = price_action.get('body_ratio', 0)
         candle_type = price_action.get('candle_type', '')
@@ -801,7 +777,7 @@ def calculate_total_score(signal, analysis):
         score += details['price_action_points']
         logger.info(f"📊 PA: {candle_type} (body={body_ratio:.2f}) → {details['price_action_points']}/8")
 
-        # ==================== 6. حالة السوق (5) ====================
+        # 6. سوق (5)
         if MARKET_REGIME_AVAILABLE and ENABLE_MARKET_REGIME:
             try:
                 regime = MarketRegime.get_regime()
@@ -830,7 +806,7 @@ def calculate_total_score(signal, analysis):
         score += details['market_points']
         logger.info(f"📊 سوق: {details['market_points']}/5")
 
-        # ==================== 7. دفتر الأوامر (10) ====================
+        # 7. دفتر الأوامر (10)
         try:
             ob = core.get_order_book_analysis(symbol) if core else None
             if ob:
@@ -856,13 +832,13 @@ def calculate_total_score(signal, analysis):
             else:
                 details['order_book_points'] = 3
         except Exception as e:
-            logger.warning(f"⚠️ خطأ تحليل دفتر الأوامر: {e}")
+            logger.warning(f"⚠️ خطأ دفتر الأوامر: {e}")
             details['order_book_points'] = 3
 
         score += details['order_book_points']
         logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/10")
 
-        # ==================== 8. Funding Rate + Open Interest (10) ====================
+        # 8. Funding/OI (10)
         try:
             if ENABLE_FUNDING_OI_FILTER and core:
                 funding = core.get_funding_rate(symbol)
@@ -889,13 +865,13 @@ def calculate_total_score(signal, analysis):
             else:
                 details['funding_oi_points'] = 5
         except Exception as e:
-            logger.warning(f"⚠️ خطأ تحليل Funding/OI: {e}")
+            logger.warning(f"⚠️ خطأ Funding: {e}")
             details['funding_oi_points'] = 5
 
         score += details['funding_oi_points']
         logger.info(f"📊 Funding/OI: {details['funding_oi_points']}/10")
 
-        # ==================== 9. Groq (12) ====================
+        # 9. AI (12)
         if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS:
             if score >= GROQ_MIN_SCORE_BEFORE_CALL:
                 groq_rec = signal.get('groq_recommendation', '')
@@ -923,9 +899,9 @@ def calculate_total_score(signal, analysis):
                         details['groq_points'] = 2
                 elif groq_rec == "رفض":
                     if GROQ_REJECT_IS_VETO and groq_conf >= 75:
-                        logger.warning(f"🛑 {symbol}: Groq رفض ({groq_conf}%) - فيتو")
+                        logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%)")
                         details['rejected'] = True
-                        details['reject_reason'] = f'Groq رفض ({groq_conf}%)'
+                        details['reject_reason'] = f'AI رفض ({groq_conf}%)'
                         return 0, details
                     details['groq_points'] = 0
                 else:
@@ -936,29 +912,24 @@ def calculate_total_score(signal, analysis):
             details['groq_points'] = 5
 
         score += details['groq_points']
-        logger.info(f"📊 Groq: {details['groq_points']}/12")
+        logger.info(f"📊 AI: {details['groq_points']}/12")
 
-        # ==================== 10. التعديل اللحظي ====================
+        # 10. لحظي
         if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA and REALTIME_ADJUSTMENT_ENABLED:
             try:
                 rt_adj, rt_details = realtime_data.get_realtime_score_adjustment(symbol, direction)
-
                 if rt_adj != 0:
                     score += rt_adj
                     score = max(0, min(100, score))
                     details['realtime_adjustment'] = rt_adj
-                    details['realtime_details'] = rt_details
-                    logger.info(f"⚡ تعديل لحظي: {rt_adj:+d} نقطة → الإجمالي {score}")
+                    logger.info(f"⚡ تعديل: {rt_adj:+d} → {score}")
                 else:
                     details['realtime_adjustment'] = 0
-                    details['realtime_details'] = rt_details
-            except Exception as e:
-                logger.warning(f"⚠️ فشل التعديل اللحظي: {e}")
+            except:
                 details['realtime_adjustment'] = 0
         else:
             details['realtime_adjustment'] = 0
 
-        # ==================== المجموع ====================
         details['total'] = score
         logger.info(f"🎯 المجموع: {score}/100")
 
@@ -969,8 +940,9 @@ def calculate_total_score(signal, analysis):
         return 0, {'total': 0, 'max_total': 100, 'rejected': True, 'reject_reason': str(e)}
 
 
+# ==================== فلتر الذاكرة ====================
+
 def check_memory_filter(symbol):
-    """فلتر الذاكرة"""
     try:
         if not MEMORY_AVAILABLE or not ENABLE_TRADE_MEMORY:
             return True, "ذاكرة معطلة", {}
@@ -978,21 +950,42 @@ def check_memory_filter(symbol):
         is_blocked, reason = memory.is_symbol_blacklisted(
             symbol,
             min_trades=MEMORY_MIN_TRADES_FOR_SCORE,
-            max_win_rate=0.20,
-            max_consecutive_losses=5
+            max_win_rate=0.25,
+            max_consecutive_losses=MEMORY_MAX_CONSECUTIVE_LOSSES
         )
 
         if is_blocked:
-            return False, f"🚫 {reason}", {}
+            logger.warning(f"🚫 {symbol} محظور: {reason}")
+            return False, f"🚫 {reason}", {'blocked': True}
+
+        try:
+            stats = memory.load_memory().get("symbol_stats", {}).get(symbol, {})
+            if stats:
+                losses = stats.get("losses", 0)
+                total_pnl = stats.get("total_pnl", 0)
+                wins = stats.get("wins", 0)
+
+                if losses >= 2 and total_pnl < MEMORY_BLOCK_LOSS_THRESHOLD:
+                    logger.warning(f"🚫 {symbol}: {losses} خسائر، إجمالي {total_pnl:.2f}$")
+                    return False, f"🚫 خسائر متعددة ({losses})", {'blocked': True}
+
+                total_trades = wins + losses
+                if total_trades > 0:
+                    avg_pnl = total_pnl / total_trades
+                    if avg_pnl < MEMORY_AVG_PNL_THRESHOLD:
+                        logger.warning(f"🚫 {symbol}: متوسط سالب {avg_pnl:.2f}$")
+                        return False, f"🚫 متوسط سالب", {'blocked': True}
+        except Exception as e:
+            logger.debug(f"تعذر فحص stats لـ {symbol}: {e}")
 
         score = memory.get_symbol_score(symbol)
         return True, score.get('reason', ''), score
-    except:
+    except Exception as e:
+        logger.error(f"خطأ في check_memory_filter: {e}")
         return True, "خطأ", {}
 
 
 def check_market_filter(direction):
-    """فلتر السوق"""
     try:
         if not MARKET_REGIME_AVAILABLE or not ENABLE_MARKET_REGIME:
             return True, "سوق معطل", {}
@@ -1011,8 +1004,9 @@ def check_market_filter(direction):
         return True, "خطأ", {}
 
 
+# ==================== توليد الإشارة ====================
+
 def generate_sniper_signal(symbol):
-    """توليد إشارة قناص"""
     try:
         current_price = get_price(symbol)
         if not current_price:
@@ -1020,6 +1014,7 @@ def generate_sniper_signal(symbol):
 
         memory_ok, memory_reason, memory_score = check_memory_filter(symbol)
         if not memory_ok:
+            logger.info(f"🚫 {symbol} - {memory_reason}")
             return None
 
         analysis = SmartAnalysisEngine.analyze_symbol_detailed(symbol)
@@ -1069,12 +1064,12 @@ def generate_sniper_signal(symbol):
 
                     if groq_result.get('groq_recommendation') == 'رفض':
                         if GROQ_REJECT_IS_VETO and groq_result.get('groq_confidence', 0) >= 75:
-                            logger.warning(f"🛑 {symbol}: Groq رفض ({groq_result.get('groq_confidence', 0)}%) - فيتو")
+                            logger.warning(f"🛑 {symbol}: AI رفض")
                             return None
 
                     total_score, score_details = calculate_total_score(signal, analysis)
             except Exception as e:
-                logger.error(f"Groq: {e}")
+                logger.error(f"AI: {e}")
 
         signal['total_score'] = total_score
         signal['score_details'] = score_details
@@ -1084,7 +1079,7 @@ def generate_sniper_signal(symbol):
             logger.info(f"✅ {symbol} - مقبول! النقاط: {total_score}/100")
             return signal
         else:
-            logger.info(f"🛑 {symbol} - نقاط غير كافية: {total_score}/100 (المطلوب: {MIN_SCORE_REQUIRED})")
+            logger.info(f"🛑 {symbol} - نقاط غير كافية: {total_score}/100")
             return None
 
     except Exception as e:
@@ -1131,7 +1126,6 @@ def generate_premium_signal_light(symbol):
 
 
 def scan_sniper_signals():
-    """مسح القناص"""
     try:
         all_symbols = core.get_all_futures_symbols()
         if not all_symbols:
@@ -1150,16 +1144,13 @@ def scan_sniper_signals():
             regime = MarketRegime.get_regime()
             logger.info(f"📊 السوق: {regime.get('regime_ar', 'غير معروف')} - {regime.get('recommendation', '')}")
 
-        if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
-            rt_status = realtime_data.get_realtime_status()
-            logger.info(f"⚡ لحظي: {rt_status.get('ready', 0)}/{rt_status.get('subscribed', 0)} جاهز")
-
         for symbol in top_symbols:
             try:
                 stats['checked'] += 1
 
                 in_cooldown, remaining = is_symbol_in_cooldown(symbol)
                 if in_cooldown:
+                    logger.info(f"⏳ {symbol} في تبريد ({remaining} د)")
                     continue
 
                 signal = generate_sniper_signal(symbol)
@@ -1205,7 +1196,7 @@ def scan_scalping_signals():
     return scan_sniper_signals()
 
 
-# ==================== مسح الزخم ====================
+# ==================== دوال مساعدة إضافية ====================
 
 def calculate_momentum_targets(symbol, direction, current_price):
     try:
@@ -1337,16 +1328,6 @@ async def send_single_signal_notification(signal, rank=None):
             f"💪 <b>القوة:</b> {signal['strength']}/10\n"
             f"🎯 <b>الثقة:</b> {signal['confidence']:.1f}%\n"
             f"📊 <b>النقاط:</b> {signal.get('total_score', 0)}/100\n\n"
-            f"📋 <b>التفاصيل:</b>\n"
-            f"   • ترابط: {details.get('timeframe_points', 0)}/20\n"
-            f"   • حجم: {details.get('volume_points', 0)}/15\n"
-            f"   • Groq: {details.get('groq_points', 0)}/12\n"
-            f"   • RSI: {details.get('rsi_points', 0)}/10\n"
-            f"   • Momentum: {details.get('momentum_points', 0)}/10\n"
-            f"   • PA: {details.get('price_action_points', 0)}/8\n"
-            f"   • سوق: {details.get('market_points', 0)}/5\n"
-            f"   • OB: {details.get('order_book_points', 0)}/10\n"
-            f"   • Funding: {details.get('funding_oi_points', 0)}/10\n\n"
             f"⏰ {signal.get('timestamp', '')}"
         )
 
@@ -1372,7 +1353,7 @@ async def send_single_signal_notification(signal, rank=None):
 async def send_momentum_signal_notification(signal):
     try:
         from telegram import Bot
-        bot = Bot(token=TELEGRAM_CHAT_ID)
+        bot = Bot(token=TELEGRAM_TOKEN)
 
         emoji = "🟢" if signal['direction'] == 'BUY' else "🔴"
         targets = signal.get('targets', {})
@@ -1424,9 +1405,7 @@ def generate_smart_analysis(symbol):
 def get_ai_status():
     return {
         'status': 'نشط',
-        'patterns_learned': 0,
         'groq_available': GROQ_AVAILABLE,
-        'groq_enabled': ENABLE_GROQ_ANALYSIS,
         'memory_available': MEMORY_AVAILABLE,
         'market_regime_available': MARKET_REGIME_AVAILABLE,
         'realtime_available': REALTIME_AVAILABLE
@@ -1462,20 +1441,6 @@ def format_smart_analysis_for_display(analysis):
         msg += f"\n📈 <b>RSI:</b> {technical.get('rsi', 0):.1f}\n"
         msg += f"📊 <b>MACD:</b> {technical.get('macd_trend', 'محايد')}\n"
         msg += f"🔊 <b>الحجم:</b> {volume.get('volume_confidence', 'منخفض')} ({volume.get('volume_5m_ratio', 1.0):.2f}x)\n"
-
-        if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA:
-            try:
-                m = realtime_data.get_realtime_metrics(symbol)
-                if m and not m.get('stale'):
-                    msg += f"\n⚡ <b>لحظي:</b>\n"
-                    msg += f"   • OBI: {m['obi']:+.3f}\n"
-                    msg += f"   • ضغط شراء: {m['buy_pressure']:.0%}\n"
-                    msg += f"   • سرعة: {m['trade_velocity']:.1f} صفقة/ث\n"
-                    if abs(m['liquidation_bias']) > 0.2:
-                        direction = "شورت" if m['liquidation_bias'] > 0 else "لونج"
-                        msg += f"   • تصفيات {direction}: {abs(m['liquidation_bias']):.0%}\n"
-            except:
-                pass
 
         return msg
     except:
