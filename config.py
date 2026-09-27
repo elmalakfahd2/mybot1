@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.1
+config.py - الإعدادات النهائية v5.2
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.1:
-    - 🔥 GEMINI_MODEL: gemini-2.5-flash (كان 2.0-flash - معطل)
-    - 🔥 GEMINI_FALLBACK: gemini-2.5-flash-lite, gemini-flash-latest
-    - 🔥 AI_PROVIDER: gemini (كان groq)
-    - 🔥 AUTO_TUNE_WEIGHTS: True (كان False)
-    - 🔥 فلتر الذاكرة أصرم
-    - 🔥 Cooldown تصاعدي
+🔧 التعديلات v5.2:
+    - 🔥 GEMINI_MODEL: gemini-flash-latest (مضمون في مصر)
+    - 🔥 ترتيب جديد: flash-latest أولاً
 """
 
 import os
@@ -47,15 +43,16 @@ TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 
-# 🔥 النموذج الصحيح المتاح في حسابك (كان 2.0-flash معطل)
-GEMINI_MODEL = "gemini-2.5-flash"
+# 🔥 gemini-flash-latest = alias مضمون في كل المناطق
+GEMINI_MODEL = "gemini-flash-latest"
 
-# 🔥 النماذج البديلة - حسب قائمتك الفعلية
+# 🔥 النماذج البديلة بالترتيب
 GEMINI_FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
     "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
     "gemini-flash-lite-latest",
+    "gemini-2.5-pro",
 ]
 
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
