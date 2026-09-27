@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.3
+config.py - الإعدادات النهائية v5.5
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.3:
-    - 🔥 R:R محسّن: SL 1.3% + TP متدرج 2.5/3.5/5.0
-    - 🔥 MIN_VOLUME_FACTOR: 0.8 (كان 0.4)
-    - 🔥 MIN_ORDER_BOOK_POINTS: 3 (كان 2)
-    - 🔥 MIN_DEPTH_MULTIPLIER: 15 (كان 10)
-    - 🔥 gemini-flash-latest (مضمون في مصر)
+🔧 التعديلات v5.5:
+    - 🔥 TRADE_USDT: 10
+    - 🔥 LEVERAGE: 15
+    - 🔥 MAX_OPEN_POSITIONS: 4
+    - 🔥 R:R محسّن: SL 1.3% + TP [2.5, 3.5, 5.0]
+    - 🔥 MIN_SCORE: 65
 """
 
 import os
@@ -42,13 +42,11 @@ BINANCE_API_SECRET = _get_env("BINANCE_API_SECRET", required=True)
 TELEGRAM_TOKEN = _get_env("TELEGRAM_TOKEN", required=True)
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 
-# ==================== 🔥 Gemini AI (الأساسي) ====================
+# ==================== Gemini AI (الأساسي) ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 
-# 🔥 gemini-flash-latest = alias مضمون في كل المناطق
 GEMINI_MODEL = "gemini-flash-latest"
-
 GEMINI_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.5-flash-lite",
@@ -56,16 +54,15 @@ GEMINI_FALLBACK_MODELS = [
     "gemini-flash-lite-latest",
     "gemini-2.5-pro",
 ]
-
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# ==================== 🔥 Groq AI (احتياطي) ====================
+# ==================== Groq AI (احتياطي) ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
 ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== ❌ SambaNova (معطل) ====================
+# ==================== SambaNova (معطل) ====================
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
 ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
@@ -88,7 +85,6 @@ OPENROUTER_FALLBACK_MODELS = [
 ]
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
-# 🔥 الاستراتيجية: Gemini أولاً دائماً
 AI_PROVIDER = "gemini"
 AI_FALLBACK_ENABLED = True
 
@@ -114,26 +110,25 @@ TUNING_HISTORY_FILE = "tuning_history.json"
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
-# ==================== التداول ====================
-TRADE_USDT = 15
-LEVERAGE = 10
-MAX_OPEN_POSITIONS = 5
+# ==================== 🔥 التداول (إعداداتك الجديدة) ====================
+TRADE_USDT = 10            # 🔥 10 USDT
+LEVERAGE = 15              # 🔥 15x
+MAX_OPEN_POSITIONS = 4     # 🔥 4 صفقات
 
 # ==================== 🔥 TP المتعدد (R:R محسّن) ====================
 ENABLE_MULTIPLE_TP = True
 
-# 🔥 جديد: TP متدرج لتحسين R:R
-# TP1: 2.5% (سريع) | TP2: 3.5% (متوسط) | TP3: 5.0% (بعيد)
+# TP متدرج: 2.5% / 3.5% / 5.0%
 TP_MULTIPLE_LEVELS = [2.5, 3.5, 5.0]
 
-# 🔥 نسب الكميات: 40% - 35% - 25%
+# نسب الكميات: 40% / 35% / 25%
 TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
 
-# 🔥 SL أقل = خسارة أصغر
+# SL أقل = خسارة أصغر + R:R أفضل
 SL_PERCENT = 1.3
 TP_PERCENT = 2.5
 
-# ==================== 🔥 SL ديناميكي ====================
+# ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
 SL_ATR_MULTIPLIER = 2.0
 SL_MIN_PERCENT = 1.0
@@ -155,22 +150,22 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== 🔥 شروط الدخول (أصرم) ====================
+# ==================== شروط الدخول ====================
 MIN_TIMEFRAME_ALIGNMENT = 2.5
-MIN_VOLUME_FACTOR = 0.8         # 🔥 كان 0.4 → 0.8
+MIN_VOLUME_FACTOR = 0.8
 MIN_GROQ_CONFIDENCE = 55
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 4
 
-# ==================== RSI - Scalp Mode ====================
+# ==================== RSI ====================
 RSI_BUY_HARD_REJECT = 90
 RSI_SELL_HARD_REJECT = 10
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== 🔥 نظام النقاط ====================
-MIN_SCORE_REQUIRED = 60
-MIN_ORDER_BOOK_POINTS = 3       # 🔥 كان 2 → 3
+MIN_SCORE_REQUIRED = 65         # 🔥 65 (أصرم)
+MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
 SCORE_WEIGHTS = {
@@ -186,7 +181,7 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== 🔥 فلتر الذاكرة (أصرم) ====================
+# ==================== فلتر الذاكرة ====================
 MEMORY_MIN_TRADES_FOR_SCORE = 2
 MEMORY_MIN_WIN_RATE = 30
 MEMORY_MAX_CONSECUTIVE_LOSSES = 2
@@ -194,10 +189,10 @@ MEMORY_MAX_LOSSES_TOTAL = 2
 MEMORY_BLOCK_LOSS_THRESHOLD = -0.5
 MEMORY_AVG_PNL_THRESHOLD = -0.2
 
-# ==================== 🔥 فلتر دفتر الأوامر (أصرم) ====================
+# ==================== فلتر دفتر الأوامر ====================
 ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.15
-MIN_DEPTH_MULTIPLIER = 15       # 🔥 كان 10 → 15
+MIN_DEPTH_MULTIPLIER = 15
 
 # ==================== فلتر Funding Rate ====================
 ENABLE_FUNDING_OI_FILTER = True
@@ -208,7 +203,7 @@ ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
-# ==================== قاطع الخسارة اليومية (معطل) ====================
+# ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = False
 DAILY_MAX_LOSS_PERCENT = 15.0
 
@@ -242,7 +237,7 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== 🔥 Cooldown ذكي ====================
+# ==================== Cooldown ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
 COOLDOWN_MINUTES_AFTER_LOSS = 30
@@ -252,7 +247,7 @@ TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== 🔥 AI Settings ====================
+# ==================== AI Settings ====================
 GROQ_SEND_FULL_DATA = True
 GROQ_MIN_SCORE_BEFORE_CALL = 25
 GROQ_REJECT_IS_VETO = True
@@ -276,7 +271,7 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== 🔥 التعلم التلقائي ====================
+# ==================== التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 12
 AUTO_LEARN_MIN_TRADES = 5
