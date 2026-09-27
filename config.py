@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.4.0
-🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
+config.py - الإعدادات النهائية v4.3.2
+🔒 آمن للرفع على GitHub.
 
-🔧 المزودون (5):
-   1. Gemini (أساسي - 1500/يوم)
-   2. Groq (احتياطي 1 - 1000/يوم)
-   3. SambaNova (احتياطي 2 - 20/يوم)
-   4. HuggingFace (احتياطي 3)
-   5. OpenRouter (احتياطي 4 - 50/يوم)
+🔧 التعديلات v4.3.2:
+    - 🔥 Gemini: gemini-2.0-flash (النموذج الصحيح)
+    - 🔥 GROQ_MIN_SCORE_BEFORE_CALL: 30 (AI أبكر)
+    - 🔥 SambaNova: معطل (يحتاج بطاقة)
+    - ✅ 3 مزودين فعّالين: Gemini + Groq + HuggingFace
 
 📅 آخر تعديل: 2026-09-27
 """
@@ -25,10 +24,7 @@ except ImportError:
 def _get_env(name, default=None, required=False):
     value = os.environ.get(name, default)
     if required and not value:
-        raise RuntimeError(
-            f"❌ متغير البيئة '{name}' غير موجود. "
-            f"أضفه في ملف .env محليًا أو في Variables على Railway."
-        )
+        raise RuntimeError(f"❌ متغير البيئة '{name}' غير موجود.")
     return value
 
 
@@ -50,10 +46,11 @@ TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 # ==================== 🔥 Gemini AI (الأساسي - 1500/يوم) ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"          # 🔥 النموذج الصحيح
 GEMINI_FALLBACK_MODELS = [
-    "gemini-1.5-flash",
     "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
 ]
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -64,19 +61,19 @@ ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== 🔥 SambaNova AI (احتياطي 2 - 20/يوم) ====================
+# ==================== ❌ SambaNova (معطل - يحتاج بطاقة) ====================
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
-ENABLE_SAMBANOVA_ANALYSIS = _get_bool("ENABLE_SAMBANOVA_ANALYSIS", default=True)
+ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
 SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 
-# ==================== 🔥 HuggingFace AI (احتياطي 3) ====================
+# ==================== HuggingFace (احتياطي 2) ====================
 HUGGINGFACE_API_KEY = _get_env("HUGGINGFACE_API_KEY", default="")
 ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=True)
 HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
 
-# ==================== OpenRouter (احتياطي 4 - 50/يوم) ====================
+# ==================== OpenRouter (احتياطي 3 - 50/يوم) ====================
 OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
 ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
 OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -87,8 +84,7 @@ OPENROUTER_FALLBACK_MODELS = [
 ]
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
-# ==================== 🔥 استراتيجية AI ====================
-# gemini / groq / sambanova / huggingface / openrouter / auto
+# 🔥 الاستراتيجية: Gemini أولاً، ثم Groq، ثم HuggingFace، ثم OpenRouter
 AI_PROVIDER = _get_env("AI_PROVIDER", default="gemini")
 AI_FALLBACK_ENABLED = True
 
@@ -112,7 +108,7 @@ OPEN_POSITIONS_FILE = "open_positions.json"
 LEARNING_HISTORY_FILE = "learning_history.json"
 TUNING_HISTORY_FILE = "tuning_history.json"
 
-USE_TESTNET = _get_bool("USE_TESTNET", default=False)
+USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
 # ==================== التداول ====================
 TRADE_USDT = 15
@@ -247,9 +243,9 @@ TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== Groq AI Settings ====================
+# ==================== 🔥 Groq AI Settings (AI أبكر) ====================
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 45
+GROQ_MIN_SCORE_BEFORE_CALL = 30            # 🔥 من 45 → 30
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
