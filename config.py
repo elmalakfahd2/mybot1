@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.2
+config.py - الإعدادات النهائية v5.3
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v5.2:
-    - 🔥 GEMINI_MODEL: gemini-flash-latest (مضمون في مصر)
-    - 🔥 ترتيب جديد: flash-latest أولاً
+🔧 التعديلات v5.3:
+    - 🔥 R:R محسّن: SL 1.3% + TP متدرج 2.5/3.5/5.0
+    - 🔥 MIN_VOLUME_FACTOR: 0.8 (كان 0.4)
+    - 🔥 MIN_ORDER_BOOK_POINTS: 3 (كان 2)
+    - 🔥 MIN_DEPTH_MULTIPLIER: 15 (كان 10)
+    - 🔥 gemini-flash-latest (مضمون في مصر)
 """
 
 import os
@@ -46,7 +49,6 @@ ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
 # 🔥 gemini-flash-latest = alias مضمون في كل المناطق
 GEMINI_MODEL = "gemini-flash-latest"
 
-# 🔥 النماذج البديلة بالترتيب
 GEMINI_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.5-flash-lite",
@@ -57,7 +59,7 @@ GEMINI_FALLBACK_MODELS = [
 
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# ==================== 🔥 Groq AI (احتياطي 1) ====================
+# ==================== 🔥 Groq AI (احتياطي) ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
 ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
@@ -69,13 +71,13 @@ ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
 SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 
-# ==================== HuggingFace (احتياطي 2) ====================
+# ==================== HuggingFace (احتياطي 1) ====================
 HUGGINGFACE_API_KEY = _get_env("HUGGINGFACE_API_KEY", default="")
 ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=True)
 HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
 
-# ==================== OpenRouter (احتياطي 3) ====================
+# ==================== OpenRouter (احتياطي 2) ====================
 OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
 ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
 OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -117,18 +119,25 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== 🔥 TP المتعدد ====================
+# ==================== 🔥 TP المتعدد (R:R محسّن) ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [2.0, 3.0, 4.0]
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
-SL_PERCENT = 1.5
-TP_PERCENT = 2.0
+
+# 🔥 جديد: TP متدرج لتحسين R:R
+# TP1: 2.5% (سريع) | TP2: 3.5% (متوسط) | TP3: 5.0% (بعيد)
+TP_MULTIPLE_LEVELS = [2.5, 3.5, 5.0]
+
+# 🔥 نسب الكميات: 40% - 35% - 25%
+TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
+
+# 🔥 SL أقل = خسارة أصغر
+SL_PERCENT = 1.3
+TP_PERCENT = 2.5
 
 # ==================== 🔥 SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
 SL_ATR_MULTIPLIER = 2.0
-SL_MIN_PERCENT = 1.2
-SL_MAX_PERCENT = 1.8
+SL_MIN_PERCENT = 1.0
+SL_MAX_PERCENT = 1.6
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -146,9 +155,9 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول ====================
+# ==================== 🔥 شروط الدخول (أصرم) ====================
 MIN_TIMEFRAME_ALIGNMENT = 2.5
-MIN_VOLUME_FACTOR = 0.4
+MIN_VOLUME_FACTOR = 0.8         # 🔥 كان 0.4 → 0.8
 MIN_GROQ_CONFIDENCE = 55
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 4
@@ -161,7 +170,7 @@ RSI_SELL_WARNING = 22
 
 # ==================== 🔥 نظام النقاط ====================
 MIN_SCORE_REQUIRED = 60
-MIN_ORDER_BOOK_POINTS = 2
+MIN_ORDER_BOOK_POINTS = 3       # 🔥 كان 2 → 3
 MIN_RSI_POINTS = 0
 
 SCORE_WEIGHTS = {
@@ -185,23 +194,21 @@ MEMORY_MAX_LOSSES_TOTAL = 2
 MEMORY_BLOCK_LOSS_THRESHOLD = -0.5
 MEMORY_AVG_PNL_THRESHOLD = -0.2
 
-# ==================== فلتر دفتر الأوامر ====================
+# ==================== 🔥 فلتر دفتر الأوامر (أصرم) ====================
 ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.15
-MIN_DEPTH_MULTIPLIER = 10
+MIN_DEPTH_MULTIPLIER = 15       # 🔥 كان 10 → 15
 
-# ==================== فلتر Funding Rate + Open Interest ====================
+# ==================== فلتر Funding Rate ====================
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط (معطل) ====================
+# ==================== فلاتر معطلة ====================
 ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
-
-# ==================== منع الصفقات المتعاكسة (معطل) ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
-# ==================== 🔥 قاطع الخسارة اليومية (معطل) ====================
+# ==================== قاطع الخسارة اليومية (معطل) ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = False
 DAILY_MAX_LOSS_PERCENT = 15.0
 
@@ -235,7 +242,7 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== Cooldown ذكي ====================
+# ==================== 🔥 Cooldown ذكي ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
 COOLDOWN_MINUTES_AFTER_LOSS = 30
