@@ -1,17 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.2.0
+config.py - الإعدادات النهائية v4.2.1
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v4.2.0 (دمج v4.1.5 + إضافات جديدة):
-    ✅ محافظ على إعدادات v4.1.5 التي كانت تعمل وتُعطي أرباحاً
-    🔥 إضافة OpenRouter (AI أساسي)
-    🔥 تصحيح نماذج Gemini
-    🔥 Firebase Backup
-    🔥 Memory Blacklist محسّن
-    🔥 Cooldown ذكي (15-30-60 دقيقة)
-    🔥 RSI Hard Reject
-    🔥 قاطع الخسارة اليومية مع قيمة أعلى
+🔧 التعديلات v4.2.1 (محسّنة للسوق الخامل):
+    - 🔥 MIN_SCORE_REQUIRED: 65 → 55
+    - 🔥 MIN_VOLUME_FACTOR: 0.99 → 0.4
+    - 🔥 MIN_TIMEFRAME_ALIGNMENT: 4.0 → 2.5
+    - 🔥 MIN_CONFIDENCE_AUTO: 55 → 50
+    - 🔥 MIN_GROQ_CONFIDENCE: 60 → 55
+    - 🔥 MIN_SIGNAL_STRENGTH: 5 → 4
+
+🔧 التعديلات v4.2.0:
+    - OpenRouter (AI أساسي)
+    - تصحيح نماذج Gemini
+    - Firebase Backup
+    - Memory Blacklist محسّن
+    - Cooldown ذكي
 
 📅 آخر تعديل: 2026-09-27
 """
@@ -79,6 +84,7 @@ GEMINI_FALLBACK_MODELS = [
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 # 🔥 استراتيجية AI: openrouter / gemini / groq / auto
+# ⚠️ غيرها من Railway: AI_PROVIDER=groq
 AI_PROVIDER = _get_env("AI_PROVIDER", default="openrouter")
 AI_FALLBACK_ENABLED = True
 
@@ -138,12 +144,12 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== شروط الدخول (v4.1.5) ====================
-MIN_TIMEFRAME_ALIGNMENT = 4.0
-MIN_VOLUME_FACTOR = 0.99
-MIN_GROQ_CONFIDENCE = 60
-MIN_CONFIDENCE_AUTO = 55
-MIN_SIGNAL_STRENGTH = 5
+# ==================== 🔥 شروط الدخول (v4.2.1 - محسّنة) ====================
+MIN_TIMEFRAME_ALIGNMENT = 2.5      # 🔥 من 4.0 → 2.5
+MIN_VOLUME_FACTOR = 0.4            # 🔥 من 0.99 → 0.4
+MIN_GROQ_CONFIDENCE = 55           # 🔥 من 60 → 55
+MIN_CONFIDENCE_AUTO = 50           # 🔥 من 55 → 50
+MIN_SIGNAL_STRENGTH = 4            # 🔥 من 5 → 4
 
 # ==================== 🔥 RSI - Scalp Mode ====================
 RSI_BUY_HARD_REJECT = 90
@@ -151,8 +157,8 @@ RSI_SELL_HARD_REJECT = 10
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
-# ==================== نظام النقاط (v4.1.5) ====================
-MIN_SCORE_REQUIRED = 65
+# ==================== 🔥 نظام النقاط (v4.2.1) ====================
+MIN_SCORE_REQUIRED = 55            # 🔥 من 65 → 55
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
@@ -169,7 +175,7 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== 🔥 Memory Blacklist (v6.0) ====================
+# ==================== 🔥 Memory Blacklist ====================
 MEMORY_MIN_TRADES_FOR_SCORE = 3
 MEMORY_MIN_WIN_RATE = 30
 MEMORY_MAX_CONSECUTIVE_LOSSES = 3
@@ -186,16 +192,16 @@ MIN_DEPTH_MULTIPLIER = 10
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط ====================
+# ==================== فلتر الارتباط (معطل مؤقتاً) ====================
 ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
 
-# ==================== منع الصفقات المتعاكسة ====================
+# ==================== منع الصفقات المتعاكسة (معطل مؤقتاً) ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 # ==================== 🔥 قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = True
-DAILY_MAX_LOSS_PERCENT = 15.0      # 🔥 من 5.0 → 15.0 (هامش أكبر)
+DAILY_MAX_LOSS_PERCENT = 15.0
 
 # ==================== Trailing SL (v4.1.5) ====================
 TRAILING_SL_ENABLED = True
