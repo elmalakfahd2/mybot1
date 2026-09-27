@@ -1,22 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.2.1
+config.py - الإعدادات النهائية v4.4.0
 🔒 آمن للرفع على GitHub: لا يحتوي على أي مفاتيح حقيقية.
 
-🔧 التعديلات v4.2.1 (محسّنة للسوق الخامل):
-    - 🔥 MIN_SCORE_REQUIRED: 65 → 55
-    - 🔥 MIN_VOLUME_FACTOR: 0.99 → 0.4
-    - 🔥 MIN_TIMEFRAME_ALIGNMENT: 4.0 → 2.5
-    - 🔥 MIN_CONFIDENCE_AUTO: 55 → 50
-    - 🔥 MIN_GROQ_CONFIDENCE: 60 → 55
-    - 🔥 MIN_SIGNAL_STRENGTH: 5 → 4
-
-🔧 التعديلات v4.2.0:
-    - OpenRouter (AI أساسي)
-    - تصحيح نماذج Gemini
-    - Firebase Backup
-    - Memory Blacklist محسّن
-    - Cooldown ذكي
+🔧 المزودون (5):
+   1. Gemini (أساسي - 1500/يوم)
+   2. Groq (احتياطي 1 - 1000/يوم)
+   3. SambaNova (احتياطي 2 - 20/يوم)
+   4. HuggingFace (احتياطي 3)
+   5. OpenRouter (احتياطي 4 - 50/يوم)
 
 📅 آخر تعديل: 2026-09-27
 """
@@ -55,7 +47,36 @@ BINANCE_API_SECRET = _get_env("BINANCE_API_SECRET", required=True)
 TELEGRAM_TOKEN = _get_env("TELEGRAM_TOKEN", required=True)
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 
-# ==================== 🔥 OpenRouter (AI أساسي) ====================
+# ==================== 🔥 Gemini AI (الأساسي - 1500/يوم) ====================
+GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
+ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
+GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_FALLBACK_MODELS = [
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-8b",
+]
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+# ==================== 🔥 Groq AI (احتياطي 1 - 1000/يوم) ====================
+GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
+ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
+
+# ==================== 🔥 SambaNova AI (احتياطي 2 - 20/يوم) ====================
+SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
+ENABLE_SAMBANOVA_ANALYSIS = _get_bool("ENABLE_SAMBANOVA_ANALYSIS", default=True)
+SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
+SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
+
+# ==================== 🔥 HuggingFace AI (احتياطي 3) ====================
+HUGGINGFACE_API_KEY = _get_env("HUGGINGFACE_API_KEY", default="")
+ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=True)
+HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
+
+# ==================== OpenRouter (احتياطي 4 - 50/يوم) ====================
 OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
 ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
 OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -66,29 +87,12 @@ OPENROUTER_FALLBACK_MODELS = [
 ]
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
-# ==================== Groq AI (احتياطي) ====================
-GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
-ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
-GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
-
-# ==================== 🔥 Gemini AI (احتياطي 2) ====================
-GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
-ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
-GEMINI_MODEL = "gemini-2.0-flash-exp"
-GEMINI_FALLBACK_MODELS = [
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-]
-GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-
-# 🔥 استراتيجية AI: openrouter / gemini / groq / auto
-# ⚠️ غيرها من Railway: AI_PROVIDER=groq
-AI_PROVIDER = _get_env("AI_PROVIDER", default="openrouter")
+# ==================== 🔥 استراتيجية AI ====================
+# gemini / groq / sambanova / huggingface / openrouter / auto
+AI_PROVIDER = _get_env("AI_PROVIDER", default="gemini")
 AI_FALLBACK_ENABLED = True
 
-# ==================== 🔥 Firebase Backup ====================
+# ==================== Firebase Backup ====================
 FIREBASE_KEY_JSON = _get_env("FIREBASE_KEY", default="")
 FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f59")
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
@@ -108,25 +112,25 @@ OPEN_POSITIONS_FILE = "open_positions.json"
 LEARNING_HISTORY_FILE = "learning_history.json"
 TUNING_HISTORY_FILE = "tuning_history.json"
 
-USE_TESTNET = _get_bool("USE_TESTNET", default=True)
+USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== TP المتعدد (v4.1.5 - يعمل جيداً) ====================
+# ==================== 🔥 TP المتعدد (R:R محسّن) ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.0]
+TP_MULTIPLE_LEVELS = [2.0, 3.0, 4.0]
 TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
-SL_PERCENT = 2.0
-TP_PERCENT = 1.2
+SL_PERCENT = 1.5
+TP_PERCENT = 2.0
 
-# ==================== SL ديناميكي (v4.1.5) ====================
+# ==================== 🔥 SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.5
-SL_MIN_PERCENT = 1.5
-SL_MAX_PERCENT = 3.0
+SL_ATR_MULTIPLIER = 2.0
+SL_MIN_PERCENT = 1.2
+SL_MAX_PERCENT = 1.8
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -144,21 +148,21 @@ ENABLE_VOLUME_FILTER = True
 MIN_VOLUME_24H_USDT = 50000000
 MIN_MARKET_CAP_RANK = 200
 
-# ==================== 🔥 شروط الدخول (v4.2.1 - محسّنة) ====================
-MIN_TIMEFRAME_ALIGNMENT = 2.5      # 🔥 من 4.0 → 2.5
-MIN_VOLUME_FACTOR = 0.4            # 🔥 من 0.99 → 0.4
-MIN_GROQ_CONFIDENCE = 55           # 🔥 من 60 → 55
-MIN_CONFIDENCE_AUTO = 50           # 🔥 من 55 → 50
-MIN_SIGNAL_STRENGTH = 4            # 🔥 من 5 → 4
+# ==================== شروط الدخول ====================
+MIN_TIMEFRAME_ALIGNMENT = 2.5
+MIN_VOLUME_FACTOR = 0.4
+MIN_GROQ_CONFIDENCE = 55
+MIN_CONFIDENCE_AUTO = 50
+MIN_SIGNAL_STRENGTH = 4
 
-# ==================== 🔥 RSI - Scalp Mode ====================
+# ==================== RSI - Scalp Mode ====================
 RSI_BUY_HARD_REJECT = 90
 RSI_SELL_HARD_REJECT = 10
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
-# ==================== 🔥 نظام النقاط (v4.2.1) ====================
-MIN_SCORE_REQUIRED = 55            # 🔥 من 65 → 55
+# ==================== نظام النقاط ====================
+MIN_SCORE_REQUIRED = 55
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
@@ -175,7 +179,7 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== 🔥 Memory Blacklist ====================
+# ==================== Memory Blacklist ====================
 MEMORY_MIN_TRADES_FOR_SCORE = 3
 MEMORY_MIN_WIN_RATE = 30
 MEMORY_MAX_CONSECUTIVE_LOSSES = 3
@@ -183,7 +187,7 @@ MEMORY_MAX_LOSSES_TOTAL = 3
 MEMORY_BLOCK_LOSS_THRESHOLD = -1.0
 MEMORY_AVG_PNL_THRESHOLD = -0.5
 
-# ==================== فلتر دفتر الأوامر والتنفيذ ====================
+# ==================== فلتر دفتر الأوامر ====================
 ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.15
 MIN_DEPTH_MULTIPLIER = 10
@@ -192,18 +196,18 @@ MIN_DEPTH_MULTIPLIER = 10
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلتر الارتباط (معطل مؤقتاً) ====================
+# ==================== فلتر الارتباط (معطل) ====================
 ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
 
-# ==================== منع الصفقات المتعاكسة (معطل مؤقتاً) ====================
+# ==================== منع الصفقات المتعاكسة (معطل) ====================
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
-# ==================== 🔥 قاطع الخسارة اليومية ====================
-ENABLE_DAILY_DRAWDOWN_LIMIT = True
+# ==================== 🔥 قاطع الخسارة اليومية (معطل) ====================
+ENABLE_DAILY_DRAWDOWN_LIMIT = False
 DAILY_MAX_LOSS_PERCENT = 15.0
 
-# ==================== Trailing SL (v4.1.5) ====================
+# ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
 TRAILING_SL_TRIGGER = 1.0
 TRAILING_SL_DISTANCE = 0.5
@@ -221,8 +225,8 @@ COMMISSION_RATE = 0.0004
 # ==================== كشف حالة السوق ====================
 ENABLE_MARKET_REGIME = True
 MARKET_REGIME_CACHE_SECONDS = 300
-BLOCK_IN_STRONG_BEARISH = True
-BLOCK_IN_STRONG_BULLISH_SELL = True
+BLOCK_IN_STRONG_BEARISH = False
+BLOCK_IN_STRONG_BULLISH_SELL = False
 
 # ==================== أوقات التداول ====================
 ENABLE_TIME_FILTER = False
@@ -233,7 +237,7 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== 🔥 Cooldown ذكي ====================
+# ==================== Cooldown ذكي ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
 COOLDOWN_MINUTES_AFTER_LOSS = 15
@@ -257,7 +261,7 @@ LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
 MAX_RETRIES = 3
 
-# ==================== ⚡ البيانات اللحظية (WebSocket) ====================
+# ==================== البيانات اللحظية ====================
 ENABLE_REALTIME_DATA = False
 REALTIME_ADJUSTMENT_ENABLED = True
 REALTIME_MIN_ADJUSTMENT = -5
@@ -267,12 +271,12 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== التعلم التلقائي ====================
+# ==================== 🔥 التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
 AUTO_LEARN_INTERVAL_HOURS = 24
 AUTO_LEARN_MIN_TRADES = 10
 AUTO_LEARN_MIN_PER_SYMBOL = 3
-AUTO_TUNE_WEIGHTS = True
+AUTO_TUNE_WEIGHTS = False
 AUTO_RESTART_AFTER_TUNE = False
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
