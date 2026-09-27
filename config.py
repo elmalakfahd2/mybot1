@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v4.3.2
+config.py - الإعدادات النهائية v5.1
 🔒 آمن للرفع على GitHub.
 
-🔧 التعديلات v4.3.2:
-    - 🔥 Gemini: gemini-2.0-flash (النموذج الصحيح)
-    - 🔥 GROQ_MIN_SCORE_BEFORE_CALL: 30 (AI أبكر)
-    - 🔥 SambaNova: معطل (يحتاج بطاقة)
-    - ✅ 3 مزودين فعّالين: Gemini + Groq + HuggingFace
-
-📅 آخر تعديل: 2026-09-27
+🔧 التعديلات v5.1:
+    - 🔥 GEMINI_MODEL: gemini-2.5-flash (كان 2.0-flash - معطل)
+    - 🔥 GEMINI_FALLBACK: gemini-2.5-flash-lite, gemini-flash-latest
+    - 🔥 AI_PROVIDER: gemini (كان groq)
+    - 🔥 AUTO_TUNE_WEIGHTS: True (كان False)
+    - 🔥 فلتر الذاكرة أصرم
+    - 🔥 Cooldown تصاعدي
 """
 
 import os
@@ -43,25 +43,30 @@ BINANCE_API_SECRET = _get_env("BINANCE_API_SECRET", required=True)
 TELEGRAM_TOKEN = _get_env("TELEGRAM_TOKEN", required=True)
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 
-# ==================== 🔥 Gemini AI (الأساسي - 1500/يوم) ====================
+# ==================== 🔥 Gemini AI (الأساسي) ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
-GEMINI_MODEL = "gemini-2.0-flash"          # 🔥 النموذج الصحيح
+
+# 🔥 النموذج الصحيح المتاح في حسابك (كان 2.0-flash معطل)
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# 🔥 النماذج البديلة - حسب قائمتك الفعلية
 GEMINI_FALLBACK_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
 ]
+
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# ==================== 🔥 Groq AI (احتياطي 1 - 1000/يوم) ====================
+# ==================== 🔥 Groq AI (احتياطي 1) ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
 ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== ❌ SambaNova (معطل - يحتاج بطاقة) ====================
+# ==================== ❌ SambaNova (معطل) ====================
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
 ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
@@ -73,7 +78,7 @@ ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=T
 HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
 
-# ==================== OpenRouter (احتياطي 3 - 50/يوم) ====================
+# ==================== OpenRouter (احتياطي 3) ====================
 OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
 ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
 OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -84,8 +89,8 @@ OPENROUTER_FALLBACK_MODELS = [
 ]
 OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
-# 🔥 الاستراتيجية: Gemini أولاً، ثم Groq، ثم HuggingFace، ثم OpenRouter
-AI_PROVIDER = _get_env("AI_PROVIDER", default="gemini")
+# 🔥 الاستراتيجية: Gemini أولاً دائماً
+AI_PROVIDER = "gemini"
 AI_FALLBACK_ENABLED = True
 
 # ==================== Firebase Backup ====================
@@ -115,7 +120,7 @@ TRADE_USDT = 15
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 5
 
-# ==================== 🔥 TP المتعدد (R:R محسّن) ====================
+# ==================== 🔥 TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
 TP_MULTIPLE_LEVELS = [2.0, 3.0, 4.0]
 TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]
@@ -148,7 +153,7 @@ MIN_MARKET_CAP_RANK = 200
 MIN_TIMEFRAME_ALIGNMENT = 2.5
 MIN_VOLUME_FACTOR = 0.4
 MIN_GROQ_CONFIDENCE = 55
-MIN_CONFIDENCE_AUTO = 50
+MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 4
 
 # ==================== RSI - Scalp Mode ====================
@@ -157,8 +162,8 @@ RSI_SELL_HARD_REJECT = 10
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
-# ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 55
+# ==================== 🔥 نظام النقاط ====================
+MIN_SCORE_REQUIRED = 60
 MIN_ORDER_BOOK_POINTS = 2
 MIN_RSI_POINTS = 0
 
@@ -175,13 +180,13 @@ SCORE_WEIGHTS = {
     'max_score': 100
 }
 
-# ==================== Memory Blacklist ====================
-MEMORY_MIN_TRADES_FOR_SCORE = 3
+# ==================== 🔥 فلتر الذاكرة (أصرم) ====================
+MEMORY_MIN_TRADES_FOR_SCORE = 2
 MEMORY_MIN_WIN_RATE = 30
-MEMORY_MAX_CONSECUTIVE_LOSSES = 3
-MEMORY_MAX_LOSSES_TOTAL = 3
-MEMORY_BLOCK_LOSS_THRESHOLD = -1.0
-MEMORY_AVG_PNL_THRESHOLD = -0.5
+MEMORY_MAX_CONSECUTIVE_LOSSES = 2
+MEMORY_MAX_LOSSES_TOTAL = 2
+MEMORY_BLOCK_LOSS_THRESHOLD = -0.5
+MEMORY_AVG_PNL_THRESHOLD = -0.2
 
 # ==================== فلتر دفتر الأوامر ====================
 ENABLE_ORDER_BOOK_FILTER = True
@@ -212,7 +217,7 @@ BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
-PAUSE_DURATION_MINUTES = 60
+PAUSE_DURATION_MINUTES = 30
 
 # ==================== ذاكرة الصفقات ====================
 ENABLE_TRADE_MEMORY = True
@@ -236,16 +241,16 @@ TOP_SYMBOLS_TO_SCAN = 20
 # ==================== Cooldown ذكي ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
-COOLDOWN_MINUTES_AFTER_LOSS = 15
+COOLDOWN_MINUTES_AFTER_LOSS = 30
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== 🔥 Groq AI Settings (AI أبكر) ====================
+# ==================== 🔥 AI Settings ====================
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 30            # 🔥 من 45 → 30
+GROQ_MIN_SCORE_BEFORE_CALL = 25
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
@@ -269,10 +274,10 @@ REALTIME_MAX_SUBSCRIPTIONS = 25
 
 # ==================== 🔥 التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
-AUTO_LEARN_INTERVAL_HOURS = 24
-AUTO_LEARN_MIN_TRADES = 10
+AUTO_LEARN_INTERVAL_HOURS = 12
+AUTO_LEARN_MIN_TRADES = 5
 AUTO_LEARN_MIN_PER_SYMBOL = 3
-AUTO_TUNE_WEIGHTS = False
+AUTO_TUNE_WEIGHTS = True
 AUTO_RESTART_AFTER_TUNE = False
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
@@ -280,8 +285,8 @@ AUTO_LEARN_MAX_ADJUSTMENT = 0.30
 AUTO_LEARN_BACKUP_ENABLED = True
 
 # ==================== الحماية الذاتية ====================
-AUTO_PAUSE_ON_LOSS_STREAK = 5
-AUTO_PAUSE_DURATION_MINUTES = 120
+AUTO_PAUSE_ON_LOSS_STREAK = 4
+AUTO_PAUSE_DURATION_MINUTES = 60
 AUTO_REDUCE_RISK_ON_LOSS = True
 AUTO_RISK_REDUCTION_FACTOR = 0.5
 
