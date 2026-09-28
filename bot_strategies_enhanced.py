@@ -1,10 +1,11 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - الإصدار v4.4
-# 🔧 التعديلات v4.4:
-#    - 🔥 تطبيق فعلي لفلتر الذاكرة
-#    - 🔥 تبريد ذكي (15-30-60 دقيقة)
-#    - 🔥 رفض العملات الخاسرة متكررة
-# 📅 التاريخ: 2026-09-26
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.1
+# 🔧 التعديلات v5.1:
+#    - 🔥 AI إلزامي (75+ استثناء)
+#    - 🔥 لا نقاط مجانية لـ AI
+#    - 🔥 Cooldown تصاعدي (60/120/240)
+#    - 🔥 حظر دائم للعملات السيئة
+# 📅 التاريخ: 2026-09-28
 # ==================================================
 
 import logging
@@ -116,32 +117,42 @@ def calculate_atr(symbol, period=14):
         return 0
 
 
-# ==================== التبريد الذكي ====================
+# ==================== 🔥 Cooldown تصاعدي ====================
 
 def add_symbol_cooldown(symbol, duration_minutes=None):
+    """
+    🔥 Cooldown تصاعدي ذكي:
+    - ربح → 5 دقائق
+    - خسارة 1 → 60 دقيقة
+    - خسارة 2 → 120 دقيقة
+    - خسارة 3+ → 240 دقيقة
+    """
     try:
-        if duration_minutes is None:
-            duration_minutes = COOLDOWN_MINUTES
-
         if MEMORY_AVAILABLE:
-            try:
-                recent = memory.get_symbol_history(symbol, limit=2)
-                if recent:
-                    last_trade = recent[-1]
-                    if not last_trade.get('is_win', True):
-                        duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS
-                        logger.info(f"⚠️ {symbol} - تبريد مضاعف بعد خسارة: {duration_minutes} د")
-
-                    if len(recent) >= 2:
-                        if not recent[-1].get('is_win', True) and not recent[-2].get('is_win', True):
-                            duration_minutes = 60
-                            logger.warning(f"🚫 {symbol} - خسارتان متتاليتان - تبريد 60 د")
-            except Exception as e:
-                logger.warning(f"⚠️ فشل قراءة تاريخ {symbol}: {e}")
+            recent = memory.get_symbol_history(symbol, limit=5)
+            if recent:
+                losses = sum(1 for t in recent if not t.get('is_win', True))
+                
+                if losses >= 3:
+                    duration_minutes = 240
+                    logger.warning(f"🚫 {symbol}: {losses} خسائر - تبريد 240 دقيقة")
+                elif losses == 2:
+                    duration_minutes = 120
+                    logger.warning(f"⚠️ {symbol}: خسارتان - تبريد 120 دقيقة")
+                elif losses == 1:
+                    duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS
+                    logger.info(f"⚠️ {symbol}: خسارة - تبريد {COOLDOWN_MINUTES_AFTER_LOSS} دقيقة")
+                else:
+                    duration_minutes = COOLDOWN_MINUTES
+                    logger.info(f"✅ {symbol}: تبريد عادي {COOLDOWN_MINUTES} دقيقة")
+            else:
+                duration_minutes = COOLDOWN_MINUTES
+        else:
+            duration_minutes = COOLDOWN_MINUTES
 
         cooldown_end = time.time() + (duration_minutes * 60)
         _symbol_cooldown[symbol] = cooldown_end
-        logger.info(f"⏳ {symbol} تبريد {duration_minutes} د")
+        logger.info(f"⏳ {symbol} في التبريد {duration_minutes} دقيقة")
     except Exception as e:
         logger.error(f"خطأ: {e}")
 
@@ -180,6 +191,77 @@ def get_cooldown_status():
         return {'total_active': len(active), 'active_symbols': active}
     except:
         return {'total_active': 0, 'active_symbols': {}}
+
+
+# ==================== فلتر الذاكرة ====================
+
+def check_memory_filter(symbol):
+    try:
+        if not MEMORY_AVAILABLE or not ENABLE_TRADE_MEMORY:
+            return True, "ذاكرة معطلة", {}
+
+        # 🔥 1. الحظر الدائم أولاً
+        perm_blocked, perm_reason = memory.is_symbol_permanently_blocked(symbol)
+        if perm_blocked:
+            logger.warning(f"🚫 {symbol} محظور دائمياً: {perm_reason}")
+            return False, f"🚫 {perm_reason}", {'blocked': True}
+
+        # 2. الحظر العادي
+        is_blocked, reason = memory.is_symbol_blacklisted(
+            symbol,
+            min_trades=MEMORY_MIN_TRADES_FOR_SCORE,
+            max_win_rate=0.25,
+            max_consecutive_losses=MEMORY_MAX_CONSECUTIVE_LOSSES
+        )
+
+        if is_blocked:
+            logger.warning(f"🚫 {symbol} محظور: {reason}")
+            return False, f"🚫 {reason}", {'blocked': True}
+
+        try:
+            stats = memory.load_memory().get("symbol_stats", {}).get(symbol, {})
+            if stats:
+                losses = stats.get("losses", 0)
+                total_pnl = stats.get("total_pnl", 0)
+                wins = stats.get("wins", 0)
+
+                if losses >= 2 and total_pnl < MEMORY_BLOCK_LOSS_THRESHOLD:
+                    logger.warning(f"🚫 {symbol}: {losses} خسائر، إجمالي {total_pnl:.2f}$")
+                    return False, f"🚫 خسائر متعددة ({losses})", {'blocked': True}
+
+                total_trades = wins + losses
+                if total_trades > 0:
+                    avg_pnl = total_pnl / total_trades
+                    if avg_pnl < MEMORY_AVG_PNL_THRESHOLD:
+                        logger.warning(f"🚫 {symbol}: متوسط سالب {avg_pnl:.2f}$")
+                        return False, f"🚫 متوسط سالب", {'blocked': True}
+        except Exception as e:
+            logger.debug(f"تعذر فحص stats لـ {symbol}: {e}")
+
+        score = memory.get_symbol_score(symbol)
+        return True, score.get('reason', ''), score
+    except Exception as e:
+        logger.error(f"خطأ في check_memory_filter: {e}")
+        return True, "خطأ", {}
+
+
+def check_market_filter(direction):
+    try:
+        if not MARKET_REGIME_AVAILABLE or not ENABLE_MARKET_REGIME:
+            return True, "سوق معطل", {}
+
+        regime = MarketRegime.get_regime()
+        regime_type = regime.get('regime', 'unknown')
+
+        if BLOCK_IN_STRONG_BEARISH and regime_type == 'strong_bearish' and direction == "BUY":
+            return False, f"⚠️ سوق هابط قوي", regime
+
+        if BLOCK_IN_STRONG_BULLISH_SELL and regime_type == 'strong_bullish' and direction == "SELL":
+            return False, f"⚠️ سوق صاعد قوي", regime
+
+        return True, "متوافق", regime
+    except:
+        return True, "خطأ", {}
 
 
 # ==================== محرك التحليل ====================
@@ -871,45 +953,44 @@ def calculate_total_score(signal, analysis):
         score += details['funding_oi_points']
         logger.info(f"📊 Funding/OI: {details['funding_oi_points']}/10")
 
-        # 9. AI (12)
+        # 9. AI (12) - 🔥 لا نقاط مجانية
         if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS:
-            if score >= GROQ_MIN_SCORE_BEFORE_CALL:
-                groq_rec = signal.get('groq_recommendation', '')
-                groq_conf = signal.get('groq_confidence', 0)
+            groq_rec = signal.get('groq_recommendation', '')
+            groq_conf = signal.get('groq_confidence', 0)
 
-                if groq_rec == "تأكيد":
-                    if groq_conf >= 85:
-                        details['groq_points'] = 12
-                    elif groq_conf >= 75:
-                        details['groq_points'] = 11
-                    elif groq_conf >= 65:
-                        details['groq_points'] = 9
-                    elif groq_conf >= 60:
-                        details['groq_points'] = 7
-                    elif groq_conf >= 55:
-                        details['groq_points'] = 5
-                    else:
-                        details['groq_points'] = 3
-                elif groq_rec == "تحذير":
-                    if groq_conf >= 70:
-                        details['groq_points'] = 6
-                    elif groq_conf >= 60:
-                        details['groq_points'] = 4
-                    else:
-                        details['groq_points'] = 2
-                elif groq_rec == "رفض":
-                    if GROQ_REJECT_IS_VETO and groq_conf >= 75:
-                        logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%)")
-                        details['rejected'] = True
-                        details['reject_reason'] = f'AI رفض ({groq_conf}%)'
-                        return 0, details
-                    details['groq_points'] = 0
-                else:
+            if groq_rec == "تأكيد":
+                if groq_conf >= 85:
+                    details['groq_points'] = 12
+                elif groq_conf >= 75:
+                    details['groq_points'] = 11
+                elif groq_conf >= 65:
+                    details['groq_points'] = 9
+                elif groq_conf >= 60:
+                    details['groq_points'] = 7
+                elif groq_conf >= 55:
                     details['groq_points'] = 5
+                else:
+                    details['groq_points'] = 3
+            elif groq_rec == "تحذير":
+                if groq_conf >= 70:
+                    details['groq_points'] = 6
+                elif groq_conf >= 60:
+                    details['groq_points'] = 4
+                else:
+                    details['groq_points'] = 2
+            elif groq_rec == "رفض":
+                if GROQ_REJECT_IS_VETO and groq_conf >= 75:
+                    logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%)")
+                    details['rejected'] = True
+                    details['reject_reason'] = f'AI رفض ({groq_conf}%)'
+                    return 0, details
+                details['groq_points'] = 0
             else:
-                details['groq_points'] = 5
+                # 🔥 لا نقاط إذا AI لم يعمل
+                details['groq_points'] = 0
         else:
-            details['groq_points'] = 5
+            # 🔥 لا نقاط إذا AI غير متاح
+            details['groq_points'] = 0
 
         score += details['groq_points']
         logger.info(f"📊 AI: {details['groq_points']}/12")
@@ -940,71 +1021,7 @@ def calculate_total_score(signal, analysis):
         return 0, {'total': 0, 'max_total': 100, 'rejected': True, 'reject_reason': str(e)}
 
 
-# ==================== فلتر الذاكرة ====================
-
-def check_memory_filter(symbol):
-    try:
-        if not MEMORY_AVAILABLE or not ENABLE_TRADE_MEMORY:
-            return True, "ذاكرة معطلة", {}
-
-        is_blocked, reason = memory.is_symbol_blacklisted(
-            symbol,
-            min_trades=MEMORY_MIN_TRADES_FOR_SCORE,
-            max_win_rate=0.25,
-            max_consecutive_losses=MEMORY_MAX_CONSECUTIVE_LOSSES
-        )
-
-        if is_blocked:
-            logger.warning(f"🚫 {symbol} محظور: {reason}")
-            return False, f"🚫 {reason}", {'blocked': True}
-
-        try:
-            stats = memory.load_memory().get("symbol_stats", {}).get(symbol, {})
-            if stats:
-                losses = stats.get("losses", 0)
-                total_pnl = stats.get("total_pnl", 0)
-                wins = stats.get("wins", 0)
-
-                if losses >= 2 and total_pnl < MEMORY_BLOCK_LOSS_THRESHOLD:
-                    logger.warning(f"🚫 {symbol}: {losses} خسائر، إجمالي {total_pnl:.2f}$")
-                    return False, f"🚫 خسائر متعددة ({losses})", {'blocked': True}
-
-                total_trades = wins + losses
-                if total_trades > 0:
-                    avg_pnl = total_pnl / total_trades
-                    if avg_pnl < MEMORY_AVG_PNL_THRESHOLD:
-                        logger.warning(f"🚫 {symbol}: متوسط سالب {avg_pnl:.2f}$")
-                        return False, f"🚫 متوسط سالب", {'blocked': True}
-        except Exception as e:
-            logger.debug(f"تعذر فحص stats لـ {symbol}: {e}")
-
-        score = memory.get_symbol_score(symbol)
-        return True, score.get('reason', ''), score
-    except Exception as e:
-        logger.error(f"خطأ في check_memory_filter: {e}")
-        return True, "خطأ", {}
-
-
-def check_market_filter(direction):
-    try:
-        if not MARKET_REGIME_AVAILABLE or not ENABLE_MARKET_REGIME:
-            return True, "سوق معطل", {}
-
-        regime = MarketRegime.get_regime()
-        regime_type = regime.get('regime', 'unknown')
-
-        if BLOCK_IN_STRONG_BEARISH and regime_type == 'strong_bearish' and direction == "BUY":
-            return False, f"⚠️ سوق هابط قوي", regime
-
-        if BLOCK_IN_STRONG_BULLISH_SELL and regime_type == 'strong_bullish' and direction == "SELL":
-            return False, f"⚠️ سوق صاعد قوي", regime
-
-        return True, "متوافق", regime
-    except:
-        return True, "خطأ", {}
-
-
-# ==================== توليد الإشارة ====================
+# ==================== 🔥 توليد الإشارة - AI إلزامي ====================
 
 def generate_sniper_signal(symbol):
     try:
@@ -1056,20 +1073,53 @@ def generate_sniper_signal(symbol):
             logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")
             return None
 
-        if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS and total_score >= GROQ_MIN_SCORE_BEFORE_CALL:
-            try:
-                groq_result = enhance_signal_with_groq(signal, analysis)
-                if groq_result:
-                    signal.update(groq_result)
-
-                    if groq_result.get('groq_recommendation') == 'رفض':
-                        if GROQ_REJECT_IS_VETO and groq_result.get('groq_confidence', 0) >= 75:
-                            logger.warning(f"🛑 {symbol}: AI رفض")
+        # 🔥 AI إلزامي (فقط إذا النقاط 55+)
+        if total_score >= GROQ_MIN_SCORE_BEFORE_CALL:
+            
+            if not GROQ_AVAILABLE:
+                if total_score < 75:
+                    logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < 75")
+                    return None
+                logger.warning(f"⚠️ {symbol}: AI غير متاح - قبول استثنائي ({total_score})")
+            else:
+                try:
+                    groq_result = enhance_signal_with_groq(signal, analysis)
+                    
+                    if not groq_result:
+                        # AI فشل - اقبل فقط 75+
+                        if total_score < 75:
+                            logger.warning(f"🛑 {symbol}: AI فشل والنقاط {total_score} < 75")
                             return None
-
-                    total_score, score_details = calculate_total_score(signal, analysis)
-            except Exception as e:
-                logger.error(f"AI: {e}")
+                        logger.warning(f"⚠️ {symbol}: AI فشل - قبول استثنائي ({total_score})")
+                    else:
+                        rec_ai = groq_result.get('groq_recommendation', '')
+                        ai_conf = groq_result.get('groq_confidence', 0)
+                        
+                        # AI رفض صريح
+                        if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO:
+                            logger.warning(f"🛑 {symbol}: AI رفض ({ai_conf}%)")
+                            return None
+                        
+                        # تحذير قوي
+                        if rec_ai == 'تحذير' and ai_conf >= 75:
+                            logger.warning(f"🛑 {symbol}: AI تحذير قوي ({ai_conf}%)")
+                            return None
+                        
+                        signal.update(groq_result)
+                        total_score, score_details = calculate_total_score(signal, analysis)
+                        
+                        if rec_ai == 'تأكيد':
+                            logger.info(f"✅ {symbol}: AI تأكيد ({ai_conf}%)")
+                        else:
+                            logger.info(f"⚠️ {symbol}: AI تحذير خفيف ({ai_conf}%) - نقاط: {total_score}")
+                        
+                except Exception as e:
+                    logger.error(f"🛑 {symbol}: خطأ AI: {e}")
+                    if total_score < 75:
+                        return None
+        else:
+            logger.info(f"🛑 {symbol}: نقاط {total_score} < {GROQ_MIN_SCORE_BEFORE_CALL} - لا استدعاء AI")
+            return None
 
         signal['total_score'] = total_score
         signal['score_details'] = score_details

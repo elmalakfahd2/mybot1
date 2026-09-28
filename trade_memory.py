@@ -1,11 +1,11 @@
 # ==================================================
-# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v5.5
-# 🔧 التعديلات v5.5:
-#    - 🔥 Firebase Backup بدل GitHub
+# 📁 ملف: trade_memory.py - ذاكرة الصفقات الذكية v6.0
+# 🔧 التعديلات v6.0:
+#    - 🔥 إضافة is_symbol_permanently_blocked (حظر دائم)
+#    - 🔥 Firebase Backup
 #    - 🔥 مزامنة عند البدء
 #    - 🔥 حفظ فوري بعد كل صفقة
-#    - 🔥 بدون gc.collect (لا يسبب توقف)
-# 📅 التاريخ: 2026-09-25
+# 📅 التاريخ: 2026-09-28
 # ==================================================
 
 import json
@@ -86,9 +86,6 @@ def save_memory(data):
 # ==================== 🔥 Firebase Backup ====================
 
 def backup_to_firebase(memory_data=None):
-    """
-    🔥 حفظ الذاكرة في Firebase
-    """
     try:
         if not FIREBASE_AVAILABLE:
             return False
@@ -107,9 +104,6 @@ def backup_to_firebase(memory_data=None):
 
 
 def sync_from_firebase():
-    """
-    🔥 مزامنة مع Firebase عند بدء البوت
-    """
     try:
         if not FIREBASE_AVAILABLE:
             logger.info("ℹ️ Firebase غير متاح")
@@ -127,7 +121,6 @@ def sync_from_firebase():
 
 
 def start_auto_backup():
-    """بدء الحفظ التلقائي"""
     try:
         if not ENABLE_FIREBASE_BACKUP:
             logger.info("ℹ️ Firebase Backup معطل")
@@ -142,6 +135,52 @@ def start_auto_backup():
     except Exception as e:
         logger.error(f"❌ فشل start_auto_backup: {e}")
         return False
+
+
+# ==================== 🔥 الحظر الدائم (جديد v6.0) ====================
+
+def is_symbol_permanently_blocked(symbol):
+    """
+    🔥 الحظر الدائم للعملات التي أثبتت فشلها
+    الشروط (أي واحد يكفي):
+    - خسارتان متتاليتان + إجمالي سالب
+    - 4+ خسائر مع ربحية سلبية
+    - 4+ صفقات + نسبة نجاح أقل من 25%
+    - خسارة كلية أكبر من 2$
+    """
+    try:
+        memory = load_memory()
+        stats = memory.get("symbol_stats", {}).get(symbol, {})
+        
+        if not stats:
+            return False, ""
+        
+        wins = stats.get("wins", 0)
+        losses = stats.get("losses", 0)
+        total = wins + losses
+        total_pnl = stats.get("total_pnl", 0)
+        consecutive = stats.get("consecutive_losses", 0)
+        
+        # 🔥 شرط 1: خسارتان متتاليتان + إجمالي سالب
+        if consecutive >= 2 and total_pnl < -0.5:
+            return True, f"خسارتان متتاليتان (إجمالي {total_pnl:.2f}$)"
+        
+        # 🔥 شرط 2: 4+ خسائر مع ربحية سلبية
+        if losses >= 4 and total_pnl < 0:
+            return True, f"{losses} خسائر من {total} صفقات"
+        
+        # 🔥 شرط 3: نسبة نجاح أقل من 25%
+        if total >= 4 and (wins / total) < 0.25:
+            return True, f"نسبة نجاح {wins/total*100:.0f}%"
+        
+        # 🔥 شرط 4: خسارة كلية كبيرة
+        if total_pnl < -2.0:
+            return True, f"خسارة كلية {total_pnl:.2f}$"
+        
+        return False, ""
+    except Exception as e:
+        logger.error(f"خطأ في is_symbol_permanently_blocked: {e}")
+        return False, ""
 
 
 # ==================== جلب سعر الخروج ====================
@@ -286,13 +325,11 @@ def record_trade(symbol, direction, entry_price, exit_price,
             hour_stats["wins" if is_win else "losses"] += 1
             hour_stats["total_pnl"] = round(hour_stats["total_pnl"] + net_pnl, 4)
 
-            # تقليم
             if len(memory["trades"]) > MAX_TRADES_TO_KEEP:
                 memory["trades"] = memory["trades"][-MAX_TRADES_TO_KEEP:]
 
             save_memory(memory)
 
-            # 🔥 حفظ فوري في Firebase (في خيط منفصل)
             if ENABLE_FIREBASE_BACKUP and FIREBASE_AVAILABLE:
                 try:
                     threading.Thread(
@@ -548,8 +585,11 @@ def sync_profit_history():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار trade_memory v5.5...")
+    print("🧪 اختبار trade_memory v6.0...")
     net = calculate_net_pnl(entry_price=100, exit_price=101, quantity=1, direction="BUY")
     print(f"صافي الربح: {net}$")
     stats = get_memory_stats()
     print(f"إحصائيات: {stats}")
+    # اختبار الحظر الدائم
+    blocked, reason = is_symbol_permanently_blocked("BTCUSDT")
+    print(f"BTCUSDT محظور؟ {blocked} - {reason}")

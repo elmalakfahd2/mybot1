@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v8.0
-🔧 التحسينات:
-   - Retry تلقائي لـ 503 (Gemini)
-   - ترتيب احتياطي ذكي: Gemini → HuggingFace → Groq → OpenRouter
-   - حماية من نفاد Groq
-   - Logging أوضح
+groq_integration.py - الإصدار v8.1
+🔧 التعديلات:
+    - Retry ذكي: 503 فقط (ليس 429)
+    - Fallback فوري على 429
+    - HuggingFace retry محسّن
+    - ترتيب احتياطي: Gemini → HuggingFace → Groq → SambaNova → OpenRouter
 
-📅 آخر تعديل: 2026-09-27
+📅 آخر تعديل: 2026-09-28
 """
 
 import logging
@@ -93,7 +93,7 @@ def _try_init_gemini():
 
 
 # ============================================================
-# 2. تهيئة HuggingFace (احتياطي 1 - بعد Gemini)
+# 2. تهيئة HuggingFace (احتياطي 1)
 # ============================================================
 
 def _try_init_huggingface():
@@ -319,7 +319,6 @@ def parse_ai_response(response_content, provider="unknown"):
             try:
                 data = json.loads(json_str)
             except json.JSONDecodeError:
-                # إصلاح أرقام مكتوبة نصاً
                 json_str = re.sub(r':\s*thirty\s*', ': 30', json_str)
                 json_str = re.sub(r':\s*forty\s*', ': 40', json_str)
                 json_str = re.sub(r':\s*fifty\s*', ': 50', json_str)
@@ -353,7 +352,6 @@ def parse_ai_response(response_content, provider="unknown"):
                     'ai_provider': provider
                 }
 
-        # استخراج نصي احتياطي
         recommendation = "تحذير"
         confidence = 50
         if "تأكيد" in response_content:
@@ -436,12 +434,14 @@ RSI: {rsi:.1f} | MACD: {macd_trend} | الحجم: {vol_ratio:.2f}x
 
 
 # ============================================================
-# 🔥 دوال الاستدعاء - كل مزود
+# دوال الاستدعاء - كل مزود
 # ============================================================
 
-def _call_gemini(prompt, max_retries=3):
+def _call_gemini(prompt, max_retries=2):
     """
-    🔥 استدعاء Gemini مع Retry تلقائي لـ 503
+    🔥 v8.1:
+    - Retry فقط على 503 (مشغول)
+    - عدم Retry على 429 (rate limit) - فوري للـ fallback
     """
     global gemini_working_model
     if not gemini_working_model:
@@ -461,30 +461,28 @@ def _call_gemini(prompt, max_retries=3):
 
             response = requests.post(url, json=payload, timeout=45)
 
-            # 🔥 503 = مشغول مؤقتاً → retry
-            if response.status_code == 503:
-                wait_time = 2 * (attempt + 1)  # 2, 4, 6 ثواني
-                logger.warning(f"⚠️ Gemini 503 - محاولة {attempt+1}/{max_retries} - انتظار {wait_time}s")
-                if attempt < max_retries - 1:
-                    time.sleep(wait_time)
-                    continue
+            # 🔥 429 = rate limit → Fallback فوري (لا retry)
+            if response.status_code == 429:
+                logger.warning(f"⚠️ Gemini 429 - rate limit (fallback فوري)")
+                time.sleep(2)
                 return None
 
-            # 🔥 429 = rate limit
-            if response.status_code == 429:
-                logger.warning(f"⚠️ Gemini 429 - rate limit")
-                time.sleep(5)
+            # 🔥 503 = مشغول → retry
+            if response.status_code == 503:
                 if attempt < max_retries - 1:
+                    wait = 3 * (attempt + 1)
+                    logger.warning(f"⚠️ Gemini 503 - محاولة {attempt+1}/{max_retries} - انتظار {wait}s")
+                    time.sleep(wait)
                     continue
+                logger.warning(f"⚠️ Gemini 503 - فشل نهائي")
                 return None
 
             if response.status_code != 200:
-                logger.warning(f"⚠️ فشل Gemini: {response.status_code} - {response.text[:150]}")
+                logger.warning(f"⚠️ Gemini {response.status_code} - فشل")
                 return None
 
             data = response.json()
             if 'candidates' not in data or not data['candidates']:
-                logger.warning(f"⚠️ Gemini: لا مرشحين في الاستجابة")
                 return None
 
             text = data['candidates'][0]['content']['parts'][0].get('text', '')
@@ -502,18 +500,13 @@ def _call_gemini(prompt, max_retries=3):
             return None
         except Exception as e:
             logger.warning(f"خطأ Gemini: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2)
-                continue
             return None
 
     return None
 
 
-def _call_huggingface(prompt, max_retries=2):
-    """
-    🔥 استدعاء HuggingFace (احتياطي 1 - حصة كبيرة)
-    """
+def _call_huggingface(prompt, max_retries=3):
+    """🔥 v8.1: retry أفضل"""
     global _huggingface_rate_limited_until
 
     if time.time() < _huggingface_rate_limited_until or not huggingface_available:
@@ -540,21 +533,22 @@ def _call_huggingface(prompt, max_retries=2):
             if response.status_code == 200:
                 data = response.json()
                 if 'choices' in data and data['choices']:
+                    logger.info(f"✅ HuggingFace نجح")
                     return data['choices'][0]['message']['content']
                 return None
             elif response.status_code == 429:
                 _huggingface_rate_limited_until = time.time() + 60
-                logger.warning("⏳ HuggingFace rate limit")
-                return None
-            elif response.status_code == 402:
-                logger.error("🚫 HuggingFace: نفد الرصيد المجاني")
-                _huggingface_rate_limited_until = time.time() + 86400
+                logger.warning("⏳ HuggingFace rate limit - انتظار 60s")
                 return None
             elif response.status_code == 503:
-                logger.warning(f"⚠️ HuggingFace 503 - محاولة {attempt+1}")
                 if attempt < max_retries - 1:
-                    time.sleep(2)
+                    logger.warning(f"⚠️ HuggingFace 503 - محاولة {attempt+1}")
+                    time.sleep(3)
                     continue
+                return None
+            elif response.status_code == 402:
+                logger.error("🚫 HuggingFace: نفد الرصيد")
+                _huggingface_rate_limited_until = time.time() + 86400
                 return None
             else:
                 logger.warning(f"⚠️ HuggingFace: {response.status_code}")
@@ -570,9 +564,7 @@ def _call_huggingface(prompt, max_retries=2):
 
 
 def _call_groq(prompt, max_retries=2):
-    """
-    🔥 استدعاء Groq (احتياطي 2 - حماية من النفاد)
-    """
+    """🔥 استدعاء Groq (احتياطي 2)"""
     global _groq_rate_limited_until, _groq_daily_limit_reached
 
     current_time = time.time()
@@ -599,6 +591,7 @@ def _call_groq(prompt, max_retries=2):
         )
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"✅ Groq نجح")
             return data['choices'][0]['message']['content']
         elif response.status_code == 429:
             error_text = response.text
@@ -702,15 +695,15 @@ def _call_openrouter(prompt):
 
 
 # ============================================================
-# 🔥 الدالة الرئيسية - الترتيب الجديد الذكي
+# 🔥 الدالة الرئيسية - الترتيب الجديد
 # ============================================================
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
     """
-    🔥 التسلسل الذكي الجديد:
-    1. Gemini (الأساسي - مع retry)
+    🔥 التسلسل الذكي:
+    1. Gemini (الأساسي - retry ذكي)
     2. HuggingFace (احتياطي 1 - حصة كبيرة)
-    3. Groq (احتياطي 2 - محمي من النفاد)
+    3. Groq (احتياطي 2 - محمي)
     4. SambaNova (احتياطي 3 - معطل)
     5. OpenRouter (احتياطي 4 - أخير)
     """
@@ -721,7 +714,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
         # ==================== 1. Gemini (الأساسي) ====================
         if gemini_available:
             logger.info("🧠 استخدام Gemini (أساسي)...")
-            content = _call_gemini(prompt, max_retries=3)
+            content = _call_gemini(prompt, max_retries=2)
             if content:
                 result = parse_ai_response(content, "gemini")
                 if result:
@@ -731,7 +724,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
         # ==================== 2. HuggingFace (احتياطي 1) ====================
         if AI_FALLBACK_ENABLED and huggingface_available:
             logger.info("🔄 Fallback → HuggingFace...")
-            content = _call_huggingface(prompt, max_retries=2)
+            content = _call_huggingface(prompt, max_retries=3)
             if content:
                 result = parse_ai_response(content, "huggingface")
                 if result:

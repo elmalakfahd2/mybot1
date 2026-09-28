@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.5
-🔒 آمن للرفع على GitHub.
-
-🔧 التعديلات v5.5:
-    - 🔥 TRADE_USDT: 10
-    - 🔥 LEVERAGE: 15
-    - 🔥 MAX_OPEN_POSITIONS: 4
-    - 🔥 R:R محسّن: SL 1.3% + TP [2.5, 3.5, 5.0]
-    - 🔥 MIN_SCORE: 65
+config.py - الإعدادات النهائية v5.6
+🔧 التعديلات:
+    - GROQ_MIN_SCORE_BEFORE_CALL: 55 (كان 25) - يقلل استدعاءات AI
+    - COOLDOWN_MINUTES_AFTER_LOSS: 60 (كان 30)
+    - MAX_CONSECUTIVE_LOSSES: 2 (كان 3)
 """
 
 import os
@@ -42,21 +38,19 @@ BINANCE_API_SECRET = _get_env("BINANCE_API_SECRET", required=True)
 TELEGRAM_TOKEN = _get_env("TELEGRAM_TOKEN", required=True)
 TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID", required=True)
 
-# ==================== Gemini AI (الأساسي) ====================
+# ==================== Gemini AI ====================
 GEMINI_API_KEY = _get_env("GEMINI_API_KEY", default="")
 ENABLE_GEMINI_ANALYSIS = _get_bool("ENABLE_GEMINI_ANALYSIS", default=True)
-
 GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-flash-lite-latest",
-    "gemini-2.5-pro",
 ]
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-# ==================== Groq AI (احتياطي) ====================
+# ==================== Groq AI ====================
 GROQ_API_KEY = _get_env("GROQ_API_KEY", default="")
 ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
@@ -68,13 +62,13 @@ ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
 SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 
-# ==================== HuggingFace (احتياطي 1) ====================
+# ==================== HuggingFace ====================
 HUGGINGFACE_API_KEY = _get_env("HUGGINGFACE_API_KEY", default="")
 ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=True)
 HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
 
-# ==================== OpenRouter (احتياطي 2) ====================
+# ==================== OpenRouter ====================
 OPENROUTER_API_KEY = _get_env("OPENROUTER_API_KEY", default="")
 ENABLE_OPENROUTER_ANALYSIS = _get_bool("ENABLE_OPENROUTER_ANALYSIS", default=True)
 OPENROUTER_MODEL = _get_env("OPENROUTER_MODEL", default="nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -110,21 +104,15 @@ TUNING_HISTORY_FILE = "tuning_history.json"
 
 USE_TESTNET = _get_bool("USE_TESTNET", default=True)
 
-# ==================== 🔥 التداول (إعداداتك الجديدة) ====================
-TRADE_USDT = 10            # 🔥 10 USDT
-LEVERAGE = 15              # 🔥 15x
-MAX_OPEN_POSITIONS = 4     # 🔥 4 صفقات
+# ==================== التداول ====================
+TRADE_USDT = 10
+LEVERAGE = 15
+MAX_OPEN_POSITIONS = 4
 
-# ==================== 🔥 TP المتعدد (R:R محسّن) ====================
+# ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-
-# TP متدرج: 2.5% / 3.5% / 5.0%
 TP_MULTIPLE_LEVELS = [2.5, 3.5, 5.0]
-
-# نسب الكميات: 40% / 35% / 25%
 TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
-
-# SL أقل = خسارة أصغر + R:R أفضل
 SL_PERCENT = 1.3
 TP_PERCENT = 2.5
 
@@ -141,7 +129,7 @@ CLOSE_ON_TP_SL_FAIL = True
 TP_SL_RETRY_DELAY_SECONDS = 1
 MONITOR_TP_SL_INTERVAL = 60
 
-# ==================== تنظيف الأوامر اليتيمة ====================
+# ==================== تنظيف الأوامر ====================
 ENABLE_ORPHAN_CLEANUP = True
 ORPHAN_CLEANUP_INTERVAL = 300
 
@@ -163,8 +151,8 @@ RSI_SELL_HARD_REJECT = 10
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
-# ==================== 🔥 نظام النقاط ====================
-MIN_SCORE_REQUIRED = 65         # 🔥 65 (أصرم)
+# ==================== نظام النقاط ====================
+MIN_SCORE_REQUIRED = 65
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -189,21 +177,18 @@ MEMORY_MAX_LOSSES_TOTAL = 2
 MEMORY_BLOCK_LOSS_THRESHOLD = -0.5
 MEMORY_AVG_PNL_THRESHOLD = -0.2
 
-# ==================== فلتر دفتر الأوامر ====================
+# ==================== فلاتر ====================
 ENABLE_ORDER_BOOK_FILTER = True
 MAX_SPREAD_PERCENT = 0.15
 MIN_DEPTH_MULTIPLIER = 15
 
-# ==================== فلتر Funding Rate ====================
 ENABLE_FUNDING_OI_FILTER = True
 FUNDING_RATE_EXTREME_PERCENT = 0.05
 
-# ==================== فلاتر معطلة ====================
 ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
-# ==================== قاطع الخسارة اليومية ====================
 ENABLE_DAILY_DRAWDOWN_LIMIT = False
 DAILY_MAX_LOSS_PERCENT = 15.0
 
@@ -218,7 +203,6 @@ BREAKEVEN_OFFSET_PERCENT = 0.1
 MAX_CONSECUTIVE_LOSSES = 3
 PAUSE_DURATION_MINUTES = 30
 
-# ==================== ذاكرة الصفقات ====================
 ENABLE_TRADE_MEMORY = True
 COMMISSION_RATE = 0.0004
 
@@ -237,25 +221,24 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== Cooldown ====================
+# ==================== 🔥 Cooldown (معدل) ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
-COOLDOWN_MINUTES_AFTER_LOSS = 30
+COOLDOWN_MINUTES_AFTER_LOSS = 60     # ← كان 30
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== AI Settings ====================
+# ==================== 🔥 AI Settings (معدل) ====================
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 25
+GROQ_MIN_SCORE_BEFORE_CALL = 55       # ← كان 25 (يقلل استدعاءات AI بـ 70%)
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
 ENABLE_AUTO_EXECUTION = True
 
-# ==================== إضافات ====================
 ENABLE_DETAILED_LOGGING = True
 LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
