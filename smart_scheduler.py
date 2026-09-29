@@ -1,12 +1,8 @@
 # ==================================================
-# 📁 ملف: smart_scheduler.py - الإصدار v5.2.2
-# 🔧 التعديلات v5.2.2:
-#    - 🔥 إزالة os._exit (لا إعادة تشغيل)
-#    - 🔥 تحديث الأوزان في الذاكرة
-#    - 🔥 إصلاح توقف البوت بعد التعلم
-# 🔧 التعديلات v5.0:
-#    - جدولة المهام التلقائية
-# 📅 التاريخ: 2026-09-24
+# 📁 ملف: smart_scheduler.py - v6.0
+# 🔧 التعديلات v6.0:
+#    - 🔥 إزالة استدعاء restart_bot (كان يمسح التبريدات)
+#    - 🔥 التعلم يحفظ في JSON فقط
 # ==================================================
 
 import threading
@@ -87,24 +83,22 @@ def run_learning_session():
                     if AUTO_LEARN_BACKUP_ENABLED:
                         auto_tuner.create_backup()
 
-                    # تطبيق التغييرات
+                    # تطبيق التغييرات (في JSON)
                     auto_tuner.apply_weight_changes(weight_changes)
 
                     # تسجيل
                     auto_tuner.record_tuning(analysis, weight_changes)
 
                     # إشعار
-                    old_weights = {k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'}
+                    old_weights = auto_tuner.load_learned_weights() or {
+                        k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'
+                    }
                     report = auto_tuner.format_tuning_report(analysis, weight_changes, old_weights)
                     auto_tuner.send_telegram_message(report)
 
-                    logger.info("✅ [SCHEDULER] تم تحديث الأوزان")
-
-                    # 🔥 v5.2.2: تحديث في الذاكرة (بدون إعادة تشغيل)
-                    logger.info("🔄 [SCHEDULER] تحديث الأوزان في الذاكرة...")
-                    auto_tuner.restart_bot()
-
-                    logger.info("✅ [SCHEDULER] تم التحديث - البوت مستمر في العمل")
+                    logger.info("✅ [SCHEDULER] تم تحديث الأوزان (JSON)")
+                    # 🔥 v6.0: لا restart_bot - الأوزان في JSON والبوت يقرأها ديناميكياً
+                    logger.info("✅ [SCHEDULER] الأوزان محفوظة - لا حاجة لإعادة التشغيل")
                     return True
 
             except Exception as e:
@@ -126,12 +120,9 @@ def run_learning_session():
 def run_daily_report():
     try:
         logger.info("📊 [SCHEDULER] بدء التقرير اليومي...")
-
         import daily_reporter
         daily_reporter.send_daily_report()
-
         return True
-
     except Exception as e:
         logger.error(f"❌ [SCHEDULER] فشل التقرير اليومي: {e}")
         return False
@@ -142,12 +133,9 @@ def run_daily_report():
 def run_weekly_report():
     try:
         logger.info("📊 [SCHEDULER] بدء التقرير الأسبوعي...")
-
         import daily_reporter
         daily_reporter.send_weekly_report()
-
         return True
-
     except Exception as e:
         logger.error(f"❌ [SCHEDULER] فشل التقرير الأسبوعي: {e}")
         return False
@@ -156,7 +144,6 @@ def run_weekly_report():
 # ==================== الخيط الرئيسي ====================
 
 def scheduler_loop():
-    """الحلقة الرئيسية للجدولة"""
     global _last_learning_run, _last_report_run, _last_weekly_report, _scheduler_running
 
     _scheduler_running = True
@@ -176,16 +163,13 @@ def scheduler_loop():
             now = time.time()
             now_dt = datetime.now()
 
-            # 1. التعلم التلقائي
             if ENABLE_AUTO_LEARNING:
                 interval_seconds = AUTO_LEARN_INTERVAL_HOURS * 3600
-
                 if now - _last_learning_run >= interval_seconds:
                     _last_learning_run = now
                     logger.info("🧠 [SCHEDULER] موعد التعلم التلقائي")
                     threading.Thread(target=run_learning_session, daemon=True).start()
 
-            # 2. التقرير اليومي
             if ENABLE_DAILY_REPORT:
                 target_hour = DAILY_REPORT_HOUR
                 if now_dt.hour == target_hour and (now - _last_report_run) >= 3600:
@@ -193,7 +177,6 @@ def scheduler_loop():
                     logger.info("📊 [SCHEDULER] موعد التقرير اليومي")
                     threading.Thread(target=run_daily_report, daemon=True).start()
 
-            # 3. التقرير الأسبوعي
             if ENABLE_WEEKLY_REPORT:
                 if now_dt.weekday() == 6 and now_dt.hour == DAILY_REPORT_HOUR:
                     if (now - _last_weekly_report) >= 86400:
@@ -201,7 +184,6 @@ def scheduler_loop():
                         logger.info("📊 [SCHEDULER] موعد التقرير الأسبوعي")
                         threading.Thread(target=run_weekly_report, daemon=True).start()
 
-            # 4. الحماية الذاتية
             if AUTO_PROTECTION_ENABLED:
                 check_auto_protection()
 
@@ -217,7 +199,6 @@ def scheduler_loop():
 # ==================== API خارجي ====================
 
 def start_scheduler():
-    """بدء الجدولة (تُستدعى من main)"""
     try:
         thread = threading.Thread(target=scheduler_loop, daemon=True, name="SmartScheduler")
         thread.start()
@@ -244,7 +225,6 @@ def get_scheduler_status():
 
 
 def force_learning_now():
-    """تشغيل التعلم فوراً"""
     global _last_learning_run
     _last_learning_run = 0
     logger.info("🔥 [SCHEDULER] تشغيل التعلم فوراً")
@@ -253,6 +233,6 @@ def force_learning_now():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار smart_scheduler...")
+    print("🧪 اختبار smart_scheduler v6.0...")
     print("تشغيل التعلم الآن...")
     force_learning_now()

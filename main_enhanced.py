@@ -1,10 +1,8 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - الإصدار v5.6
-# 🔧 التعديلات v5.6:
-#    - 🔥 تنظيف الأوامر اليتيمة دورياً
-#    - 🔥 تنظيف عند بدء البوت
-#    - 🔥 حماية الصفقات اليدوية
-# 📅 التاريخ: 2026-09-26
+# 📁 ملف: main_enhanced.py - v6.0
+# 🔧 التعديلات v6.0:
+#    - 🔥 get_trade_net_pnl: حساب PnL دقيق
+#    - 🔥 record_closed_trade محدّث
 # ==================================================
 
 import logging
@@ -55,7 +53,6 @@ try:
     logger.info("✅ كشف حالة السوق متاح")
 except ImportError:
     MARKET_REGIME_AVAILABLE = False
-    logger.warning("⚠️ كشف حالة السوق غير متاح")
 
 try:
     import realtime_data
@@ -64,7 +61,6 @@ try:
 except ImportError as e:
     REALTIME_AVAILABLE = False
     realtime_data = None
-    logger.warning(f"⚠️ realtime_data غير متاح: {e}")
 
 try:
     import smart_scheduler
@@ -73,7 +69,6 @@ try:
 except ImportError as e:
     SCHEDULER_AVAILABLE = False
     smart_scheduler = None
-    logger.warning(f"⚠️ smart_scheduler غير متاح: {e}")
 
 try:
     import auto_learner
@@ -110,7 +105,6 @@ try:
 except ImportError as e:
     FIREBASE_AVAILABLE = False
     firebase_backup = None
-    logger.warning(f"⚠️ firebase_backup غير متاح: {e}")
 
 
 _last_auto_scan = 0
@@ -138,6 +132,43 @@ def safe_int(value, default=0):
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+# ==================== 🔥 حساب PnL الصحيح (جديد v6.0) ====================
+
+def get_trade_net_pnl(client_obj, symbol, entry_time_iso):
+    """
+    🔥 الحساب الصحيح للـ PnL:
+    - يجمع كل income (REALIZED_PNL + COMMISSION + FUNDING_FEE)
+    - منذ وقت الدخول حتى الآن
+    - يشمل TP1 + TP2 + TP3 + SL + العمولات
+    """
+    try:
+        if not entry_time_iso:
+            return 0.0
+        
+        start = int(datetime.fromisoformat(entry_time_iso).timestamp() * 1000)
+        
+        rows = client_obj.futures_income_history(
+            symbol=symbol,
+            startTime=start,
+            limit=1000
+        )
+        
+        if not rows:
+            return 0.0
+        
+        total = 0.0
+        for r in rows:
+            income_type = r.get('incomeType', '')
+            if income_type in ('REALIZED_PNL', 'COMMISSION', 'FUNDING_FEE'):
+                total += float(r.get('income', 0))
+        
+        return round(total, 6)
+    
+    except Exception as e:
+        logger.error(f"❌ فشل حساب PnL: {e}")
+        return 0.0
 
 
 # ==================== التمييز بين صفقات البوت واليدوية ====================
@@ -247,7 +278,7 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v5.6</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v6.0</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
@@ -287,12 +318,9 @@ def check_trading_pause():
     return False
 
 
-# ==================== 🔥 خيط المراقبة الشاملة ====================
+# ==================== خيط المراقبة الشاملة ====================
 
 def monitor_positions_loop():
-    """
-    🔥 v5.6: مراقبة شاملة + تنظيف الأوامر اليتيمة
-    """
     try:
         logger.info("📈 [THREAD] بدء المراقبة الشاملة...")
 
@@ -302,12 +330,10 @@ def monitor_positions_loop():
             try:
                 current_time = time.time()
 
-                # 1. Trailing SL
                 updated = core.monitor_trailing_sl()
                 if updated > 0:
                     logger.info(f"📊 تحديث Trailing: {updated} صفقة")
 
-                # 2. TP/SL Check (كل دقيقة)
                 if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                     _last_tp_sl_monitor = current_time
 
@@ -324,7 +350,6 @@ def monitor_positions_loop():
                                 core.check_and_add_tp_sl_to_existing_positions()
                                 break
 
-                # 🔥 3. تنظيف الأوامر اليتيمة (كل 5 دقائق)
                 if current_time - _last_orphan_cleanup >= ORPHAN_CLEANUP_INTERVAL:
                     _last_orphan_cleanup = current_time
                     try:
@@ -334,10 +359,8 @@ def monitor_positions_loop():
                     except Exception as e:
                         logger.warning(f"⚠️ فشل تنظيف الأوامر: {e}")
 
-                # 4. الصفقات المغلقة
                 check_closed_trades()
 
-                # 5. تنظيف الذاكرة
                 gc.collect()
 
             except Exception as e:
@@ -388,17 +411,13 @@ def record_closed_trade(trade_data):
 
         logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
 
+        # 🔥 v6.0: حساب PnL دقيق
         pnl = 0.0
         try:
             client_obj = core.get_client()
             if client_obj:
-                income = client_obj.futures_income_history(
-                    incomeType="REALIZED_PNL", symbol=symbol, limit=5
-                )
-                if income:
-                    raw_income = income[-1].get('income', 0)
-                    pnl = safe_float(raw_income, 0.0)
-                    logger.info(f"💰 PnL: {pnl:+.4f}")
+                pnl = get_trade_net_pnl(client_obj, symbol, entry_time_iso)
+                logger.info(f"💰 PnL (دقيق): {pnl:+.4f}")
         except Exception as e:
             logger.warning(f"⚠️ فشل جلب PnL: {e}")
 
@@ -808,10 +827,9 @@ def toggle_auto_scan():
 
 def start_scanner_threads():
     logger.info("=" * 60)
-    logger.info("🔧 [START] بدء تشغيل الخيوط v5.6...")
+    logger.info("🔧 [START] بدء تشغيل الخيوط v6.0...")
     logger.info("=" * 60)
 
-    # 1. Health Check
     try:
         import health_server
         if health_server.run_in_background():
@@ -819,7 +837,6 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] خطأ Health Check: {e}")
 
-    # 2. Firebase
     if FIREBASE_AVAILABLE:
         try:
             if firebase_backup.initialize_firebase():
@@ -840,7 +857,6 @@ def start_scanner_threads():
         except Exception as e:
             logger.error(f"❌ [START] خطأ Firebase: {e}")
 
-    # 3. Scanner
     try:
         scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
         scanner.start()
@@ -848,7 +864,6 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل scanner: {e}")
 
-    # 4. Monitor
     try:
         monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor")
         monitor.start()
@@ -856,7 +871,6 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] فشل monitor: {e}")
 
-    # 5. Smart Scheduler
     if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
         try:
             if smart_scheduler.start_scheduler():
@@ -872,7 +886,7 @@ def start_scanner_threads():
 def main():
     try:
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v5.6...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v6.0...")
         logger.info("=" * 60)
 
         send_startup()
@@ -884,7 +898,6 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ [MAIN] فشل التنظيف: {e}")
 
-        # 🔥 تنظيف الأوامر اليتيمة عند البدء
         try:
             logger.info("🧹 [MAIN] تنظيف الأوامر اليتيمة...")
             cancelled = core.cleanup_orphan_algo_orders()
@@ -910,7 +923,7 @@ def main():
                 pass
 
         logger.info("=" * 60)
-        logger.info("🎯 [MAIN] نظام القناص v5.6 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v6.0 مفعل")
         logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")

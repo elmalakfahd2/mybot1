@@ -1,10 +1,9 @@
 # ==================================================
-# 📁 ملف: auto_tuner.py - الإصدار v5.6
-# 🔧 التعديلات v5.6:
-#    - 🔥 إصلاح regex (يتعامل مع الأعداد الصحيحة والعشرية)
-#    - 🔥 إصلاح تحديث الأوزان في config.py
-#    - 🔥 إصلاح تحديث الأوزان في الذاكرة
-# 📅 التاريخ: 2026-09-26
+# 📁 ملف: auto_tuner.py - v6.0
+# 🔧 التعديلات v6.0:
+#    - 🔥 كتابة الأوزان في learned_weights.json (بدل config.py)
+#    - 🔥 إزالة restart_bot (لا يمسح التبريدات)
+#    - 🔥 config.py يبقى نظيفاً
 # ==================================================
 
 import os
@@ -21,6 +20,7 @@ logger = logging.getLogger("auto_tuner")
 CONFIG_FILE = "config.py"
 BACKUP_DIR = "config_backups"
 TUNING_HISTORY_FILE = "tuning_history.json"
+LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
 
 # ==================== النسخ الاحتياطي ====================
@@ -56,82 +56,53 @@ def cleanup_old_backups(max_keep=10):
         logger.error(f"خطأ: {e}")
 
 
-# ==================== تعديل config.py ====================
+# ==================== 🔥 كتابة الأوزان في JSON (جديد v6.0) ====================
 
-def read_config():
+def load_learned_weights():
+    """قراءة الأوزان المتعلَّمة من JSON"""
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return f.read()
+        if not os.path.exists(LEARNED_WEIGHTS_FILE):
+            return {}
+        with open(LEARNED_WEIGHTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        logger.error(f"خطأ في قراءة config.py: {e}")
-        return None
+        logger.error(f"خطأ قراءة learned_weights: {e}")
+        return {}
 
 
-def write_config(content):
+def save_learned_weights(weights_data):
+    """حفظ الأوزان المتعلَّمة في JSON"""
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("✅ تم تحديث config.py")
+        with open(LEARNED_WEIGHTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(weights_data, f, indent=2, ensure_ascii=False)
+        logger.info(f"✅ تم حفظ الأوزان في {LEARNED_WEIGHTS_FILE}")
         return True
     except Exception as e:
-        logger.error(f"خطأ في كتابة config.py: {e}")
+        logger.error(f"❌ فشل حفظ الأوزان: {e}")
         return False
 
 
-def update_weight_in_config(content, weight_name, new_value):
-    """
-    🔥 v5.6: regex يعمل مع الأعداد الصحيحة والعشرية
-    """
-    try:
-        # 🔥 النمط: يتعامل مع 20 أو 20.5 أو 20.55
-        # يبحث عن: 'weight_name': <number>
-        pattern = rf"('{weight_name}'\s*:\s*)(-?\d+(?:\.\d+)?)"
-
-        match = re.search(pattern, content)
-        if not match:
-            logger.warning(f"⚠️ لم يتم العثور على الوزن: {weight_name}")
-            return content
-
-        old_value = match.group(2)
-
-        # 🔥 استبدال
-        def replace(m):
-            return f"{m.group(1)}{new_value:.1f}"
-
-        new_content = re.sub(pattern, replace, content, count=1)
-
-        if new_content == content:
-            logger.warning(f"⚠️ لم يتم تعديل: {weight_name}")
-            return content
-
-        logger.info(f"   ✅ {weight_name}: {old_value} → {new_value:.1f}")
-        return new_content
-
-    except Exception as e:
-        logger.error(f"خطأ في تحديث الوزن {weight_name}: {e}")
-        return content
-
-
 def apply_weight_changes(weight_changes):
-    """تطبيق التغييرات على config.py"""
+    """
+    🔥 v6.0: حفظ الأوزان في learned_weights.json
+    (بدل تعديل config.py الذي يضيع عند إعادة النشر)
+    """
     try:
-        content = read_config()
-        if not content:
-            return False
-
-        logger.info(f"🔧 تطبيق {len(weight_changes)} تغيير...")
-
-        for weight_name, new_value in weight_changes.items():
-            content = update_weight_in_config(content, weight_name, new_value)
-
-        # إضافة تعليق
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        comment = f"\n# 🔥 تم التحديث تلقائياً: {timestamp}\n"
-
-        if "# 🔥 تم التحديث تلقائياً" not in content:
-            content = content.rstrip() + "\n" + comment
-
-        return write_config(content)
+        current = load_learned_weights()
+        
+        # تحديث الأوزان
+        for name, value in weight_changes.items():
+            current[name] = round(value, 2)
+        
+        current["last_updated"] = datetime.now().isoformat()
+        current["updated_by"] = "auto_tuner_v6.0"
+        
+        success = save_learned_weights(current)
+        
+        if success:
+            logger.info(f"🔧 تم تحديث {len(weight_changes)} وزن في JSON")
+        
+        return success
 
     except Exception as e:
         logger.error(f"خطأ في تطبيق التغييرات: {e}")
@@ -204,11 +175,9 @@ def format_tuning_report(analysis, weight_changes, old_weights):
         msg += f"📊 <b>التحليل:</b>\n"
         msg += f"   • صفقات: {analysis.get('trades_analyzed', 0)}\n"
         msg += f"   • نسبة النجاح: {analysis.get('win_rate', 0):.1f}%\n"
-        msg += f"   • Profit Factor: {analysis.get('profit_factor', 0):.2f}\n"
-        msg += f"   • متوسط الربح: {analysis.get('avg_win', 0):+.4f}\n"
-        msg += f"   • متوسط الخسارة: {analysis.get('avg_loss', 0):+.4f}\n\n"
+        msg += f"   • Profit Factor: {analysis.get('profit_factor', 0):.2f}\n\n"
 
-        msg += f"🔧 <b>الأوزان الجديدة:</b>\n"
+        msg += f"🔧 <b>الأوزان الجديدة (JSON):</b>\n"
         for name, new_val in weight_changes.items():
             old_val = old_weights.get(name, 10)
             change = new_val - old_val
@@ -222,19 +191,7 @@ def format_tuning_report(analysis, weight_changes, old_weights):
 
             msg += f"   {arrow} {name}: {old_val:.1f} → {new_val:.1f}\n"
 
-        suggestions = analysis.get('recommendations', {}).get('suggestions', [])
-        warnings = analysis.get('recommendations', {}).get('warnings', [])
-
-        if suggestions:
-            msg += f"\n💡 <b>ملاحظات:</b>\n"
-            for s in suggestions[:3]:
-                msg += f"   {s}\n"
-
-        if warnings:
-            msg += f"\n⚠️ <b>تحذيرات:</b>\n"
-            for w in warnings[:3]:
-                msg += f"   {w}\n"
-
+        msg += f"\n📁 محفوظة في: learned_weights.json"
         msg += f"\n⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         return msg
     except Exception as e:
@@ -242,37 +199,16 @@ def format_tuning_report(analysis, weight_changes, old_weights):
         return f"🧠 تم تحديث الأوزان\n{datetime.now()}"
 
 
-# ==================== تحديث في الذاكرة ====================
+# ==================== 🔥 إزالة restart_bot (v6.0) ====================
 
 def restart_bot():
-    """تحديث الأوزان في الذاكرة (بدون إعادة تشغيل)"""
-    try:
-        logger.info("🔄 تحديث الأوزان في الذاكرة...")
-
-        import importlib
-        import config
-        importlib.reload(config)
-        logger.info("✅ تم إعادة تحميل config")
-
-        try:
-            import bot_strategies_enhanced as strat
-            importlib.reload(strat)
-            logger.info("✅ تم تحديث bot_strategies_enhanced")
-        except Exception as e:
-            logger.warning(f"⚠️ فشل تحديث bot_strategies: {e}")
-
-        try:
-            import trade_memory
-            trade_memory.sync_profit_history()
-        except:
-            pass
-
-        logger.info("✅ تم التحديث (البوت مستمر)")
-
-    except Exception as e:
-        logger.error(f"❌ فشل التحديث: {e}")
-        import traceback
-        traceback.print_exc()
+    """
+    🔥 v6.0: تم إلغاء هذه الدالة
+    السبب: importlib.reload كان يصفّر _symbol_cooldown
+    الآن: لا حاجة لإعادة التحميل - bot_strategies يقرأ JSON كل مرة
+    """
+    logger.info("ℹ️ restart_bot معطل في v6.0 - لا حاجة لإعادة تحميل")
+    return True
 
 
 # ==================== الدالة الرئيسية ====================
@@ -280,13 +216,12 @@ def restart_bot():
 def run_tuning():
     try:
         logger.info("=" * 60)
-        logger.info("🧠 بدء التعديل التلقائي...")
+        logger.info("🧠 بدء التعديل التلقائي v6.0...")
         logger.info("=" * 60)
 
         from config import (
             ENABLE_AUTO_LEARNING, AUTO_LEARN_MIN_TRADES,
-            AUTO_TUNE_WEIGHTS, AUTO_RESTART_AFTER_TUNE,
-            AUTO_LEARN_BACKUP_ENABLED, SCORE_WEIGHTS,
+            AUTO_TUNE_WEIGHTS, SCORE_WEIGHTS,
         )
 
         if not ENABLE_AUTO_LEARNING or not AUTO_TUNE_WEIGHTS:
@@ -303,7 +238,7 @@ def run_tuning():
             logger.info("ℹ️ لا توجد تغييرات")
             return False
 
-        old_weights = {k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'}
+        old_weights = load_learned_weights() or {k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'}
 
         if AUTO_LEARN_BACKUP_ENABLED:
             create_backup()
@@ -321,11 +256,7 @@ def run_tuning():
         except Exception as e:
             logger.error(f"فشل الإشعار: {e}")
 
-        logger.info("✅ تم التعديل بنجاح")
-
-        if AUTO_RESTART_AFTER_TUNE:
-            restart_bot()
-
+        logger.info("✅ تم التعديل بنجاح (JSON)")
         return True
 
     except Exception as e:
@@ -355,6 +286,6 @@ def get_tuning_stats():
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار auto_tuner v5.6...")
+    print("🧪 اختبار auto_tuner v6.0...")
     result = run_tuning()
     print(f"النتيجة: {result}")

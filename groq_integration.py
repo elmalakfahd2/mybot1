@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v8.1
-🔧 التعديلات:
-    - Retry ذكي: 503 فقط (ليس 429)
-    - Fallback فوري على 429
-    - HuggingFace retry محسّن
-    - ترتيب احتياطي: Gemini → HuggingFace → Groq → SambaNova → OpenRouter
+groq_integration.py - الإصدار v9.0
+🔧 التعديلات v9.0:
+    - 🔥 build_prompt مع context كامل (تاريخ الصفقات + BTC + السوق)
+    - 🔥 قواعد صارمة للرفض
+    - Retry ذكي: 503 فقط
+    - ترتيب: Gemini → HuggingFace → Groq → SambaNova → OpenRouter
 
-📅 آخر تعديل: 2026-09-28
+📅 آخر تعديل: 2026-09-29
 """
 
 import logging
@@ -44,7 +44,6 @@ huggingface_available = False
 openrouter_available = False
 openrouter_working_model = None
 
-# 🔥 Rate Limits
 _groq_rate_limited_until = 0
 _groq_daily_limit_reached = False
 _sambanova_rate_limited_until = 0
@@ -52,18 +51,13 @@ _huggingface_rate_limited_until = 0
 
 
 # ============================================================
-# 1. تهيئة Gemini (الأساسي)
+# تهيئة المزودين
 # ============================================================
 
 def _try_init_gemini():
     global gemini_available, gemini_working_model
 
-    if not GEMINI_API_KEY:
-        logger.info("ℹ️ GEMINI_API_KEY غير موجود")
-        return False
-
-    if not ENABLE_GEMINI_ANALYSIS:
-        logger.info("ℹ️ Gemini معطل")
+    if not GEMINI_API_KEY or not ENABLE_GEMINI_ANALYSIS:
         return False
 
     models_to_try = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
@@ -79,32 +73,20 @@ def _try_init_gemini():
                 logger.info(f"✅ تهيئة Gemini: {model}")
                 return True
             elif response.status_code == 404:
-                logger.warning(f"⚠️ النموذج {model} غير متاح، تجربة التالي...")
                 continue
             else:
-                logger.warning(f"⚠️ فشل {model}: {response.status_code}")
                 continue
-        except Exception as e:
-            logger.warning(f"⚠️ خطأ مع {model}: {e}")
+        except Exception:
             continue
 
     logger.error("❌ فشل كل نماذج Gemini")
     return False
 
 
-# ============================================================
-# 2. تهيئة HuggingFace (احتياطي 1)
-# ============================================================
-
 def _try_init_huggingface():
     global huggingface_available
 
-    if not HUGGINGFACE_API_KEY:
-        logger.info("ℹ️ HUGGINGFACE_API_KEY غير موجود")
-        return False
-
-    if not ENABLE_HUGGINGFACE_ANALYSIS:
-        logger.info("ℹ️ HuggingFace معطل")
+    if not HUGGINGFACE_API_KEY or not ENABLE_HUGGINGFACE_ANALYSIS:
         return False
 
     try:
@@ -124,17 +106,10 @@ def _try_init_huggingface():
             huggingface_available = True
             logger.info(f"✅ تهيئة HuggingFace: {HUGGINGFACE_MODEL}")
             return True
-        else:
-            logger.warning(f"⚠️ فشل HuggingFace: {response.status_code} - {response.text[:150]}")
-            return False
-    except Exception as e:
-        logger.warning(f"⚠️ فشل HuggingFace: {e}")
+        return False
+    except Exception:
         return False
 
-
-# ============================================================
-# 3. تهيئة Groq (احتياطي 2)
-# ============================================================
 
 def _try_init_groq():
     global groq_available, groq_working_model
@@ -161,17 +136,10 @@ def _try_init_groq():
             groq_working_model = GROQ_MODEL
             logger.info(f"✅ تهيئة Groq: {GROQ_MODEL}")
             return True
-        else:
-            logger.warning(f"⚠️ فشل Groq: {response.status_code}")
-            return False
-    except Exception as e:
-        logger.warning(f"⚠️ فشل Groq: {e}")
+        return False
+    except Exception:
         return False
 
-
-# ============================================================
-# 4. تهيئة SambaNova (احتياطي 3 - معطل)
-# ============================================================
 
 def _try_init_sambanova():
     global sambanova_available
@@ -197,13 +165,9 @@ def _try_init_sambanova():
             logger.info(f"✅ تهيئة SambaNova: {SAMBANOVA_MODEL}")
             return True
         return False
-    except Exception as e:
+    except Exception:
         return False
 
-
-# ============================================================
-# 5. تهيئة OpenRouter (احتياطي 4)
-# ============================================================
 
 def _try_init_openrouter():
     global openrouter_available, openrouter_working_model
@@ -219,13 +183,11 @@ def _try_init_openrouter():
             "HTTP-Referer": "https://mybot1.railway.app",
             "X-Title": "Trading Bot"
         }
-
         payload = {
             "model": OPENROUTER_MODEL,
             "messages": [{"role": "user", "content": "test"}],
             "max_tokens": 5
         }
-
         response = requests.post(url, headers=headers, json=payload, timeout=20)
 
         if response.status_code == 200:
@@ -233,29 +195,12 @@ def _try_init_openrouter():
             openrouter_working_model = OPENROUTER_MODEL
             logger.info(f"✅ تهيئة OpenRouter: {OPENROUTER_MODEL}")
             return True
-        else:
-            for model in OPENROUTER_FALLBACK_MODELS:
-                if model == OPENROUTER_MODEL:
-                    continue
-                try:
-                    payload["model"] = model
-                    response = requests.post(url, headers=headers, json=payload, timeout=20)
-                    if response.status_code == 200:
-                        openrouter_available = True
-                        openrouter_working_model = model
-                        logger.info(f"✅ تهيئة OpenRouter: {model}")
-                        return True
-                except:
-                    continue
-            return False
-    except Exception as e:
+        return False
+    except Exception:
         return False
 
 
-# ============================================================
 # التهيئة الشاملة
-# ============================================================
-
 logger.info("=" * 60)
 logger.info("🔄 تهيئة مزودي AI...")
 
@@ -288,7 +233,7 @@ logger.info("=" * 60)
 
 
 # ============================================================
-# استخراج JSON من الاستجابة
+# استخراج JSON
 # ============================================================
 
 def extract_json_from_response(response_content):
@@ -352,6 +297,7 @@ def parse_ai_response(response_content, provider="unknown"):
                     'ai_provider': provider
                 }
 
+        # استخراج نصي احتياطي
         recommendation = "تحذير"
         confidence = 50
         if "تأكيد" in response_content:
@@ -379,10 +325,17 @@ def parse_ai_response(response_content, provider="unknown"):
 
 
 # ============================================================
-# بناء الـ Prompt
+# 🔥 build_prompt مع context كامل (جديد v9.0)
 # ============================================================
 
 def build_prompt(signal_data, analysis_data=None):
+    """
+    🔥 v9.0: Prompt مع context كامل:
+    - تاريخ الصفقات السابقة للعملة
+    - حالة BTC
+    - حالة السوق العامة
+    - قواعد صارمة للرفض
+    """
     try:
         symbol = signal_data.get('symbol', 'UNKNOWN')
         direction = signal_data.get('direction', 'UNKNOWN')
@@ -404,26 +357,88 @@ def build_prompt(signal_data, analysis_data=None):
         body_ratio = price_action.get('body_ratio', 0)
         alignment = signal_data.get('timeframe_alignment', 0)
 
-        prompt = f"""أنت محلل Scalp محترف. حلل الإشارة وأجب بـ JSON.
+        # 🔥 1. تاريخ العملة
+        symbol_history = ""
+        try:
+            import trade_memory as memory
+            recent = memory.get_symbol_history(symbol, limit=5)
+            if recent:
+                wins = sum(1 for t in recent if t.get('is_win', False))
+                losses = len(recent) - wins
+                total_pnl = sum(t.get('pnl', 0) for t in recent)
+                symbol_history = f"""
+📊 <b>تاريخ {symbol}</b> (آخر {len(recent)} صفقات):
+   • رابحة: {wins} | خاسرة: {losses}
+   • صافي PnL: {total_pnl:+.2f}$"""
+            else:
+                symbol_history = f"\n📊 <b>تاريخ {symbol}:</b> لا يوجد (عملة جديدة)"
+        except:
+            pass
 
-📊 {symbol} | {direction} | السعر: {entry_price}
-RSI: {rsi:.1f} | MACD: {macd_trend} | الحجم: {vol_ratio:.2f}x
-ترابط الفريمات: {alignment:.1f}/10
-زخم: {mom_dir} ({mom_strength:.1f})
-شمعة: {candle_type} (body={body_ratio:.2f})
-ثقة النظام: {confidence:.1f}%
+        # 🔥 2. حالة BTC
+        btc_context = ""
+        try:
+            import core_functions as core
+            btc_price = core.get_price("BTCUSDT")
+            if btc_price:
+                btc_context = f"\n💰 <b>BTC:</b> {btc_price:,.0f}$"
+        except:
+            pass
 
-**قواعد الإجابة (Scalp Mode):**
-- "تأكيد" إذا 50%+ من المعايير إيجابية
-- "تحذير" عند تعارض واحد
-- "رفض" فقط إذا: RSI>90 للشراء أو RSI<10 للبيع أو ترابط+MACD معاكسان
+        # 🔥 3. حالة السوق
+        market_context = ""
+        try:
+            from market_regime import MarketRegime
+            regime = MarketRegime.get_regime()
+            market_context = f"\n🌊 <b>السوق:</b> {regime.get('regime_ar', 'غير معروف')} - {regime.get('recommendation', '')}"
+        except:
+            pass
+
+        prompt = f"""أنت محلل Scalp محترف. حلل الإشارة التالية بدقة:
+
+🎯 <b>الإشارة:</b>
+   • العملة: {symbol}
+   • الاتجاه: {direction}
+   • السعر: {entry_price}
+
+📊 <b>المؤشرات:</b>
+   • RSI: {rsi:.1f}
+   • MACD: {macd_trend}
+   • الحجم: {vol_ratio:.2f}x
+   • الترابط: {alignment:.1f}/10
+   • الزخم: {mom_dir} ({mom_strength:.1f})
+   • الشمعة: {candle_type} (body={body_ratio:.2f})
+   • ثقة النظام: {confidence:.1f}%
+
+{symbol_history}{btc_context}{market_context}
+
+⚠️ <b>قواعد صارمة (اتبعها بدقة):</b>
+
+❌ <b>ارفض فوراً إذا:</b>
+   1. RSI > 68 (تشبع شرائي) للشراء
+   2. RSI < 32 (تشبع بيعي) للبيع
+   3. MACD يعاكس الاتجاه
+   4. الترابط < 5/10
+   5. العملة لديها 2+ خسائر في آخر 5 صفقات
+
+✅ <b>تأكيد فقط إذا (كل الشروط):</b>
+   1. RSI في النطاق المثالي (40-65)
+   2. الحجم ≥ 1.5x
+   3. الترابط ≥ 7/10
+   4. MACD متوافق مع الاتجاه
+   5. تاريخ العملة إيجابي أو محايد
+
+⚠️ <b>تحذير إذا:</b>
+   - شرط واحد ضعيف
+   - التاريخ مختلط
+   - السوق متذبذب
 
 **أجب JSON فقط (بدون نص إضافي):**
 {{
   "recommendation": "تأكيد" أو "تحذير" أو "رفض",
   "confidence": رقم من 0 إلى 100,
-  "analysis": "تحليل موجز",
-  "reasoning": "الأسباب",
+  "analysis": "تحليل موجز جداً (سطر واحد)",
+  "reasoning": "سبب قرارك (سطر واحد)",
   "risk_level": "عالي" أو "متوسط" أو "منخفض"
 }}"""
 
@@ -434,15 +449,11 @@ RSI: {rsi:.1f} | MACD: {macd_trend} | الحجم: {vol_ratio:.2f}x
 
 
 # ============================================================
-# دوال الاستدعاء - كل مزود
+# دوال الاستدعاء
 # ============================================================
 
 def _call_gemini(prompt, max_retries=2):
-    """
-    🔥 v8.1:
-    - Retry فقط على 503 (مشغول)
-    - عدم Retry على 429 (rate limit) - فوري للـ fallback
-    """
+    """Retry فقط على 503"""
     global gemini_working_model
     if not gemini_working_model:
         return None
@@ -453,7 +464,7 @@ def _call_gemini(prompt, max_retries=2):
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.3,
+                    "temperature": 0.2,
                     "maxOutputTokens": 800,
                     "topP": 0.9
                 }
@@ -461,24 +472,21 @@ def _call_gemini(prompt, max_retries=2):
 
             response = requests.post(url, json=payload, timeout=45)
 
-            # 🔥 429 = rate limit → Fallback فوري (لا retry)
             if response.status_code == 429:
                 logger.warning(f"⚠️ Gemini 429 - rate limit (fallback فوري)")
                 time.sleep(2)
                 return None
 
-            # 🔥 503 = مشغول → retry
             if response.status_code == 503:
                 if attempt < max_retries - 1:
                     wait = 3 * (attempt + 1)
                     logger.warning(f"⚠️ Gemini 503 - محاولة {attempt+1}/{max_retries} - انتظار {wait}s")
                     time.sleep(wait)
                     continue
-                logger.warning(f"⚠️ Gemini 503 - فشل نهائي")
                 return None
 
             if response.status_code != 200:
-                logger.warning(f"⚠️ Gemini {response.status_code} - فشل")
+                logger.warning(f"⚠️ Gemini {response.status_code}")
                 return None
 
             data = response.json()
@@ -486,14 +494,12 @@ def _call_gemini(prompt, max_retries=2):
                 return None
 
             text = data['candidates'][0]['content']['parts'][0].get('text', '')
-            if not text:
-                return None
-
-            logger.info(f"✅ Gemini نجح (محاولة {attempt+1})")
-            return text
+            if text:
+                logger.info(f"✅ Gemini نجح (محاولة {attempt+1})")
+                return text
+            return None
 
         except requests.exceptions.Timeout:
-            logger.warning(f"⚠️ Gemini timeout - محاولة {attempt+1}/{max_retries}")
             if attempt < max_retries - 1:
                 time.sleep(2)
                 continue
@@ -506,7 +512,6 @@ def _call_gemini(prompt, max_retries=2):
 
 
 def _call_huggingface(prompt, max_retries=3):
-    """🔥 v8.1: retry أفضل"""
     global _huggingface_rate_limited_until
 
     if time.time() < _huggingface_rate_limited_until or not huggingface_available:
@@ -525,7 +530,7 @@ def _call_huggingface(prompt, max_retries=3):
                     {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.3,
+                "temperature": 0.2,
                 "max_tokens": 800
             }
             response = requests.post(url, headers=headers, json=payload, timeout=45)
@@ -538,11 +543,10 @@ def _call_huggingface(prompt, max_retries=3):
                 return None
             elif response.status_code == 429:
                 _huggingface_rate_limited_until = time.time() + 60
-                logger.warning("⏳ HuggingFace rate limit - انتظار 60s")
+                logger.warning("⏳ HuggingFace rate limit")
                 return None
             elif response.status_code == 503:
                 if attempt < max_retries - 1:
-                    logger.warning(f"⚠️ HuggingFace 503 - محاولة {attempt+1}")
                     time.sleep(3)
                     continue
                 return None
@@ -554,7 +558,6 @@ def _call_huggingface(prompt, max_retries=3):
                 logger.warning(f"⚠️ HuggingFace: {response.status_code}")
                 return None
         except Exception as e:
-            logger.warning(f"خطأ HuggingFace: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2)
                 continue
@@ -564,7 +567,6 @@ def _call_huggingface(prompt, max_retries=3):
 
 
 def _call_groq(prompt, max_retries=2):
-    """🔥 استدعاء Groq (احتياطي 2)"""
     global _groq_rate_limited_until, _groq_daily_limit_reached
 
     current_time = time.time()
@@ -582,7 +584,7 @@ def _call_groq(prompt, max_retries=2):
                 {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.3,
+            "temperature": 0.2,
             "max_tokens": 800
         }
         response = requests.post(
@@ -605,15 +607,13 @@ def _call_groq(prompt, max_retries=2):
             else:
                 _groq_rate_limited_until = time.time() + 60
             return None
-        else:
-            return None
+        return None
     except Exception as e:
         logger.warning(f"خطأ Groq: {e}")
         return None
 
 
 def _call_sambanova(prompt):
-    """SambaNova (معطل حالياً)"""
     global _sambanova_rate_limited_until
     if time.time() < _sambanova_rate_limited_until or not sambanova_available:
         return None
@@ -630,7 +630,7 @@ def _call_sambanova(prompt):
                 {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.3,
+            "temperature": 0.2,
             "max_tokens": 800
         }
         response = requests.post(url, headers=headers, json=payload, timeout=45)
@@ -647,7 +647,6 @@ def _call_sambanova(prompt):
 
 
 def _call_openrouter(prompt):
-    """OpenRouter (احتياطي أخير)"""
     global openrouter_working_model
     if not openrouter_available:
         return None
@@ -672,7 +671,7 @@ def _call_openrouter(prompt):
                         {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.3,
+                    "temperature": 0.2,
                     "max_tokens": 800
                 }
                 response = requests.post(url, headers=headers, json=payload, timeout=45)
@@ -683,10 +682,6 @@ def _call_openrouter(prompt):
                         content = data['choices'][0]['message']['content']
                         openrouter_working_model = model
                         return content
-                elif response.status_code == 429:
-                    continue
-                else:
-                    continue
             except:
                 continue
         return None
@@ -695,23 +690,18 @@ def _call_openrouter(prompt):
 
 
 # ============================================================
-# 🔥 الدالة الرئيسية - الترتيب الجديد
+# الدالة الرئيسية
 # ============================================================
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
     """
-    🔥 التسلسل الذكي:
-    1. Gemini (الأساسي - retry ذكي)
-    2. HuggingFace (احتياطي 1 - حصة كبيرة)
-    3. Groq (احتياطي 2 - محمي)
-    4. SambaNova (احتياطي 3 - معطل)
-    5. OpenRouter (احتياطي 4 - أخير)
+    🔥 التسلسل: Gemini → HuggingFace → Groq → SambaNova → OpenRouter
     """
     try:
         prompt = build_prompt(signal_data, analysis_data)
         result = None
 
-        # ==================== 1. Gemini (الأساسي) ====================
+        # 1. Gemini
         if gemini_available:
             logger.info("🧠 استخدام Gemini (أساسي)...")
             content = _call_gemini(prompt, max_retries=2)
@@ -721,7 +711,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                     return result
             logger.warning("⚠️ Gemini فشل - التبديل إلى HuggingFace")
 
-        # ==================== 2. HuggingFace (احتياطي 1) ====================
+        # 2. HuggingFace
         if AI_FALLBACK_ENABLED and huggingface_available:
             logger.info("🔄 Fallback → HuggingFace...")
             content = _call_huggingface(prompt, max_retries=3)
@@ -730,7 +720,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== 3. Groq (احتياطي 2) ====================
+        # 3. Groq
         if AI_FALLBACK_ENABLED and groq_available and not _groq_daily_limit_reached:
             logger.info("🔄 Fallback → Groq...")
             content = _call_groq(prompt, max_retries=1)
@@ -739,7 +729,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== 4. SambaNova ====================
+        # 4. SambaNova
         if AI_FALLBACK_ENABLED and sambanova_available:
             logger.info("🔄 Fallback → SambaNova...")
             content = _call_sambanova(prompt)
@@ -748,7 +738,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== 5. OpenRouter ====================
+        # 5. OpenRouter
         if AI_FALLBACK_ENABLED and openrouter_available:
             logger.info("🔄 Fallback → OpenRouter...")
             content = _call_openrouter(prompt)
