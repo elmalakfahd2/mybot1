@@ -1,14 +1,17 @@
 # ==================================================
-# 📁 ملف: smart_scheduler.py - v6.0
-# 🔧 التعديلات v6.0:
-#    - 🔥 إزالة استدعاء restart_bot (كان يمسح التبريدات)
-#    - 🔥 التعلم يحفظ في JSON فقط
+# 📁 ملف: smart_scheduler.py - الإصدار v5.7
+# 🔧 التعديلات v5.7:
+#    - 🔥 جلسة التعلم تحدّث قواعد التعلم التكيفي (adaptive_rules) التي تؤثر فعلياً على القرار
+#    - 🔥 لا تعديل لملف config.py ولا إعادة تحميل الوحدات (كان يمسح التبريد ويضيع عند إعادة النشر)
+#    - 🔥 تصحيح الصفقات القديمة من سجل Binance ضمن الجلسة
+#    - 🔥 لا يتوقف أبداً: كل مهمة في خيط منفصل ومحمية بـ try/except
+# 📅 التاريخ: 2026-09-29
 # ==================================================
 
 import threading
 import time
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger("smart_scheduler")
 
@@ -16,96 +19,67 @@ _last_learning_run = 0
 _last_report_run = 0
 _last_weekly_report = 0
 _scheduler_running = False
+_learning_lock = threading.Lock()
 
 
-# ==================== فحص الحماية الذاتية ====================
+# ==================== الحماية الذاتية ====================
 
 def check_auto_protection():
+    """الحماية الفعلية (إيقاف متصاعد + حد يومي) تتم في core_functions.
+    هنا فقط تسجيل حالة للمتابعة."""
     try:
-        from config import (
-            AUTO_PROTECTION_ENABLED,
-            AUTO_PAUSE_ON_LOSS_STREAK,
-            MAX_CONSECUTIVE_LOSSES,
-        )
-
+        from config import AUTO_PROTECTION_ENABLED
         if not AUTO_PROTECTION_ENABLED:
             return
-
         import core_functions as core
-
-        consecutive_losses = core.get_consecutive_losses()
-
-        if consecutive_losses >= AUTO_PAUSE_ON_LOSS_STREAK:
-            logger.warning(f"🛑 {consecutive_losses} خسائر متتالية — الحماية الذاتية نشطة")
-
-        elif consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-            logger.warning(f"🛑 {consecutive_losses} خسائر — البوت سيُوقف مؤقتاً")
-
+        paused, remaining = core.is_trading_paused()
+        if paused:
+            logger.info(f"🛑 [PROTECTION] التداول موقوف ({remaining} د) - {core.get_pause_reason()}")
     except Exception as e:
-        logger.error(f"خطأ في الحماية الذاتية: {e}")
+        logger.debug(f"خطأ في الحماية الذاتية: {e}")
 
 
-# ==================== تشغيل التعلم التلقائي ====================
+# ==================== جلسة التعلم ====================
 
 def run_learning_session():
-    """تشغيل جلسة تعلم كاملة"""
+    """
+    جلسة تعلم:
+      1) تصحيح أي صفقات قديمة ما زالت غير موثقة من سجل Binance
+      2) تحديث قواعد التعلم التكيفي من الصفقات الموثقة
+      3) إرسال ملخص على Telegram
+    يرجع True إذا اكتملت (حتى لو لم تتغير القواعد)، False عند غياب بيانات موثقة.
+    """
+    if not _learning_lock.acquire(blocking=False):
+        logger.info("⏳ [SCHEDULER] جلسة تعلم جارية بالفعل")
+        return True
+
     try:
         logger.info("=" * 60)
-        logger.info("🧠 [SCHEDULER] بدء جلسة التعلم التلقائي...")
+        logger.info("🧠 [SCHEDULER] بدء جلسة التعلم التكيفي...")
         logger.info("=" * 60)
 
-        # 1. التحليل
-        import auto_learner
-        analysis = auto_learner.run_analysis()
+        try:
+            import trade_memory
+            fixed = trade_memory.reconcile_legacy_trades()
+            if fixed:
+                logger.info(f"✅ [SCHEDULER] تم تصحيح {fixed} صفقة من سجل Binance")
+        except Exception as e:
+            logger.warning(f"⚠️ [SCHEDULER] تصحيح الصفقات: {e}")
 
-        if not analysis:
-            logger.info("⏳ [SCHEDULER] لا توجد بيانات كافية")
+        import adaptive_rules
+        rules = adaptive_rules.update_rules()
+
+        if not rules or rules.get('trades_used', 0) == 0:
+            logger.info("⏳ [SCHEDULER] لا توجد صفقات موثقة بعد")
             return False
 
-        # 2. التعديل
-        from config import AUTO_TUNE_WEIGHTS
+        try:
+            import daily_reporter
+            daily_reporter.send_telegram_message(adaptive_rules.get_status_text())
+        except Exception as e:
+            logger.debug(f"تعذر إرسال ملخص التعلم: {e}")
 
-        if AUTO_TUNE_WEIGHTS:
-            import auto_tuner
-
-            try:
-                from config import (
-                    ENABLE_AUTO_LEARNING,
-                    AUTO_LEARN_MIN_TRADES,
-                    AUTO_LEARN_BACKUP_ENABLED,
-                    SCORE_WEIGHTS,
-                )
-
-                weight_changes = analysis.get('recommendations', {}).get('weight_changes', {})
-
-                if weight_changes:
-                    # نسخة احتياطية
-                    if AUTO_LEARN_BACKUP_ENABLED:
-                        auto_tuner.create_backup()
-
-                    # تطبيق التغييرات (في JSON)
-                    auto_tuner.apply_weight_changes(weight_changes)
-
-                    # تسجيل
-                    auto_tuner.record_tuning(analysis, weight_changes)
-
-                    # إشعار
-                    old_weights = auto_tuner.load_learned_weights() or {
-                        k: v for k, v in SCORE_WEIGHTS.items() if k != 'max_score'
-                    }
-                    report = auto_tuner.format_tuning_report(analysis, weight_changes, old_weights)
-                    auto_tuner.send_telegram_message(report)
-
-                    logger.info("✅ [SCHEDULER] تم تحديث الأوزان (JSON)")
-                    # 🔥 v6.0: لا restart_bot - الأوزان في JSON والبوت يقرأها ديناميكياً
-                    logger.info("✅ [SCHEDULER] الأوزان محفوظة - لا حاجة لإعادة التشغيل")
-                    return True
-
-            except Exception as e:
-                logger.error(f"خطأ في التعديل: {e}")
-                import traceback
-                traceback.print_exc()
-
+        logger.info("✅ [SCHEDULER] اكتملت جلسة التعلم")
         return True
 
     except Exception as e:
@@ -113,9 +87,11 @@ def run_learning_session():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        _learning_lock.release()
 
 
-# ==================== تقرير يومي ====================
+# ==================== التقارير ====================
 
 def run_daily_report():
     try:
@@ -128,8 +104,6 @@ def run_daily_report():
         return False
 
 
-# ==================== تقرير أسبوعي ====================
-
 def run_weekly_report():
     try:
         logger.info("📊 [SCHEDULER] بدء التقرير الأسبوعي...")
@@ -141,7 +115,7 @@ def run_weekly_report():
         return False
 
 
-# ==================== الخيط الرئيسي ====================
+# ==================== الحلقة الرئيسية ====================
 
 def scheduler_loop():
     global _last_learning_run, _last_report_run, _last_weekly_report, _scheduler_running
@@ -164,15 +138,13 @@ def scheduler_loop():
             now_dt = datetime.now()
 
             if ENABLE_AUTO_LEARNING:
-                interval_seconds = AUTO_LEARN_INTERVAL_HOURS * 3600
-                if now - _last_learning_run >= interval_seconds:
+                if now - _last_learning_run >= AUTO_LEARN_INTERVAL_HOURS * 3600:
                     _last_learning_run = now
                     logger.info("🧠 [SCHEDULER] موعد التعلم التلقائي")
                     threading.Thread(target=run_learning_session, daemon=True).start()
 
             if ENABLE_DAILY_REPORT:
-                target_hour = DAILY_REPORT_HOUR
-                if now_dt.hour == target_hour and (now - _last_report_run) >= 3600:
+                if now_dt.hour == DAILY_REPORT_HOUR and (now - _last_report_run) >= 3600:
                     _last_report_run = now
                     logger.info("📊 [SCHEDULER] موعد التقرير اليومي")
                     threading.Thread(target=run_daily_report, daemon=True).start()
@@ -187,11 +159,10 @@ def scheduler_loop():
             if AUTO_PROTECTION_ENABLED:
                 check_auto_protection()
 
-            time.sleep(60)
-
         except Exception as e:
             logger.error(f"❌ [SCHEDULER] خطأ في الحلقة: {e}")
-            time.sleep(60)
+
+        time.sleep(60)
 
     logger.info("🛑 [SCHEDULER] توقف خيط الجدولة")
 
@@ -199,6 +170,7 @@ def scheduler_loop():
 # ==================== API خارجي ====================
 
 def start_scheduler():
+    global _scheduler_running
     try:
         thread = threading.Thread(target=scheduler_loop, daemon=True, name="SmartScheduler")
         thread.start()
@@ -225,14 +197,14 @@ def get_scheduler_status():
 
 
 def force_learning_now():
+    """تشغيل التعلم فوراً (من زر Telegram)"""
     global _last_learning_run
-    _last_learning_run = 0
+    _last_learning_run = time.time()
     logger.info("🔥 [SCHEDULER] تشغيل التعلم فوراً")
     return run_learning_session()
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print("🧪 اختبار smart_scheduler v6.0...")
-    print("تشغيل التعلم الآن...")
+    print("🧪 اختبار smart_scheduler...")
     force_learning_now()

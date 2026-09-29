@@ -1,8 +1,18 @@
 # ==================================================
-# 📁 ملف: main_enhanced.py - v6.0
-# 🔧 التعديلات v6.0:
-#    - 🔥 get_trade_net_pnl: حساب PnL دقيق
-#    - 🔥 record_closed_trade محدّث
+# 📁 ملف: main_enhanced.py - الإصدار v5.7
+# 🔧 التعديلات v5.7 (إصلاح التعلم + الاستمرارية):
+#    - 🔥 تسجيل PnL الحقيقي الصافي من Binance (كل الأهداف الجزئية + العمولة)
+#    - 🔥 تتبع الصفقات المفتوحة يُحفظ (ملف + Firebase) ولا يضيع عند إعادة التشغيل
+#    - 🔥 لا يُعتبر فشل API إغلاقاً للصفقات (get_open_positions_strict)
+#    - 🔥 التبريد يُحسب عند الإغلاق بنتيجة حقيقية
+#    - 🔥 تقليل حجم الصفقة بعد خسائر متتالية + حد خسارة يومي
+#    - 🔥 مراقب (Supervisor) يعيد تشغيل الخيوط المتوقفة ويعيد تشغيل العملية عند التجمّد
+#    - 🔥 تعلم تكيفي فوري بعد كل صفقة (adaptive_rules)
+# 🔧 التعديلات v5.6:
+#    - 🔥 تنظيف الأوامر اليتيمة دورياً
+#    - 🔥 تنظيف عند بدء البوت
+#    - 🔥 حماية الصفقات اليدوية
+# 📅 التاريخ: 2026-09-26
 # ==================================================
 
 import logging
@@ -53,6 +63,7 @@ try:
     logger.info("✅ كشف حالة السوق متاح")
 except ImportError:
     MARKET_REGIME_AVAILABLE = False
+    logger.warning("⚠️ كشف حالة السوق غير متاح")
 
 try:
     import realtime_data
@@ -61,6 +72,7 @@ try:
 except ImportError as e:
     REALTIME_AVAILABLE = False
     realtime_data = None
+    logger.warning(f"⚠️ realtime_data غير متاح: {e}")
 
 try:
     import smart_scheduler
@@ -69,6 +81,7 @@ try:
 except ImportError as e:
     SCHEDULER_AVAILABLE = False
     smart_scheduler = None
+    logger.warning(f"⚠️ smart_scheduler غير متاح: {e}")
 
 try:
     import auto_learner
@@ -105,6 +118,17 @@ try:
 except ImportError as e:
     FIREBASE_AVAILABLE = False
     firebase_backup = None
+    logger.warning(f"⚠️ firebase_backup غير متاح: {e}")
+
+
+try:
+    import adaptive_rules
+    ADAPTIVE_AVAILABLE = True
+    logger.info("✅ adaptive_rules متاح")
+except ImportError as e:
+    ADAPTIVE_AVAILABLE = False
+    adaptive_rules = None
+    logger.warning(f"⚠️ adaptive_rules غير متاح: {e}")
 
 
 _last_auto_scan = 0
@@ -114,8 +138,79 @@ _auto_scan_enabled = True
 _auto_trading_enabled = True
 
 _open_trades_tracking = {}
+_tracking_lock = threading.Lock()
+_heartbeats = {}
+_daily_limit_notified_date = None
 
 STATE_FILE = "open_positions.json"
+TRACKING_FILE = "open_trades_tracking.json"
+TRACKING_FIREBASE_DOC = "open_trades_tracking"
+MAX_CLOSE_ATTEMPTS = 6
+
+
+def _beat(name):
+    _heartbeats[name] = time.time()
+
+
+def _notify(text):
+    """إشعار Telegram (لا يفشل أبداً)"""
+    try:
+        if REPORTER_AVAILABLE:
+            daily_reporter.send_telegram_message(text)
+    except Exception as e:
+        logger.debug(f"تعذر إرسال الإشعار: {e}")
+
+
+# ==================== 🔥 حفظ تتبع الصفقات المفتوحة ====================
+
+def _save_tracking():
+    """حفظ _open_trades_tracking محلياً + Firebase"""
+    try:
+        with _tracking_lock:
+            snapshot = json.loads(json.dumps(_open_trades_tracking, default=str))
+        try:
+            with open(TRACKING_FILE, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False)
+        except Exception as e:
+            logger.debug(f"تعذر حفظ tracking محلياً: {e}")
+
+        if FIREBASE_AVAILABLE and firebase_backup and firebase_backup.is_available():
+            threading.Thread(
+                target=firebase_backup.save_doc,
+                args=(TRACKING_FIREBASE_DOC, {"items": snapshot}),
+                daemon=True
+            ).start()
+    except Exception as e:
+        logger.debug(f"_save_tracking: {e}")
+
+
+def _load_tracking():
+    """استرجاع تتبع الصفقات (الأحدث بين المحلي و Firebase) ودمجه"""
+    try:
+        loaded = {}
+        try:
+            if os.path.exists(TRACKING_FILE):
+                with open(TRACKING_FILE, "r", encoding="utf-8") as f:
+                    loaded.update(json.load(f))
+        except Exception:
+            pass
+
+        try:
+            if FIREBASE_AVAILABLE and firebase_backup and firebase_backup.is_available():
+                doc = firebase_backup.load_doc(TRACKING_FIREBASE_DOC)
+                if doc and isinstance(doc.get("items"), dict):
+                    for k, v in doc["items"].items():
+                        loaded.setdefault(k, v)
+        except Exception:
+            pass
+
+        if loaded:
+            with _tracking_lock:
+                for k, v in loaded.items():
+                    _open_trades_tracking.setdefault(k, v)
+            logger.info(f"✅ استرجاع تتبع {len(loaded)} صفقة مفتوحة")
+    except Exception as e:
+        logger.warning(f"⚠️ تعذر استرجاع التتبع: {e}")
 
 
 # ==================== دوال آمنة ====================
@@ -132,43 +227,6 @@ def safe_int(value, default=0):
         return int(value)
     except (ValueError, TypeError):
         return default
-
-
-# ==================== 🔥 حساب PnL الصحيح (جديد v6.0) ====================
-
-def get_trade_net_pnl(client_obj, symbol, entry_time_iso):
-    """
-    🔥 الحساب الصحيح للـ PnL:
-    - يجمع كل income (REALIZED_PNL + COMMISSION + FUNDING_FEE)
-    - منذ وقت الدخول حتى الآن
-    - يشمل TP1 + TP2 + TP3 + SL + العمولات
-    """
-    try:
-        if not entry_time_iso:
-            return 0.0
-        
-        start = int(datetime.fromisoformat(entry_time_iso).timestamp() * 1000)
-        
-        rows = client_obj.futures_income_history(
-            symbol=symbol,
-            startTime=start,
-            limit=1000
-        )
-        
-        if not rows:
-            return 0.0
-        
-        total = 0.0
-        for r in rows:
-            income_type = r.get('incomeType', '')
-            if income_type in ('REALIZED_PNL', 'COMMISSION', 'FUNDING_FEE'):
-                total += float(r.get('income', 0))
-        
-        return round(total, 6)
-    
-    except Exception as e:
-        logger.error(f"❌ فشل حساب PnL: {e}")
-        return 0.0
 
 
 # ==================== التمييز بين صفقات البوت واليدوية ====================
@@ -278,7 +336,7 @@ def send_startup():
                 pass
 
         msg = (
-            f"🚀 <b>بوت القناص الذكي v6.0</b>\n\n"
+            f"🚀 <b>بوت القناص الذكي v5.6</b>\n\n"
             f"💰 <b>رأس المال:</b> {TRADE_USDT} USDT\n"
             f"⚡ <b>الرافعة:</b> {LEVERAGE}x\n"
             f"⏰ <b>المسح:</b> كل {AUTO_SCAN_INTERVAL // 60} دقيقة\n\n"
@@ -318,9 +376,12 @@ def check_trading_pause():
     return False
 
 
-# ==================== خيط المراقبة الشاملة ====================
+# ==================== 🔥 خيط المراقبة الشاملة ====================
 
 def monitor_positions_loop():
+    """
+    🔥 v5.6: مراقبة شاملة + تنظيف الأوامر اليتيمة
+    """
     try:
         logger.info("📈 [THREAD] بدء المراقبة الشاملة...")
 
@@ -328,12 +389,15 @@ def monitor_positions_loop():
 
         while _auto_scan_enabled:
             try:
+                _beat('monitor')
                 current_time = time.time()
 
+                # 1. Trailing SL
                 updated = core.monitor_trailing_sl()
                 if updated > 0:
                     logger.info(f"📊 تحديث Trailing: {updated} صفقة")
 
+                # 2. TP/SL Check (كل دقيقة)
                 if current_time - _last_tp_sl_monitor >= MONITOR_TP_SL_INTERVAL:
                     _last_tp_sl_monitor = current_time
 
@@ -350,6 +414,7 @@ def monitor_positions_loop():
                                 core.check_and_add_tp_sl_to_existing_positions()
                                 break
 
+                # 🔥 3. تنظيف الأوامر اليتيمة (كل 5 دقائق)
                 if current_time - _last_orphan_cleanup >= ORPHAN_CLEANUP_INTERVAL:
                     _last_orphan_cleanup = current_time
                     try:
@@ -359,8 +424,10 @@ def monitor_positions_loop():
                     except Exception as e:
                         logger.warning(f"⚠️ فشل تنظيف الأوامر: {e}")
 
+                # 4. الصفقات المغلقة
                 check_closed_trades()
 
+                # 5. تنظيف الذاكرة
                 gc.collect()
 
             except Exception as e:
@@ -380,27 +447,52 @@ def check_closed_trades():
         if not _open_trades_tracking:
             return
 
-        current_positions = core.get_open_positions()
+        # 🔥 لا نستنتج الإغلاق من فشل API
+        current_positions = core.get_open_positions_strict()
+        if current_positions is None:
+            logger.warning("⚠️ تعذر قراءة الصفقات - تخطي فحص الإغلاق")
+            return
+
         current_keys = set(f"{p['symbol']}_{p['positionSide']}" for p in current_positions)
 
-        closed_keys = [k for k in list(_open_trades_tracking.keys()) if k not in current_keys]
+        with _tracking_lock:
+            closed_keys = [k for k in list(_open_trades_tracking.keys()) if k not in current_keys]
 
         if closed_keys:
             logger.info(f"🔔 اكتشف {len(closed_keys)} صفقة مغلقة")
 
+        changed = False
         for key in closed_keys:
-            trade_data = _open_trades_tracking[key]
+            with _tracking_lock:
+                trade_data = _open_trades_tracking.get(key)
+            if not trade_data:
+                continue
             try:
-                record_closed_trade(trade_data)
+                done = record_closed_trade(trade_data)
             except Exception as e:
                 logger.error(f"خطأ في تسجيل الصفقة المغلقة: {e}")
-            del _open_trades_tracking[key]
+                done = False
+
+            if done:
+                with _tracking_lock:
+                    _open_trades_tracking.pop(key, None)
+                changed = True
+            else:
+                # سيُعاد المحاولة في الدورة التالية (حتى MAX_CLOSE_ATTEMPTS)
+                changed = True
+
+        if changed:
+            _save_tracking()
 
     except Exception as e:
         logger.error(f"خطأ في check_closed_trades: {e}")
 
 
 def record_closed_trade(trade_data):
+    """
+    🔥 v5.7: يسجل النتيجة الحقيقية الصافية (كل الأهداف الجزئية + العمولة + التمويل).
+    يرجع True عند اكتمال المعالجة، و False لإعادة المحاولة لاحقاً.
+    """
     try:
         symbol = trade_data.get('symbol')
         direction = trade_data.get('direction', 'UNKNOWN')
@@ -408,28 +500,47 @@ def record_closed_trade(trade_data):
         quantity = safe_float(trade_data.get('quantity', 0))
         position_side = trade_data.get('positionSide', 'LONG')
         entry_time_iso = trade_data.get('entry_time_iso') or datetime.now().isoformat()
+        attempts = safe_int(trade_data.get('_attempts', 0))
 
-        logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side}")
+        logger.info(f"🔔 معالجة إغلاق: {symbol} {position_side} (محاولة {attempts + 1})")
 
-        # 🔥 v6.0: حساب PnL دقيق
-        pnl = 0.0
-        try:
-            client_obj = core.get_client()
-            if client_obj:
-                pnl = get_trade_net_pnl(client_obj, symbol, entry_time_iso)
-                logger.info(f"💰 PnL (دقيق): {pnl:+.4f}")
-        except Exception as e:
-            logger.warning(f"⚠️ فشل جلب PnL: {e}")
+        # ---- PnL الحقيقي ----
+        real = None
+        if MEMORY_AVAILABLE:
+            if attempts == 0:
+                time.sleep(4)  # انتظار ظهور آخر سجل REALIZED_PNL
+            real = memory.get_real_net_pnl(symbol, entry_time_iso)
 
+        if real is None and attempts < MAX_CLOSE_ATTEMPTS - 1:
+            trade_data['_attempts'] = attempts + 1
+            logger.warning(f"⏳ {symbol}: لم يظهر PnL بعد - إعادة المحاولة")
+            return False
+
+        verified = real is not None
+        net = real['net'] if verified else 0.0
+
+        if verified:
+            logger.info(
+                f"💰 {symbol} صافي: {net:+.4f} "
+                f"(محقق {real['realized']:+.4f} | عمولة {real['commission']:+.4f} | تمويل {real['funding']:+.4f})"
+            )
+        else:
+            logger.warning(f"⚠️ {symbol}: تعذر جلب PnL الحقيقي - تسجيل غير موثق (لا يدخل في التعلم)")
+
+        # ---- الذاكرة ----
         if MEMORY_AVAILABLE:
             try:
+                closed_iso = None
+                if verified and real.get('closed_at_ms'):
+                    closed_iso = datetime.fromtimestamp(real['closed_at_ms'] / 1000).isoformat()
+
                 memory.record_trade(
                     symbol=symbol,
                     direction=direction,
                     entry_price=entry_price,
                     exit_price=0,
                     quantity=quantity,
-                    pnl=pnl,
+                    pnl=net,
                     confidence=safe_float(trade_data.get('confidence', 0)),
                     timeframe_alignment=safe_float(trade_data.get('timeframe_alignment', 0)),
                     volume_ratio=safe_float(trade_data.get('volume_ratio', 0)),
@@ -437,21 +548,44 @@ def record_closed_trade(trade_data):
                     groq_confidence=safe_float(trade_data.get('groq_confidence', 0)),
                     score_details=trade_data.get('sniper_score', {}),
                     exit_reason="auto_detected",
-                    entry_time_iso=entry_time_iso
+                    entry_time_iso=entry_time_iso,
+                    net_pnl=net if verified else None,
+                    closed_at_iso=closed_iso,
+                    breakdown=real if verified else None
                 )
                 try:
                     memory.sync_profit_history()
-                except:
+                except Exception:
                     pass
             except Exception as e:
                 logger.error(f"خطأ في التسجيل: {e}")
 
-        core.record_trade_result(pnl)
+        # ---- الحماية (فقط للنتائج الموثقة) ----
+        paused_now = False
+        if verified:
+            try:
+                paused_now = core.record_trade_result(net)
+            except Exception as e:
+                logger.error(f"خطأ record_trade_result: {e}")
 
+        # ---- التبريد بعد النتيجة الحقيقية ----
+        try:
+            strat.add_symbol_cooldown(symbol)
+        except Exception as e:
+            logger.debug(f"cooldown: {e}")
+
+        # ---- التعلم الفوري ----
+        if ADAPTIVE_AVAILABLE and verified:
+            try:
+                adaptive_rules.update_rules()
+            except Exception as e:
+                logger.debug(f"adaptive update: {e}")
+
+        # ---- إشعارات ----
         try:
             opened_at = safe_float(trade_data.get('opened_at', time.time()), time.time())
             duration_minutes = safe_int((time.time() - opened_at) / 60, 0)
-        except:
+        except Exception:
             duration_minutes = 0
 
         send_close_notification(
@@ -460,15 +594,27 @@ def record_closed_trade(trade_data):
             position_side=position_side,
             entry_price=entry_price,
             quantity=quantity,
-            pnl=pnl,
+            pnl=net,
             duration_minutes=duration_minutes
         )
 
-        logger.info(f"✅ تم معالجة إغلاق: {symbol} PnL: {pnl:+.4f}")
+        if paused_now:
+            paused, remaining = core.is_trading_paused()
+            if paused:
+                _notify(
+                    f"⏸️ <b>إيقاف تلقائي للتداول</b>\n"
+                    f"السبب: {core.get_pause_reason()}\n"
+                    f"المدة المتبقية: {remaining} دقيقة\n"
+                    f"الحجم بعد الاستئناف: {core.get_risk_multiplier()*100:.0f}% من الحجم العادي"
+                )
+
+        logger.info(f"✅ تم معالجة إغلاق: {symbol} صافي: {net:+.4f}")
+        return True
 
     except Exception as e:
         logger.error(f"خطأ في record_closed_trade: {e}")
         traceback.print_exc()
+        return False
 
 
 def send_close_notification(symbol, direction, position_side, entry_price, quantity, pnl, duration_minutes=0):
@@ -535,10 +681,11 @@ def auto_sniper_scanner():
     try:
         logger.info("🎯 [THREAD] بدء مسح القناص...")
 
-        global _last_auto_scan
+        global _last_auto_scan, _daily_limit_notified_date
 
         while _auto_scan_enabled:
             try:
+                _beat('scanner')
                 current_time = time.time()
 
                 if check_trading_pause():
@@ -546,6 +693,25 @@ def auto_sniper_scanner():
                     continue
 
                 if current_time - _last_auto_scan >= AUTO_SCAN_INTERVAL:
+                    # 🔥 حد الخسارة اليومية (من Binance) قبل أي مسح
+                    try:
+                        dd_ok, dd_reason = core.check_daily_drawdown()
+                        if not dd_ok:
+                            today = datetime.now().strftime("%Y-%m-%d")
+                            if _daily_limit_notified_date != today:
+                                _daily_limit_notified_date = today
+                                _notify(f"🛑 <b>توقف التداول اليوم</b>\n{dd_reason}\nسيستأنف البوت تلقائياً بعد منتصف الليل.")
+                            time.sleep(120)
+                            continue
+                    except Exception as e:
+                        logger.warning(f"⚠️ فحص الخسارة اليومية: {e}")
+
+                    # 🔥 لا نمسح إذا تعذر قراءة الصفقات المفتوحة (تفادي تجاوز الحد الأقصى)
+                    if core.get_open_positions_strict() is None:
+                        logger.warning("⚠️ تعذر قراءة الصفقات المفتوحة - تأجيل المسح")
+                        time.sleep(30)
+                        continue
+
                     _last_auto_scan = current_time
 
                     bot_positions = get_bot_owned_positions()
@@ -609,9 +775,15 @@ def execute_sniper_trade(signal):
 
         logger.info(f"🚀 فحص {symbol} {direction}")
 
+        paused, remaining = core.is_trading_paused()
+        if paused:
+            logger.warning(f"⏸️ {symbol}: التداول موقوف ({remaining} د)")
+            return False
+
         total_score = safe_float(signal.get('total_score', 0))
-        if total_score < MIN_SCORE_REQUIRED:
-            logger.warning(f"🛑 {symbol}: نقاط {total_score} < {MIN_SCORE_REQUIRED}")
+        required_score = safe_float(signal.get('required_score', MIN_SCORE_REQUIRED))
+        if total_score < required_score:
+            logger.warning(f"🛑 {symbol}: نقاط {total_score} < {required_score}")
             return False
 
         analysis = signal.get('analysis', {})
@@ -668,12 +840,18 @@ def execute_sniper_trade(signal):
             logger.warning(f"🛑 {symbol}: {liquidity_reason}")
             return False
 
-        logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ")
+        # 🔥 تقليل الحجم بعد خسائر متتالية
+        risk_mult = core.get_risk_multiplier()
+        trade_usdt = round(TRADE_USDT * risk_mult, 2)
+        if risk_mult < 1.0:
+            logger.warning(f"⚠️ {symbol}: تقليل الحجم إلى {trade_usdt}$ ({risk_mult*100:.0f}%) بسبب خسائر متتالية")
+
+        logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ ({trade_usdt}$)")
 
         if ENABLE_MULTIPLE_TP:
-            result = core.place_market_order_with_multiple_tp(symbol, direction, TRADE_USDT, LEVERAGE)
+            result = core.place_market_order_with_multiple_tp(symbol, direction, trade_usdt, LEVERAGE)
         else:
-            result = core.place_market_order_with_tp_sl(symbol, direction, TRADE_USDT, LEVERAGE)
+            result = core.place_market_order_with_tp_sl(symbol, direction, trade_usdt, LEVERAGE)
 
         if result:
             if result.get('closed_due_to_failure'):
@@ -690,8 +868,6 @@ def execute_sniper_trade(signal):
                 quantity=result['quantity'],
                 sl_price=sl_price
             )
-
-            strat.add_symbol_cooldown(symbol, COOLDOWN_MINUTES)
 
             if MEMORY_AVAILABLE and ENABLE_TRADE_MEMORY:
                 track_key = f"{symbol}_{result['positionSide']}"
@@ -710,6 +886,7 @@ def execute_sniper_trade(signal):
                     'opened_at': time.time(),
                     'entry_time_iso': datetime.now().isoformat()
                 }
+                _save_tracking()
 
             send_trade_notification(signal, result)
             logger.info(f"✅ {symbol}: تم فتح الصفقة بنجاح")
@@ -825,11 +1002,68 @@ def toggle_auto_scan():
 
 # ==================== التشغيل ====================
 
+_THREAD_TARGETS = {}
+_thread_objects = {}
+
+
+def _start_thread(key, target, name):
+    """تشغيل خيط وتسجيله ليعيد المراقب تشغيله إذا توقف"""
+    try:
+        _THREAD_TARGETS[key] = (target, name)
+        t = threading.Thread(target=target, daemon=True, name=name)
+        t.start()
+        _thread_objects[key] = t
+        _beat(key)
+        logger.info(f"✅ [START] {name}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ [START] فشل {name}: {e}")
+        return False
+
+
+def supervisor_loop():
+    """
+    🔥 المراقب: كل دقيقة
+      1) إذا مات خيط (scanner/monitor) يُعاد تشغيله
+      2) إذا تجمّد خيط أكثر من STALL_RESTART_MINUTES تُعاد العملية كاملة
+         (Railway يعيد تشغيلها؛ أوامر SL/TP على Binance تبقى فعّالة والحالة محفوظة)
+    """
+    stall_minutes = float(globals().get('STALL_RESTART_MINUTES', 30))
+    logger.info(f"🛡️ [SUPERVISOR] بدء المراقبة (مهلة التجمّد {stall_minutes:.0f} د)")
+    time.sleep(90)
+
+    while True:
+        try:
+            for key, (target, name) in list(_THREAD_TARGETS.items()):
+                t = _thread_objects.get(key)
+                if t is None or not t.is_alive():
+                    logger.error(f"🚨 [SUPERVISOR] الخيط {name} متوقف - إعادة تشغيل")
+                    _notify(f"⚠️ الخيط <b>{name}</b> توقف وتمت إعادة تشغيله تلقائياً")
+                    nt = threading.Thread(target=target, daemon=True, name=name)
+                    nt.start()
+                    _thread_objects[key] = nt
+                    _beat(key)
+
+            now = time.time()
+            for key, last in list(_heartbeats.items()):
+                if now - last > stall_minutes * 60:
+                    logger.error(f"🚨 [SUPERVISOR] {key} متجمّد منذ {(now - last) / 60:.0f} دقيقة - إعادة تشغيل العملية")
+                    _notify(f"🚨 الخيط <b>{key}</b> تجمّد {(now - last) / 60:.0f} دقيقة - إعادة تشغيل البوت تلقائياً")
+                    time.sleep(3)
+                    os._exit(1)
+
+        except Exception as e:
+            logger.error(f"خطأ في المراقب: {e}")
+
+        time.sleep(60)
+
+
 def start_scanner_threads():
     logger.info("=" * 60)
-    logger.info("🔧 [START] بدء تشغيل الخيوط v6.0...")
+    logger.info("🔧 [START] بدء تشغيل الخيوط v5.6...")
     logger.info("=" * 60)
 
+    # 1. Health Check
     try:
         import health_server
         if health_server.run_in_background():
@@ -837,6 +1071,7 @@ def start_scanner_threads():
     except Exception as e:
         logger.error(f"❌ [START] خطأ Health Check: {e}")
 
+    # 2. Firebase
     if FIREBASE_AVAILABLE:
         try:
             if firebase_backup.initialize_firebase():
@@ -857,26 +1092,62 @@ def start_scanner_threads():
         except Exception as e:
             logger.error(f"❌ [START] خطأ Firebase: {e}")
 
+    # 2.5 🔥 استرجاع الحالة (المخاطر، القواعد، تتبع الصفقات) وترحيل الذاكرة
     try:
-        scanner = threading.Thread(target=auto_sniper_scanner, daemon=True, name="SniperScanner")
-        scanner.start()
-        logger.info("✅ [START] SniperScanner")
+        core.load_risk_state(from_firebase=True)
     except Exception as e:
-        logger.error(f"❌ [START] فشل scanner: {e}")
+        logger.warning(f"⚠️ [START] حالة المخاطر: {e}")
+
+    if ADAPTIVE_AVAILABLE:
+        try:
+            adaptive_rules.restore_from_firebase()
+        except Exception as e:
+            logger.warning(f"⚠️ [START] قواعد التعلم: {e}")
 
     try:
-        monitor = threading.Thread(target=monitor_positions_loop, daemon=True, name="Monitor")
-        monitor.start()
-        logger.info("✅ [START] Monitor (Trailing + TP/SL + Cleanup)")
+        _load_tracking()
     except Exception as e:
-        logger.error(f"❌ [START] فشل monitor: {e}")
+        logger.warning(f"⚠️ [START] التتبع: {e}")
 
+    if MEMORY_AVAILABLE:
+        try:
+            memory.migrate_legacy_trades()
+        except Exception as e:
+            logger.warning(f"⚠️ [START] ترحيل الذاكرة: {e}")
+
+        def _reconcile_and_learn():
+            try:
+                time.sleep(20)
+                fixed = memory.reconcile_legacy_trades()
+                if fixed:
+                    logger.info(f"✅ [START] تم تصحيح {fixed} صفقة قديمة من سجل Binance")
+                if ADAPTIVE_AVAILABLE:
+                    adaptive_rules.update_rules()
+            except Exception as e:
+                logger.warning(f"⚠️ [START] تصحيح الصفقات القديمة: {e}")
+
+        threading.Thread(target=_reconcile_and_learn, daemon=True, name="Reconcile").start()
+
+    # 3. Scanner
+    _start_thread('scanner', auto_sniper_scanner, "SniperScanner")
+
+    # 4. Monitor
+    _start_thread('monitor', monitor_positions_loop, "Monitor")
+
+    # 5. Smart Scheduler
     if SCHEDULER_AVAILABLE and ENABLE_AUTO_LEARNING:
         try:
             if smart_scheduler.start_scheduler():
                 logger.info("✅ [START] Smart Scheduler")
         except Exception as e:
             logger.error(f"❌ [START] فشل scheduler: {e}")
+
+    # 6. 🔥 المراقب (Supervisor)
+    try:
+        threading.Thread(target=supervisor_loop, daemon=True, name="Supervisor").start()
+        logger.info("✅ [START] Supervisor (إعادة تشغيل الخيوط المتوقفة)")
+    except Exception as e:
+        logger.error(f"❌ [START] فشل supervisor: {e}")
 
     time.sleep(2)
     logger.info(f"✅ [START] عدد الخيوط: {threading.active_count()}")
@@ -886,7 +1157,7 @@ def start_scanner_threads():
 def main():
     try:
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v6.0...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.7...")
         logger.info("=" * 60)
 
         send_startup()
@@ -898,6 +1169,7 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ [MAIN] فشل التنظيف: {e}")
 
+        # 🔥 تنظيف الأوامر اليتيمة عند البدء
         try:
             logger.info("🧹 [MAIN] تنظيف الأوامر اليتيمة...")
             cancelled = core.cleanup_orphan_algo_orders()
@@ -923,7 +1195,7 @@ def main():
                 pass
 
         logger.info("=" * 60)
-        logger.info("🎯 [MAIN] نظام القناص v6.0 مفعل")
+        logger.info("🎯 [MAIN] نظام القناص v5.6 مفعل")
         logger.info("=" * 60)
         logger.info(f"⏰ [MAIN] المسح كل {AUTO_SCAN_INTERVAL // 60} دقيقة")
         logger.info(f"🎯 [MAIN] MIN_SCORE: {MIN_SCORE_REQUIRED}")
@@ -940,9 +1212,16 @@ def main():
         logger.info("🚀 [MAIN] بدء البوت...")
         tgbot.run_bot()
 
+        # run_polling لا يرجع إلا عند الإيقاف أو عطل - نخرج بكود خطأ ليعيد Railway التشغيل
+        logger.error("❌ [MAIN] توقف Telegram polling - إعادة تشغيل العملية")
+        time.sleep(3)
+        os._exit(1)
+
     except Exception as e:
         logger.error(f"❌ [MAIN] خطأ: {e}")
         traceback.print_exc()
+        time.sleep(5)
+        os._exit(1)
 
 
 if __name__ == "__main__":

@@ -1092,18 +1092,12 @@ async def _show_learning_status(update: Update):
         except Exception as e:
             logger.error(f"خطأ في الصفقات: {e}")
 
-        # جلسات التعلم
+        # 🔥 v5.7: قواعد التعلم التكيفي الفعلية
         try:
-            import auto_tuner
-            tuning_stats = auto_tuner.get_tuning_stats()
-            msg += f"🧠 <b>جلسات التعلم:</b>\n"
-            msg += f"   • العدد: {tuning_stats.get('total_tunings', 0)}\n"
-            last = tuning_stats.get('last_tuning')
-            if last:
-                msg += f"   • آخر جلسة: {last[:19]}\n"
-            msg += "\n"
+            import adaptive_rules
+            msg += adaptive_rules.get_status_text() + "\n\n"
         except Exception as e:
-            logger.error(f"خطأ في الجلسات: {e}")
+            logger.error(f"خطأ في قواعد التعلم: {e}")
 
         # الجدولة
         try:

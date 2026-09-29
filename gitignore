@@ -1,19 +1,21 @@
-# أسرار - لا تُرفع أبداً
+# أسرار
 .env
-*.env
-!.env.example
+config.local.py
+*.json.key
 
-# بيانات محلية / حالة التشغيل (تتغير باستمرار، لا داعي لتتبعها في git)
+# حالة التشغيل (تُنشأ أثناء العمل ولا تُرفع)
 trade_memory.json
 open_positions.json
+open_trades_tracking.json
+risk_state.json
+learned_rules.json
+cooldowns.json
 profit_history.json
-*.log
+learning_history.json
+tuning_history.json
+performance_history.json
+config_backups/
 
-# بايثون
 __pycache__/
 *.pyc
-.venv/
-venv/
-
-# نظام التشغيل
-.DS_Store
+logs/

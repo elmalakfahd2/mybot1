@@ -1,5 +1,8 @@
 # ==================================================
-# 📁 ملف: firebase_backup.py - الإصدار v5.5.1
+# 📁 ملف: firebase_backup.py - الإصدار v5.7
+# 🔧 التعديلات v5.7:
+#    - 🔥 save_doc / load_doc: حفظ أي حالة (المخاطر، الصفقات المفتوحة، قواعد التعلم)
+#      حتى لا تضيع عند إعادة تشغيل Railway
 # 🔧 التعديلات v5.5.1:
 #    - 🔥 استخدام getattr (لا يفشل الاستيراد أبداً)
 #    - 🔥 معالجة آمنة للمتغيرات المفقودة
@@ -149,6 +152,36 @@ def load_from_firebase():
 
     except Exception as e:
         logger.error(f"❌ فشل التحميل من Firebase: {e}")
+        return None
+
+
+# ==================== 🔥 مستندات عامة (v5.7) ====================
+
+def save_doc(name, data):
+    """حفظ مستند باسم مخصص (dict) في Firebase"""
+    try:
+        if not is_available():
+            return False
+        payload = dict(data)
+        payload["_saved_at"] = datetime.now().isoformat()
+        _db.collection(COLLECTION_NAME).document(name).set(payload)
+        return True
+    except Exception as e:
+        logger.error(f"❌ فشل حفظ المستند {name}: {e}")
+        return False
+
+
+def load_doc(name):
+    """تحميل مستند باسم مخصص من Firebase (أو None)"""
+    try:
+        if not is_available():
+            return None
+        doc = _db.collection(COLLECTION_NAME).document(name).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except Exception as e:
+        logger.error(f"❌ فشل تحميل المستند {name}: {e}")
         return None
 
 

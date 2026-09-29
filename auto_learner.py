@@ -257,19 +257,20 @@ def analyze_why_lost(trades):
 
 # ==================== التحليل الرئيسي ====================
 
-def analyze_performance(min_trades=10):
+def analyze_performance(min_trades=20):
     """
     تحليل أداء البوت وتحديد الأوزان المثالية
     """
     try:
         memory = load_memory()
-        trades = memory.get("trades", [])
+        # 🔥 v5.7: الصفقات الموثقة (PnL حقيقي) فقط - القديمة كانت أرقامها خاطئة
+        trades = [t for t in memory.get("trades", []) if t.get("pnl_verified")]
 
         if len(trades) < min_trades:
-            logger.info(f"⏳ عدد الصفقات غير كافٍ ({len(trades)}/{min_trades})")
+            logger.info(f"⏳ عدد الصفقات الموثقة غير كافٍ ({len(trades)}/{min_trades})")
             return None
 
-        recent_trades = trades[-min_trades:]
+        recent_trades = trades[-max(min_trades, 40):]
 
         logger.info(f"📊 تحليل {len(recent_trades)} صفقة...")
 

@@ -9,6 +9,7 @@
 # ==================================================
 
 import logging
+import threading
 import time
 import hmac
 import hashlib
@@ -299,6 +300,43 @@ def get_open_positions():
     except Exception as e:
         logger.error(f"خطأ: {e}")
         return []
+
+
+def get_open_positions_strict():
+    """
+    🔥 v5.7: مثل get_open_positions لكن يرجع None عند فشل الاتصال
+    (حتى لا يُعتبر فشل الـ API إغلاقاً لكل الصفقات).
+    """
+    try:
+        client_obj = get_client()
+        if not client_obj:
+            return None
+        acct = client_obj.futures_account()
+        if not acct or "positions" not in acct:
+            return None
+        positions = []
+        for p in acct["positions"]:
+            try:
+                amt = float(p["positionAmt"])
+                if abs(amt) > 0:
+                    position_side = p.get("positionSide", "BOTH")
+                    if position_side == "BOTH":
+                        position_side = "LONG" if amt > 0 else "SHORT"
+                    positions.append({
+                        "symbol": p["symbol"],
+                        "positionAmt": p["positionAmt"],
+                        "entryPrice": p["entryPrice"],
+                        "unrealizedProfit": p["unrealizedProfit"],
+                        "positionSide": position_side,
+                        "leverage": p["leverage"],
+                        "isolated": p["isolated"]
+                    })
+            except Exception:
+                continue
+        return positions
+    except Exception as e:
+        logger.error(f"خطأ get_open_positions_strict: {e}")
+        return None
 
 
 def get_open_orders(symbol=None):
@@ -660,40 +698,59 @@ def check_correlation_exposure(symbol, direction, open_positions):
 # ==================== قاطع دائرة الخسارة اليومية ====================
 
 def check_daily_drawdown():
+    """
+    🔥 v5.7: حد الخسارة اليومية من دخل Binance الحقيقي (وليس من الذاكرة).
+    عند تجاوزه يتوقف البوت حتى منتصف الليل.
+    """
+    global _pause_until, _pause_reason
     try:
-        if not ENABLE_DAILY_DRAWDOWN_LIMIT:
+        if not _cfg_val('ENABLE_DAILY_DRAWDOWN_LIMIT', False):
             return True, "معطل"
 
-        client_obj = get_client()
-        if not client_obj:
-            return True, "لا يوجد اتصال"
-
-        account = client_obj.futures_account()
-        balance = 0.0
-        for asset in account.get('assets', []):
-            if asset.get('asset') == 'USDT':
-                balance = float(asset.get('availableBalance', 0))
-                break
-
-        if balance <= 0:
-            return True, "رصيد غير متاح"
-
-        try:
-            import trade_memory
-            today_pnl = trade_memory.get_today_pnl()
-        except Exception as e:
-            logger.warning(f"⚠️ تعذر جلب PnL اليوم: {e}")
+        today = get_today_net_income()
+        if today is None:
             return True, "تعذر جلب البيانات"
 
-        if today_pnl >= 0:
-            return True, f"ربح اليوم: {today_pnl:.2f}"
+        if today >= 0:
+            return True, f"ربح اليوم: {today:.2f}"
 
-        loss_percent = (abs(today_pnl) / balance) * 100
+        loss = abs(today)
+        limit_usdt = float(_cfg_val('DAILY_MAX_LOSS_USDT', 0) or 0)
+        limit_pct = float(_cfg_val('DAILY_MAX_LOSS_PERCENT', 0) or 0)
 
-        if loss_percent >= DAILY_MAX_LOSS_PERCENT:
-            return False, f"🛑 خسارة يومية {loss_percent:.2f}%"
+        breached = False
+        reason = ""
 
-        return True, f"خسارة اليوم: {loss_percent:.2f}%"
+        if limit_usdt > 0 and loss >= limit_usdt:
+            breached = True
+            reason = f"خسارة اليوم {loss:.2f}$ ≥ الحد {limit_usdt:.2f}$"
+
+        if not breached and limit_pct > 0:
+            try:
+                client_obj = get_client()
+                wallet = 0.0
+                if client_obj:
+                    for a in client_obj.futures_account_balance():
+                        if a.get('asset') == 'USDT':
+                            wallet = float(a.get('balance', 0))
+                            break
+                if wallet > 0 and (loss / wallet * 100) >= limit_pct:
+                    breached = True
+                    reason = f"خسارة اليوم {loss / wallet * 100:.1f}% ≥ الحد {limit_pct:.1f}%"
+            except Exception:
+                pass
+
+        if breached:
+            with _risk_lock:
+                until = _midnight_after_now()
+                if until > _pause_until:
+                    _pause_until = until
+                    _pause_reason = "حد الخسارة اليومية"
+            _save_risk_state()
+            logger.error(f"🛑 {reason} - إيقاف حتى منتصف الليل")
+            return False, f"🛑 {reason}"
+
+        return True, f"خسارة اليوم: {loss:.2f}$"
 
     except Exception as e:
         logger.error(f"خطأ فحص الخسارة اليومية: {e}")
@@ -1064,6 +1121,11 @@ def cleanup_orphan_algo_orders():
 _trailing_sl_positions = {}
 _consecutive_losses = 0
 _pause_until = 0
+_last_loss_ts = 0
+_pause_reason = ""
+_risk_lock = threading.Lock()
+RISK_STATE_FILE = "risk_state.json"
+RISK_FIREBASE_DOC = "risk_state"
 
 
 def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=None):
@@ -1258,26 +1320,187 @@ def get_trailing_sl_status():
 
 # ==================== الحماية ====================
 
+def _cfg_val(name, default):
+    return globals().get(name, default)
+
+
+def _risk_state_dict():
+    return {
+        'consecutive_losses': _consecutive_losses,
+        'pause_until': _pause_until,
+        'last_loss_ts': _last_loss_ts,
+        'pause_reason': _pause_reason,
+        'updated_ts': time.time(),
+    }
+
+
+def _save_risk_state():
+    """🔥 حفظ حالة المخاطر (محلياً + Firebase) حتى لا تُصفَّر عند إعادة التشغيل"""
+    try:
+        state = _risk_state_dict()
+        try:
+            with open(RISK_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f)
+        except Exception as e:
+            logger.debug(f"تعذر حفظ risk_state محلياً: {e}")
+
+        try:
+            import firebase_backup
+            if firebase_backup.is_available():
+                threading.Thread(
+                    target=firebase_backup.save_doc,
+                    args=(RISK_FIREBASE_DOC, state),
+                    daemon=True
+                ).start()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(f"_save_risk_state: {e}")
+
+
+def load_risk_state(from_firebase=True):
+    """تحميل حالة المخاطر (الأحدث بين المحلي و Firebase)"""
+    global _consecutive_losses, _pause_until, _last_loss_ts, _pause_reason
+    try:
+        candidates = []
+        try:
+            if os.path.exists(RISK_STATE_FILE):
+                with open(RISK_STATE_FILE, "r", encoding="utf-8") as f:
+                    candidates.append(json.load(f))
+        except Exception:
+            pass
+
+        if from_firebase:
+            try:
+                import firebase_backup
+                if firebase_backup.is_available():
+                    doc = firebase_backup.load_doc(RISK_FIREBASE_DOC)
+                    if doc:
+                        candidates.append(doc)
+            except Exception:
+                pass
+
+        if not candidates:
+            return False
+
+        best = max(candidates, key=lambda d: float(d.get('updated_ts', 0) or 0))
+        with _risk_lock:
+            _consecutive_losses = int(best.get('consecutive_losses', 0) or 0)
+            _pause_until = float(best.get('pause_until', 0) or 0)
+            _last_loss_ts = float(best.get('last_loss_ts', 0) or 0)
+            _pause_reason = best.get('pause_reason', '') or ''
+
+        logger.info(f"✅ حالة المخاطر: خسائر متتالية={_consecutive_losses}, "
+                    f"توقف حتى={'لا' if _pause_until <= time.time() else datetime.fromtimestamp(_pause_until).strftime('%H:%M')}")
+        return True
+    except Exception as e:
+        logger.warning(f"⚠️ تعذر تحميل حالة المخاطر: {e}")
+        return False
+
+
+def _pause_minutes_for(streak):
+    """إيقاف متصاعد: يُقرأ من PAUSE_ESCALATION = [(عدد الخسائر, دقائق), ...]"""
+    table = _cfg_val('PAUSE_ESCALATION', [(3, 60), (5, 240), (7, 720)])
+    minutes = 0
+    for threshold, mins in sorted(table):
+        if streak >= threshold:
+            minutes = mins
+    return minutes
+
+
 def record_trade_result(profit):
-    global _consecutive_losses, _pause_until
+    """
+    🔥 v5.7: إيقاف متصاعد + تجاهل التعادل + حفظ الحالة.
+    profit هنا هو الصافي الحقيقي (بعد العمولة).
+    """
+    global _consecutive_losses, _pause_until, _last_loss_ts, _pause_reason
 
     try:
-        if profit < 0:
-            _consecutive_losses += 1
-            logger.warning(f"⚠️ خسارة: {_consecutive_losses}/{MAX_CONSECUTIVE_LOSSES}")
+        eps = float(_cfg_val('LOSS_EPSILON', 0.10))
+        paused_now = False
 
-            if _consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-                _pause_until = time.time() + (PAUSE_DURATION_MINUTES * 60)
-                logger.warning(f"🛑 توقف {PAUSE_DURATION_MINUTES} دقيقة")
-                return True
-        else:
-            if _consecutive_losses > 0:
-                logger.info("✅ ربح - إعادة تعيين")
-            _consecutive_losses = 0
+        with _risk_lock:
+            if profit < -eps:
+                _consecutive_losses += 1
+                _last_loss_ts = time.time()
+                logger.warning(f"⚠️ خسارة: {_consecutive_losses} متتالية")
 
+                minutes = _pause_minutes_for(_consecutive_losses)
+                if minutes:
+                    until = time.time() + minutes * 60
+                    if until > _pause_until:
+                        _pause_until = until
+                        _pause_reason = f"{_consecutive_losses} خسائر متتالية"
+                    logger.warning(f"🛑 توقف {minutes} دقيقة ({_consecutive_losses} خسائر متتالية)")
+                    paused_now = True
+
+            elif profit > eps:
+                if _consecutive_losses > 0:
+                    logger.info("✅ ربح - إعادة تعيين عداد الخسائر")
+                _consecutive_losses = 0
+            # التعادل (|profit| <= eps) لا يغيّر العداد
+
+        _save_risk_state()
+        return paused_now
+    except Exception as e:
+        logger.error(f"خطأ record_trade_result: {e}")
         return False
-    except:
-        return False
+
+
+
+
+
+
+def get_pause_reason():
+    return _pause_reason
+
+
+def get_risk_multiplier():
+    """🔥 تقليل حجم الصفقة بعد خسائر متتالية (يرجع 1.0 في الحالة العادية)"""
+    try:
+        if not _cfg_val('AUTO_REDUCE_RISK_ON_LOSS', True):
+            return 1.0
+        losses = get_consecutive_losses()
+        if losses >= int(_cfg_val('RISK_REDUCE_AFTER_LOSSES', 3)):
+            return float(_cfg_val('AUTO_RISK_REDUCTION_FACTOR', 0.5))
+        return 1.0
+    except Exception:
+        return 1.0
+
+
+def _midnight_after_now():
+    now = datetime.now()
+    return (now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).timestamp()
+
+
+_income_cache = {'ts': 0, 'value': None}
+
+
+def get_today_net_income(max_age=45):
+    """صافي دخل اليوم من Binance (REALIZED_PNL + COMMISSION + FUNDING_FEE)"""
+    try:
+        if _income_cache['value'] is not None and time.time() - _income_cache['ts'] < max_age:
+            return _income_cache['value']
+
+        client_obj = get_client()
+        if not client_obj:
+            return None
+
+        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = client_obj.futures_income_history(
+            startTime=int(start.timestamp() * 1000), limit=1000
+        )
+        total = 0.0
+        for r in rows or []:
+            if r.get('incomeType') in ('REALIZED_PNL', 'COMMISSION', 'FUNDING_FEE'):
+                total += float(r.get('income', 0) or 0)
+
+        _income_cache['ts'] = time.time()
+        _income_cache['value'] = round(total, 4)
+        return _income_cache['value']
+    except Exception as e:
+        logger.warning(f"⚠️ تعذر جلب دخل اليوم: {e}")
+        return None
 
 
 def is_trading_paused():
@@ -1927,3 +2150,10 @@ if __name__ == "__main__":
     print(f"🔍 التحقق من TP/SL: {'مفعل' if VERIFY_TP_SL_AFTER_CREATION else 'معطل'}")
     print(f"📊 فلتر السيولة: {'مفعل' if ENABLE_VOLUME_FILTER else 'معطل'}")
     print(f"🧹 تنظيف الأوامر اليتيمة: {'مفعل' if ENABLE_ORPHAN_CLEANUP else 'معطل'}")
+
+
+# 🔥 استرجاع حالة المخاطر المحلية عند الاستيراد
+try:
+    load_risk_state(from_firebase=False)
+except Exception:
+    pass

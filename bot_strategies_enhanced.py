@@ -1,17 +1,24 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - v6.0
-# 🔧 التعديلات v6.0:
-#    - 🔥 قراءة الأوزان من learned_weights.json
-#    - 🔥 calculate_total_score يقرأ الأوزان ديناميكياً
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.7
+# 🔧 التعديلات v5.7:
+#    - 🔥 التعلم يؤثر فعلياً: حد النقاط الديناميكي + عقوبة الاتجاه + حظر الساعات (adaptive_rules)
+#    - 🔥 الحظر بنافذة زمنية وصفقات موثقة (ينتهي تلقائياً)
+#    - 🔥 التبريد يُحسب عند الإغلاق بنتيجة حقيقية ويُحفظ في ملف
+#    - 🔥 سياق حقيقي للذكاء الاصطناعي (السوق + سجل العملة + أداء البوت)
+# 🔧 التعديلات v5.1:
 #    - 🔥 AI إلزامي (75+ استثناء)
-#    - 🔥 Cooldown تصاعدي
+#    - 🔥 لا نقاط مجانية لـ AI
+#    - 🔥 Cooldown تصاعدي (60/120/240)
+#    - 🔥 حظر دائم للعملات السيئة
+# 📅 التاريخ: 2026-09-28
 # ==================================================
 
 import logging
 import time
-import json
-import os
+import asyncio
+import concurrent.futures
 from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger("bot_strategies_enhanced")
 
@@ -75,60 +82,46 @@ except ImportError as e:
     realtime_data = None
 
 
+try:
+    import adaptive_rules
+    ADAPTIVE_AVAILABLE = True
+    logger.info("✅ تم تحميل adaptive_rules")
+except ImportError as e:
+    logger.warning(f"⚠️ adaptive_rules غير متاح: {e}")
+    adaptive_rules = None
+    ADAPTIVE_AVAILABLE = False
+
+import json as _json
+import os as _os
+
+COOLDOWN_FILE = "cooldowns.json"
 _symbol_cooldown = {}
 _pending_auto_signals = {}
 
 
-# ==================== 🔥 قراءة الأوزان من JSON (جديد v6.0) ====================
-
-def get_learned_weights():
-    """
-    🔥 v6.0: قراءة الأوزان المتعلَّمة من learned_weights.json
-    مع fallback للقيم الافتراضية
-    """
-    default_weights = {
-        'timeframe_points_max': 20,
-        'volume_points_max': 15,
-        'groq_points_max': 12,
-        'rsi_points_max': 10,
-        'momentum_points_max': 10,
-        'price_action_points_max': 8,
-        'market_points_max': 5,
-        'order_book_points_max': 10,
-        'funding_oi_points_max': 10,
-    }
-    
+def _save_cooldowns():
     try:
-        if not os.path.exists('learned_weights.json'):
-            return default_weights
-        
-        with open('learned_weights.json', 'r', encoding='utf-8') as f:
-            learned = json.load(f)
-        
-        # خريطة التحويل: من أسماء auto_tuner إلى أسماء النقاط
-        mapping = {
-            'timeframe_alignment': 'timeframe_points_max',
-            'volume': 'volume_points_max',
-            'groq': 'groq_points_max',
-            'rsi_ideal': 'rsi_points_max',
-            'momentum': 'momentum_points_max',
-            'price_action': 'price_action_points_max',
-            'market_regime': 'market_points_max',
-            'order_book': 'order_book_points_max',
-            'funding_oi': 'funding_oi_points_max',
-        }
-        
-        result = default_weights.copy()
-        for tuner_name, points_name in mapping.items():
-            if tuner_name in learned:
-                val = learned[tuner_name]
-                if isinstance(val, (int, float)) and val > 0:
-                    result[points_name] = int(val)
-        
-        return result
-    except Exception as e:
-        logger.warning(f"⚠️ فشل قراءة learned_weights: {e}")
-        return default_weights
+        with open(COOLDOWN_FILE, "w", encoding="utf-8") as f:
+            _json.dump(_symbol_cooldown, f)
+    except Exception:
+        pass
+
+
+def _load_cooldowns():
+    """استرجاع التبريد بعد إعادة التشغيل (فقط غير المنتهي)"""
+    try:
+        if _os.path.exists(COOLDOWN_FILE):
+            with open(COOLDOWN_FILE, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            now = time.time()
+            for sym, end in data.items():
+                if float(end) > now:
+                    _symbol_cooldown[sym] = float(end)
+    except Exception:
+        pass
+
+
+_load_cooldowns()
 
 
 # ==================== دوال مساعدة ====================
@@ -171,37 +164,31 @@ def calculate_atr(symbol, period=14):
 
 def add_symbol_cooldown(symbol, duration_minutes=None):
     """
-    🔥 Cooldown تصاعدي ذكي:
-    - ربح → 5 دقائق
-    - خسارة 1 → 60 دقيقة
-    - خسارة 2 → 120 دقيقة
-    - خسارة 3+ → 240 دقيقة
+    🔥 v5.7: يُستدعى عند إغلاق الصفقة (بعد تسجيل نتيجتها الحقيقية).
+    التبريد يعتمد على الخسائر المتتالية الموثقة للعملة خلال 48 ساعة:
+    - لا خسائر → COOLDOWN_MINUTES
+    - خسارة 1 → COOLDOWN_MINUTES_AFTER_LOSS
+    - خسارتان → ضعف ذلك
+    - 3+ → 4 أضعاف
     """
     try:
-        if MEMORY_AVAILABLE:
-            recent = memory.get_symbol_history(symbol, limit=5)
-            if recent:
-                losses = sum(1 for t in recent if not t.get('is_win', True))
-                
-                if losses >= 3:
-                    duration_minutes = 240
-                    logger.warning(f"🚫 {symbol}: {losses} خسائر - تبريد 240 دقيقة")
-                elif losses == 2:
-                    duration_minutes = 120
-                    logger.warning(f"⚠️ {symbol}: خسارتان - تبريد 120 دقيقة")
-                elif losses == 1:
-                    duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS
-                    logger.info(f"⚠️ {symbol}: خسارة - تبريد {COOLDOWN_MINUTES_AFTER_LOSS} دقيقة")
-                else:
-                    duration_minutes = COOLDOWN_MINUTES
-                    logger.info(f"✅ {symbol}: تبريد عادي {COOLDOWN_MINUTES} دقيقة")
-            else:
-                duration_minutes = COOLDOWN_MINUTES
-        else:
+        if duration_minutes is None:
             duration_minutes = COOLDOWN_MINUTES
+            if MEMORY_AVAILABLE:
+                stats = memory.get_windowed_stats(symbol)
+                streak = stats.get('consecutive_losses', 0)
+                if streak >= 3:
+                    duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS * 4
+                    logger.warning(f"🚫 {symbol}: {streak} خسائر متتالية - تبريد {duration_minutes} دقيقة")
+                elif streak == 2:
+                    duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS * 2
+                    logger.warning(f"⚠️ {symbol}: خسارتان - تبريد {duration_minutes} دقيقة")
+                elif streak == 1:
+                    duration_minutes = COOLDOWN_MINUTES_AFTER_LOSS
+                    logger.info(f"⚠️ {symbol}: خسارة - تبريد {duration_minutes} دقيقة")
 
-        cooldown_end = time.time() + (duration_minutes * 60)
-        _symbol_cooldown[symbol] = cooldown_end
+        _symbol_cooldown[symbol] = time.time() + (duration_minutes * 60)
+        _save_cooldowns()
         logger.info(f"⏳ {symbol} في التبريد {duration_minutes} دقيقة")
     except Exception as e:
         logger.error(f"خطأ: {e}")
@@ -250,10 +237,10 @@ def check_memory_filter(symbol):
         if not MEMORY_AVAILABLE or not ENABLE_TRADE_MEMORY:
             return True, "ذاكرة معطلة", {}
 
-        # 1. الحظر المؤقت (48 ساعة)
+        # 🔥 1. الحظر المؤقت (نافذة زمنية، صفقات موثقة)
         perm_blocked, perm_reason = memory.is_symbol_permanently_blocked(symbol)
         if perm_blocked:
-            logger.warning(f"🚫 {symbol} محظور: {perm_reason}")
+            logger.warning(f"🚫 {symbol} محظور مؤقتاً: {perm_reason}")
             return False, f"🚫 {perm_reason}", {'blocked': True}
 
         # 2. الحظر العادي
@@ -726,24 +713,12 @@ def generate_balanced_recommendation(analysis):
         return {'action': 'HOLD', 'confidence': 0, 'reasons': []}
 
 
-# ==================== 🔥 نظام النقاط (يقرأ من JSON) ====================
+# ==================== نظام النقاط ====================
 
 def calculate_total_score(signal, analysis):
     try:
         symbol = signal['symbol']
         direction = signal['direction']
-
-        # 🔥 قراءة الأوزان من JSON
-        w = get_learned_weights()
-        max_tf = w['timeframe_points_max']
-        max_vol = w['volume_points_max']
-        max_rsi = w['rsi_points_max']
-        max_mom = w['momentum_points_max']
-        max_pa = w['price_action_points_max']
-        max_market = w['market_points_max']
-        max_ob = w['order_book_points_max']
-        max_fo = w['funding_oi_points_max']
-        max_ai = w['groq_points_max']
 
         score = 0
         details = {
@@ -751,56 +726,52 @@ def calculate_total_score(signal, analysis):
             'rsi_points': 0, 'momentum_points': 0, 'price_action_points': 0,
             'market_points': 0, 'order_book_points': 0, 'funding_oi_points': 0,
             'realtime_adjustment': 0, 'total': 0, 'max_total': 100,
-            'rejected': False, 'reject_reason': '',
-            'weights_used': {
-                'tf': max_tf, 'vol': max_vol, 'rsi': max_rsi, 'mom': max_mom,
-                'pa': max_pa, 'market': max_market, 'ob': max_ob, 'fo': max_fo, 'ai': max_ai
-            }
+            'rejected': False, 'reject_reason': ''
         }
 
-        # 1. ترابط (ديناميكي)
+        # 1. ترابط (20)
         timeframes = analysis.get('timeframes', {})
         alignment = calculate_enhanced_timeframe_alignment(timeframes)
 
         if alignment >= 8.0:
-            details['timeframe_points'] = max_tf
+            details['timeframe_points'] = 20
         elif alignment >= 6.0:
-            details['timeframe_points'] = int(max_tf * 0.8)
+            details['timeframe_points'] = 16
         elif alignment >= 4.0:
-            details['timeframe_points'] = int(max_tf * 0.6)
+            details['timeframe_points'] = 12
         elif alignment >= 3.0:
-            details['timeframe_points'] = int(max_tf * 0.4)
+            details['timeframe_points'] = 8
         elif alignment >= 2.0:
-            details['timeframe_points'] = int(max_tf * 0.2)
+            details['timeframe_points'] = 4
 
         score += details['timeframe_points']
-        logger.info(f"📊 ترابط: {alignment:.1f}/10 → {details['timeframe_points']}/{max_tf}")
+        logger.info(f"📊 ترابط: {alignment:.1f}/10 → {details['timeframe_points']}/20")
 
-        # 2. الحجم (ديناميكي)
+        # 2. الحجم (15)
         volume = analysis.get('volume_analysis', {})
         vol_ratio = volume.get('volume_5m_ratio', 0)
 
         if vol_ratio >= 2.5:
-            details['volume_points'] = max_vol
+            details['volume_points'] = 15
         elif vol_ratio >= 2.0:
-            details['volume_points'] = int(max_vol * 0.87)
+            details['volume_points'] = 13
         elif vol_ratio >= 1.5:
-            details['volume_points'] = int(max_vol * 0.73)
+            details['volume_points'] = 11
         elif vol_ratio >= 1.2:
-            details['volume_points'] = int(max_vol * 0.6)
+            details['volume_points'] = 9
         elif vol_ratio >= 1.0:
-            details['volume_points'] = int(max_vol * 0.47)
+            details['volume_points'] = 7
         elif vol_ratio >= 0.8:
-            details['volume_points'] = int(max_vol * 0.33)
+            details['volume_points'] = 5
         elif vol_ratio >= 0.5:
-            details['volume_points'] = int(max_vol * 0.2)
+            details['volume_points'] = 3
         else:
-            details['volume_points'] = int(max_vol * 0.07)
+            details['volume_points'] = 1
 
         score += details['volume_points']
-        logger.info(f"📊 حجم: {vol_ratio:.2f}x → {details['volume_points']}/{max_vol}")
+        logger.info(f"📊 حجم: {vol_ratio:.2f}x → {details['volume_points']}/15")
 
-        # 3. RSI (ديناميكي)
+        # 3. RSI (10)
         technical = analysis.get('technical_indicators', {})
         rsi = technical.get('rsi', 50)
 
@@ -819,37 +790,37 @@ def calculate_total_score(signal, analysis):
 
         if direction == "BUY":
             if 40 <= rsi <= 60:
-                details['rsi_points'] = max_rsi
+                details['rsi_points'] = 10
             elif 35 <= rsi <= 65:
-                details['rsi_points'] = int(max_rsi * 0.8)
+                details['rsi_points'] = 8
             elif 30 <= rsi <= 70:
-                details['rsi_points'] = int(max_rsi * 0.5)
+                details['rsi_points'] = 5
             elif 25 <= rsi <= RSI_BUY_WARNING:
-                details['rsi_points'] = int(max_rsi * 0.3)
+                details['rsi_points'] = 3
             elif RSI_BUY_WARNING < rsi < RSI_BUY_HARD_REJECT:
-                details['rsi_points'] = int(max_rsi * 0.1)
+                details['rsi_points'] = 1
                 logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - TP ضيق")
             else:
                 details['rsi_points'] = 0
         else:
             if 40 <= rsi <= 60:
-                details['rsi_points'] = max_rsi
+                details['rsi_points'] = 10
             elif 35 <= rsi <= 65:
-                details['rsi_points'] = int(max_rsi * 0.8)
+                details['rsi_points'] = 8
             elif 30 <= rsi <= 70:
-                details['rsi_points'] = int(max_rsi * 0.5)
+                details['rsi_points'] = 5
             elif RSI_SELL_WARNING <= rsi <= 75:
-                details['rsi_points'] = int(max_rsi * 0.3)
+                details['rsi_points'] = 3
             elif RSI_SELL_HARD_REJECT < rsi < RSI_SELL_WARNING:
-                details['rsi_points'] = int(max_rsi * 0.1)
+                details['rsi_points'] = 1
                 logger.warning(f"⚠️ {symbol}: RSI={rsi:.1f} - TP ضيق")
             else:
                 details['rsi_points'] = 0
 
         score += details['rsi_points']
-        logger.info(f"📊 RSI: {rsi:.1f} → {details['rsi_points']}/{max_rsi}")
+        logger.info(f"📊 RSI: {rsi:.1f} → {details['rsi_points']}/10")
 
-        # 4. Momentum (ديناميكي)
+        # 4. Momentum (10)
         momentum = analysis.get('momentum', {})
         mom_strength = momentum.get('strength', 0)
         mom_dir = momentum.get('direction', 'محايد')
@@ -861,23 +832,23 @@ def calculate_total_score(signal, analysis):
 
         if is_aligned:
             if mom_strength >= 7:
-                details['momentum_points'] = max_mom
+                details['momentum_points'] = 10
             elif mom_strength >= 5:
-                details['momentum_points'] = int(max_mom * 0.8)
+                details['momentum_points'] = 8
             elif mom_strength >= 3:
-                details['momentum_points'] = int(max_mom * 0.6)
+                details['momentum_points'] = 6
             else:
-                details['momentum_points'] = int(max_mom * 0.4)
+                details['momentum_points'] = 4
         else:
             if mom_strength < 3:
-                details['momentum_points'] = int(max_mom * 0.3)
+                details['momentum_points'] = 3
             else:
                 details['momentum_points'] = 0
 
         score += details['momentum_points']
-        logger.info(f"📊 Momentum: {mom_dir} ({mom_strength:.1f}) → {details['momentum_points']}/{max_mom}")
+        logger.info(f"📊 Momentum: {mom_dir} ({mom_strength:.1f}) → {details['momentum_points']}/10")
 
-        # 5. Price Action (ديناميكي)
+        # 5. Price Action (8)
         price_action = analysis.get('price_action', {})
         body_ratio = price_action.get('body_ratio', 0)
         candle_type = price_action.get('candle_type', '')
@@ -889,23 +860,23 @@ def calculate_total_score(signal, analysis):
 
         if is_aligned_candle:
             if body_ratio >= 0.7:
-                details['price_action_points'] = max_pa
+                details['price_action_points'] = 8
             elif body_ratio >= 0.5:
-                details['price_action_points'] = int(max_pa * 0.75)
+                details['price_action_points'] = 6
             elif body_ratio >= 0.3:
-                details['price_action_points'] = int(max_pa * 0.5)
+                details['price_action_points'] = 4
             else:
-                details['price_action_points'] = int(max_pa * 0.25)
+                details['price_action_points'] = 2
         else:
             if body_ratio >= 0.5:
-                details['price_action_points'] = int(max_pa * 0.25)
+                details['price_action_points'] = 2
             else:
                 details['price_action_points'] = 0
 
         score += details['price_action_points']
-        logger.info(f"📊 PA: {candle_type} (body={body_ratio:.2f}) → {details['price_action_points']}/{max_pa}")
+        logger.info(f"📊 PA: {candle_type} (body={body_ratio:.2f}) → {details['price_action_points']}/8")
 
-        # 6. سوق (ديناميكي)
+        # 6. سوق (5)
         if MARKET_REGIME_AVAILABLE and ENABLE_MARKET_REGIME:
             try:
                 regime = MarketRegime.get_regime()
@@ -919,22 +890,22 @@ def calculate_total_score(signal, analysis):
 
                 if is_compatible:
                     if regime_type in ['bullish', 'strong_bullish'] and direction == "BUY":
-                        details['market_points'] = max_market
+                        details['market_points'] = 5
                     elif regime_type in ['bearish', 'strong_bearish'] and direction == "SELL":
-                        details['market_points'] = max_market
+                        details['market_points'] = 5
                     else:
-                        details['market_points'] = int(max_market * 0.6)
+                        details['market_points'] = 3
                 else:
-                    details['market_points'] = int(max_market * 0.2)
+                    details['market_points'] = 1
             except:
-                details['market_points'] = int(max_market * 0.4)
+                details['market_points'] = 2
         else:
-            details['market_points'] = int(max_market * 0.4)
+            details['market_points'] = 2
 
         score += details['market_points']
-        logger.info(f"📊 سوق: {details['market_points']}/{max_market}")
+        logger.info(f"📊 سوق: {details['market_points']}/5")
 
-        # 7. دفتر الأوامر (ديناميكي)
+        # 7. دفتر الأوامر (10)
         try:
             ob = core.get_order_book_analysis(symbol) if core else None
             if ob:
@@ -951,28 +922,28 @@ def calculate_total_score(signal, analysis):
 
                 if aligned_imbalance:
                     base_points = abs(imbalance) * 15 * depth_multiplier
-                    details['order_book_points'] = min(max_ob, int(base_points))
+                    details['order_book_points'] = min(10, int(base_points))
                 else:
                     details['order_book_points'] = 0
 
                 if spread > MAX_SPREAD_PERCENT:
                     details['order_book_points'] = max(0, details['order_book_points'] - 3)
             else:
-                details['order_book_points'] = int(max_ob * 0.3)
+                details['order_book_points'] = 3
         except Exception as e:
             logger.warning(f"⚠️ خطأ دفتر الأوامر: {e}")
-            details['order_book_points'] = int(max_ob * 0.3)
+            details['order_book_points'] = 3
 
         score += details['order_book_points']
-        logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/{max_ob}")
+        logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/10")
 
-        # 8. Funding/OI (ديناميكي)
+        # 8. Funding/OI (10)
         try:
             if ENABLE_FUNDING_OI_FILTER and core:
                 funding = core.get_funding_rate(symbol)
                 oi_change = core.get_open_interest_trend(symbol)
 
-                fo_points = int(max_fo * 0.5)
+                fo_points = 5
                 if funding is not None:
                     if direction == "BUY" and funding <= -FUNDING_RATE_EXTREME_PERCENT:
                         fo_points += 3
@@ -989,41 +960,41 @@ def calculate_total_score(signal, analysis):
                     elif oi_change < -0.5:
                         fo_points += 1
 
-                details['funding_oi_points'] = max(0, min(max_fo, fo_points))
+                details['funding_oi_points'] = max(0, min(10, fo_points))
             else:
-                details['funding_oi_points'] = int(max_fo * 0.5)
+                details['funding_oi_points'] = 5
         except Exception as e:
             logger.warning(f"⚠️ خطأ Funding: {e}")
-            details['funding_oi_points'] = int(max_fo * 0.5)
+            details['funding_oi_points'] = 5
 
         score += details['funding_oi_points']
-        logger.info(f"📊 Funding/OI: {details['funding_oi_points']}/{max_fo}")
+        logger.info(f"📊 Funding/OI: {details['funding_oi_points']}/10")
 
-        # 9. AI (ديناميكي - لا نقاط مجانية)
+        # 9. AI (12) - 🔥 لا نقاط مجانية
         if GROQ_AVAILABLE and ENABLE_GROQ_ANALYSIS:
             groq_rec = signal.get('groq_recommendation', '')
             groq_conf = signal.get('groq_confidence', 0)
 
             if groq_rec == "تأكيد":
                 if groq_conf >= 85:
-                    details['groq_points'] = max_ai
+                    details['groq_points'] = 12
                 elif groq_conf >= 75:
-                    details['groq_points'] = int(max_ai * 0.92)
+                    details['groq_points'] = 11
                 elif groq_conf >= 65:
-                    details['groq_points'] = int(max_ai * 0.75)
+                    details['groq_points'] = 9
                 elif groq_conf >= 60:
-                    details['groq_points'] = int(max_ai * 0.58)
+                    details['groq_points'] = 7
                 elif groq_conf >= 55:
-                    details['groq_points'] = int(max_ai * 0.42)
+                    details['groq_points'] = 5
                 else:
-                    details['groq_points'] = int(max_ai * 0.25)
+                    details['groq_points'] = 3
             elif groq_rec == "تحذير":
                 if groq_conf >= 70:
-                    details['groq_points'] = int(max_ai * 0.5)
+                    details['groq_points'] = 6
                 elif groq_conf >= 60:
-                    details['groq_points'] = int(max_ai * 0.33)
+                    details['groq_points'] = 4
                 else:
-                    details['groq_points'] = int(max_ai * 0.17)
+                    details['groq_points'] = 2
             elif groq_rec == "رفض":
                 if GROQ_REJECT_IS_VETO and groq_conf >= 75:
                     logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%)")
@@ -1032,12 +1003,14 @@ def calculate_total_score(signal, analysis):
                     return 0, details
                 details['groq_points'] = 0
             else:
+                # 🔥 لا نقاط إذا AI لم يعمل
                 details['groq_points'] = 0
         else:
+            # 🔥 لا نقاط إذا AI غير متاح
             details['groq_points'] = 0
 
         score += details['groq_points']
-        logger.info(f"📊 AI: {details['groq_points']}/{max_ai}")
+        logger.info(f"📊 AI: {details['groq_points']}/12")
 
         # 10. لحظي
         if REALTIME_AVAILABLE and ENABLE_REALTIME_DATA and REALTIME_ADJUSTMENT_ENABLED:
@@ -1065,12 +1038,17 @@ def calculate_total_score(signal, analysis):
         return 0, {'total': 0, 'max_total': 100, 'rejected': True, 'reject_reason': str(e)}
 
 
-# ==================== توليد الإشارة ====================
+# ==================== 🔥 توليد الإشارة - AI إلزامي ====================
 
 def generate_sniper_signal(symbol):
     try:
         current_price = get_price(symbol)
         if not current_price:
+            return None
+
+        # 🔥 v5.7: ساعة محظورة بالتعلم (قبل أي تحليل لتوفير الطلبات)
+        if ADAPTIVE_AVAILABLE and adaptive_rules.is_hour_blocked():
+            logger.info(f"🕐 {symbol} - الساعة الحالية محظورة بالتعلم")
             return None
 
         memory_ok, memory_reason, memory_score = check_memory_filter(symbol)
@@ -1117,11 +1095,28 @@ def generate_sniper_signal(symbol):
             logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")
             return None
 
-        # AI إلزامي (فقط إذا النقاط 65+)
-        if total_score >= GROQ_MIN_SCORE_BEFORE_CALL:
+        # 🔥 v5.7: الحد الأدنى الفعلي للنقاط (الأساس + ما تعلمه البوت)
+        if ADAPTIVE_AVAILABLE:
+            required_score = adaptive_rules.get_required_score(direction)
+        else:
+            required_score = MIN_SCORE_REQUIRED
+        signal['required_score'] = required_score
+
+        # AI يضيف حداً أقصى 12 نقطة؛ لا فائدة من استدعائه إن لم يكن الوصول للحد ممكناً
+        ai_call_threshold = max(GROQ_MIN_SCORE_BEFORE_CALL, required_score - 12)
+
+        # 🔥 AI إلزامي (فقط إذا النقاط كافية للوصول للحد)
+        if total_score >= ai_call_threshold:
+
+            # 🔥 v5.7: سياق حقيقي للذكاء الاصطناعي
+            if ADAPTIVE_AVAILABLE:
+                try:
+                    signal['ai_context'] = adaptive_rules.build_ai_context(symbol, direction)
+                except Exception as e:
+                    logger.debug(f"ai_context: {e}")
             
             if not GROQ_AVAILABLE:
-                if total_score < 75:
+                if total_score < max(75, required_score):
                     logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < 75")
                     return None
                 logger.warning(f"⚠️ {symbol}: AI غير متاح - قبول استثنائي ({total_score})")
@@ -1130,7 +1125,8 @@ def generate_sniper_signal(symbol):
                     groq_result = enhance_signal_with_groq(signal, analysis)
                     
                     if not groq_result:
-                        if total_score < 75:
+                        # AI فشل - اقبل فقط 75+
+                        if total_score < max(75, required_score):
                             logger.warning(f"🛑 {symbol}: AI فشل والنقاط {total_score} < 75")
                             return None
                         logger.warning(f"⚠️ {symbol}: AI فشل - قبول استثنائي ({total_score})")
@@ -1138,10 +1134,12 @@ def generate_sniper_signal(symbol):
                         rec_ai = groq_result.get('groq_recommendation', '')
                         ai_conf = groq_result.get('groq_confidence', 0)
                         
+                        # AI رفض صريح
                         if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO:
                             logger.warning(f"🛑 {symbol}: AI رفض ({ai_conf}%)")
                             return None
                         
+                        # تحذير قوي
                         if rec_ai == 'تحذير' and ai_conf >= 75:
                             logger.warning(f"🛑 {symbol}: AI تحذير قوي ({ai_conf}%)")
                             return None
@@ -1159,18 +1157,18 @@ def generate_sniper_signal(symbol):
                     if total_score < 75:
                         return None
         else:
-            logger.info(f"🛑 {symbol}: نقاط {total_score} < {GROQ_MIN_SCORE_BEFORE_CALL} - لا استدعاء AI")
+            logger.info(f"🛑 {symbol}: نقاط {total_score} < {ai_call_threshold} - لا استدعاء AI")
             return None
 
         signal['total_score'] = total_score
         signal['score_details'] = score_details
-        signal['auto_executable'] = total_score >= MIN_SCORE_REQUIRED
+        signal['auto_executable'] = total_score >= required_score
 
-        if total_score >= MIN_SCORE_REQUIRED:
-            logger.info(f"✅ {symbol} - مقبول! النقاط: {total_score}/100")
+        if total_score >= required_score:
+            logger.info(f"✅ {symbol} - مقبول! النقاط: {total_score}/{100} (الحد {required_score})")
             return signal
         else:
-            logger.info(f"🛑 {symbol} - نقاط غير كافية: {total_score}/100")
+            logger.info(f"🛑 {symbol} - نقاط غير كافية: {total_score} < {required_score}")
             return None
 
     except Exception as e:
@@ -1234,10 +1232,6 @@ def scan_sniper_signals():
         if MARKET_REGIME_AVAILABLE and ENABLE_MARKET_REGIME:
             regime = MarketRegime.get_regime()
             logger.info(f"📊 السوق: {regime.get('regime_ar', 'غير معروف')} - {regime.get('recommendation', '')}")
-
-        # 🔥 طباعة الأوزان الحالية (للمتابعة)
-        w = get_learned_weights()
-        logger.info(f"⚖️ الأوزان: TF={w['timeframe_points_max']}, VOL={w['volume_points_max']}, RSI={w['rsi_points_max']}, AI={w['groq_points_max']}")
 
         for symbol in top_symbols:
             try:
@@ -1404,6 +1398,87 @@ def scan_early_momentum_signals():
 
 def scan_momentum_signals():
     return scan_early_momentum_signals()
+
+
+# ==================== الإشعارات ====================
+
+async def send_single_signal_notification(signal, rank=None):
+    try:
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_TOKEN)
+
+        emoji = "🟢" if signal['direction'] == 'BUY' else "🔴"
+        details = signal.get('score_details', {})
+
+        msg = (
+            f"🎯 <b>إشارة قناص</b>\n\n"
+            f"💰 <b>العملة:</b> {signal['symbol']}\n"
+            f"📈 <b>الاتجاه:</b> {emoji} {signal['direction']}\n"
+            f"💪 <b>القوة:</b> {signal['strength']}/10\n"
+            f"🎯 <b>الثقة:</b> {signal['confidence']:.1f}%\n"
+            f"📊 <b>النقاط:</b> {signal.get('total_score', 0)}/100\n\n"
+            f"⏰ {signal.get('timestamp', '')}"
+        )
+
+        keyboard = [[InlineKeyboardButton(
+            f"🚀 تنفيذ {signal['direction']}",
+            callback_data=f"trade_{signal['symbol']}_{signal['direction']}"
+        )]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=msg,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+
+        return msg
+    except Exception as e:
+        logger.error(f"فشل: {e}")
+        return None
+
+
+async def send_momentum_signal_notification(signal):
+    try:
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_TOKEN)
+
+        emoji = "🟢" if signal['direction'] == 'BUY' else "🔴"
+        targets = signal.get('targets', {})
+
+        msg = (
+            f"🚀 <b>إشارة زخم</b>\n\n"
+            f"💰 <b>العملة:</b> {signal['symbol']}\n"
+            f"📈 <b>الاتجاه:</b> {emoji} {signal['direction']}\n"
+            f"💪 <b>القوة:</b> {signal['strength']}/10\n\n"
+        )
+
+        if targets:
+            msg += (f"💰 <b>الدخول:</b> {targets['entry_price']:.6f}\n"
+                    f"🛡️ <b>SL:</b> {targets['sl_price']:.6f}\n"
+                    f"🎯 <b>TP:</b> {targets['tp1_price']:.6f}\n\n")
+
+        msg += f"📋 <b>السبب:</b> {signal.get('reason', '')}\n"
+        msg += f"⏰ {signal.get('timestamp', '')}"
+
+        keyboard = [[InlineKeyboardButton(
+            f"🚀 تنفيذ {signal['direction']}",
+            callback_data=f"trade_{signal['symbol']}_{signal['direction']}"
+        )]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=msg,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+
+        return msg
+    except Exception as e:
+        logger.error(f"فشل: {e}")
+        return None
 
 
 # ==================== التوافق ====================
