@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.6
-🔧 التعديلات:
-    - GROQ_MIN_SCORE_BEFORE_CALL: 55 (كان 25) - يقلل استدعاءات AI
-    - COOLDOWN_MINUTES_AFTER_LOSS: 60 (كان 30)
-    - MAX_CONSECUTIVE_LOSSES: 2 (كان 3)
+config.py - الإصدار v6.2
+🔧 التعديلات v6.2:
+    - 🔥 RSI_SELL_HARD_REJECT: 25 (مخفف للأسواق الهابطة)
+    - 🔥 RSI_BUY_HARD_REJECT: 72
+    - 🔥 AUTO_TUNE_WEIGHTS: False
+    - 🔥 GROQ_MIN_SCORE_BEFORE_CALL: 45
 """
 
 import os
@@ -56,7 +57,7 @@ ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== SambaNova (معطل) ====================
+# ==================== SambaNova ====================
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
 ENABLE_SAMBANOVA_ANALYSIS = False
 SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
@@ -82,20 +83,20 @@ OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 AI_PROVIDER = "gemini"
 AI_FALLBACK_ENABLED = True
 
-# ==================== Firebase Backup ====================
+# ==================== Firebase ====================
 FIREBASE_KEY_JSON = _get_env("FIREBASE_KEY", default="")
 FIREBASE_PROJECT_ID = _get_env("FIREBASE_PROJECT_ID", default="mybot1-backup-91f59")
 ENABLE_FIREBASE_BACKUP = _get_bool("ENABLE_FIREBASE_BACKUP", default=True)
 FIREBASE_BACKUP_INTERVAL = 30
 
-# ==================== GitHub Backup (معطل) ====================
+# ==================== GitHub ====================
 GITHUB_TOKEN = _get_env("GITHUB_TOKEN", default="")
 GITHUB_REPO = _get_env("GITHUB_REPO", default="elmalakfahd2/mybot1")
 GITHUB_BRANCH = _get_env("GITHUB_BRANCH", default="main")
 ENABLE_AUTO_BACKUP = False
 BACKUP_INTERVAL_MINUTES = 30
 
-# ==================== إعدادات الملفات ====================
+# ==================== الملفات ====================
 MEMORY_FILE = "trade_memory.json"
 PROFIT_HISTORY_FILE = "profit_history.json"
 OPEN_POSITIONS_FILE = "open_positions.json"
@@ -145,11 +146,14 @@ MIN_GROQ_CONFIDENCE = 55
 MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 4
 
-# ==================== RSI ====================
-RSI_BUY_HARD_REJECT = 90
-RSI_SELL_HARD_REJECT = 10
-RSI_BUY_WARNING = 78
-RSI_SELL_WARNING = 22
+# ==================== 🔥 RSI (v6.2 - معدّل للأسواق الهابطة) ====================
+# RSI صارم لكن ليس متطرفاً:
+# - BUY: نرفض عند RSI > 72 (تشبع شرائي)
+# - SELL: نرفض عند RSI < 25 (تشبع بيعي قوي)
+RSI_BUY_HARD_REJECT = 72        # كان 68 → 72 (أقل صرامة قليلاً)
+RSI_SELL_HARD_REJECT = 25       # كان 32 → 25 (مخفف للهابط)
+RSI_BUY_WARNING = 65            # كان 62 → 65
+RSI_SELL_WARNING = 35           # كان 38 → 35
 
 # ==================== نظام النقاط ====================
 MIN_SCORE_REQUIRED = 65
@@ -201,7 +205,7 @@ BREAKEVEN_OFFSET_PERCENT = 0.1
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
-PAUSE_DURATION_MINUTES = 30
+PAUSE_DURATION_MINUTES = 60
 
 ENABLE_TRADE_MEMORY = True
 COMMISSION_RATE = 0.0004
@@ -212,7 +216,7 @@ MARKET_REGIME_CACHE_SECONDS = 300
 BLOCK_IN_STRONG_BEARISH = False
 BLOCK_IN_STRONG_BULLISH_SELL = False
 
-# ==================== أوقات التداول ====================
+# ==================== الأوقات ====================
 ENABLE_TIME_FILTER = False
 GOOD_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 AVOID_HOURS = [0, 1, 2, 3, 4, 5]
@@ -221,24 +225,23 @@ AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 AUTO_SCAN_INTERVAL = 900
 TOP_SYMBOLS_TO_SCAN = 20
 
-# ==================== 🔥 Cooldown (معدل) ====================
+# ==================== Cooldown ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
-COOLDOWN_MINUTES_AFTER_LOSS = 60     # ← كان 30
+COOLDOWN_MINUTES_AFTER_LOSS = 120
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']
 PRIMARY_TIMEFRAME = '5m'
 CONFIRMATION_TIMEFRAME = '15m'
 
-# ==================== 🔥 AI Settings (معدل) ====================
+# ==================== 🔥 AI Settings (v6.2) ====================
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 55       # ← كان 25 (يقلل استدعاءات AI بـ 70%)
+GROQ_MIN_SCORE_BEFORE_CALL = 45      # يستدعي AI للنقاط 45+
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
 ENABLE_AUTO_EXECUTION = True
-
 ENABLE_DETAILED_LOGGING = True
 LOG_LEVEL = "INFO"
 REQUEST_TIMEOUT = 90
@@ -254,21 +257,21 @@ REALTIME_DEPTH_LEVELS = 20
 REALTIME_LIQUIDATION_THRESHOLD = 50000
 REALTIME_MAX_SUBSCRIPTIONS = 25
 
-# ==================== التعلم التلقائي ====================
+# ==================== 🔥 التعلم التلقائي (v6.2 - موقوف) ====================
 ENABLE_AUTO_LEARNING = True
-AUTO_LEARN_INTERVAL_HOURS = 12
-AUTO_LEARN_MIN_TRADES = 5
-AUTO_LEARN_MIN_PER_SYMBOL = 3
-AUTO_TUNE_WEIGHTS = True
+AUTO_LEARN_INTERVAL_HOURS = 24
+AUTO_LEARN_MIN_TRADES = 20
+AUTO_LEARN_MIN_PER_SYMBOL = 5
+AUTO_TUNE_WEIGHTS = False            # 🔥 أوقفناه - البيانات كانت خاطئة
 AUTO_RESTART_AFTER_TUNE = False
 AUTO_PROTECTION_ENABLED = True
 DAILY_REPORT_HOUR = 10
-AUTO_LEARN_MAX_ADJUSTMENT = 0.30
+AUTO_LEARN_MAX_ADJUSTMENT = 0.10
 AUTO_LEARN_BACKUP_ENABLED = True
 
 # ==================== الحماية الذاتية ====================
-AUTO_PAUSE_ON_LOSS_STREAK = 4
-AUTO_PAUSE_DURATION_MINUTES = 60
+AUTO_PAUSE_ON_LOSS_STREAK = 3
+AUTO_PAUSE_DURATION_MINUTES = 120
 AUTO_REDUCE_RISK_ON_LOSS = True
 AUTO_RISK_REDUCTION_FACTOR = 0.5
 
