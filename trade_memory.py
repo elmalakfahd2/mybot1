@@ -221,6 +221,14 @@ def get_verified_trades(days=None, limit=None):
         return []
 
 
+_rate_limited_until = 0
+
+
+def is_rate_limited():
+    """هل حظرنا Binance مؤقتاً (-1003)؟ الأدوات الثقيلة تتوقف حتى ينتهي"""
+    return time.time() < _rate_limited_until
+
+
 def get_real_net_pnl(symbol, entry_time_iso, end_time_ms=None, retries=3):
     """
     🔥 PnL الحقيقي الصافي من سجل دخل Binance منذ وقت الدخول.
@@ -278,7 +286,13 @@ def get_real_net_pnl(symbol, entry_time_iso, end_time_ms=None, retries=3):
         return None
 
     except Exception as e:
-        logger.warning(f"⚠️ تعذر جلب PnL الحقيقي لـ {symbol}: {e}")
+        global _rate_limited_until
+        msg = str(e)
+        if '-1003' in msg or 'Too many requests' in msg:
+            _rate_limited_until = time.time() + 180
+            logger.error("🛑 Binance Rate Limit (-1003) - إيقاف الطلبات الثقيلة 3 دقائق")
+        else:
+            logger.warning(f"⚠️ تعذر جلب PnL الحقيقي لـ {symbol}: {e}")
         return None
 
 
@@ -383,7 +397,7 @@ def migrate_legacy_trades():
         return False
 
 
-def reconcile_legacy_trades(max_hold_hours=12, min_age_minutes=10, max_calls=120):
+def reconcile_legacy_trades(max_hold_hours=12, min_age_minutes=10, max_calls=25):
     """
     🔥 تصحيح الصفقات غير الموثقة من سجل Binance.
     النافذة: من الدخول حتى (الصفقة التالية على نفس العملة أو max_hold_hours).
@@ -411,6 +425,10 @@ def reconcile_legacy_trades(max_hold_hours=12, min_age_minutes=10, max_calls=120
             if (now - entry_dt).total_seconds() < min_age_minutes * 60:
                 continue
             if calls >= max_calls:
+                logger.info(f"ℹ️ بلغ حد {max_calls} طلب في هذه الجولة - الباقي في الجولة القادمة")
+                break
+            if is_rate_limited():
+                logger.warning("⏸️ إيقاف التصحيح بسبب Rate Limit")
                 break
 
             end_dt = entry_dt + timedelta(hours=max_hold_hours)
@@ -430,7 +448,7 @@ def reconcile_legacy_trades(max_hold_hours=12, min_age_minutes=10, max_calls=120
                 t.get("symbol"), entry_iso,
                 end_time_ms=int(end_dt.timestamp() * 1000), retries=1
             )
-            time.sleep(0.3)
+            time.sleep(2.5)  # income history وزنه 30؛ التباعد يحمي حد 2400/دقيقة
             if not res:
                 continue
 
