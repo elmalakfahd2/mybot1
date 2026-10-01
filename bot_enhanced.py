@@ -19,6 +19,14 @@ import concurrent.futures
 logger = logging.getLogger("bot_enhanced")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+# 🔥 v5.8: حفظ السجل في ملف ليمكن تحميله من Telegram (زر 📥 تحميل السجل)
+try:
+    import log_capture
+    log_capture.setup()
+except Exception as _e:
+    log_capture = None
+    print(f"⚠️ log_capture غير متاح: {_e}")
+
 # إخفاء التوكن من اللوجات (أمان)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -176,7 +184,8 @@ main_kb = ReplyKeyboardMarkup([
     ["📊 الأرباح الأسبوعية", "📈 الأرباح الشهرية"],
     ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
     ["🔎 فحص الأوامر المشروطة", "🧠 التعلم التلقائي"],
-    ["📊 تقرير سريع"]
+    ["📊 تقرير سريع", "📥 تحميل السجل"],
+    ["📦 تصدير البيانات"]
 ], resize_keyboard=True)
 
 
@@ -446,6 +455,85 @@ async def error_handler(update, context):
 
 # ==================== الأوامر ====================
 
+def _is_owner(update: Update):
+    try:
+        chat = update.effective_chat
+        return chat is not None and str(chat.id) == str(TELEGRAM_CHAT_ID)
+    except Exception:
+        return False
+
+
+async def send_log_menu(update: Update):
+    """قائمة اختيار نطاق السجل المراد تحميله"""
+    try:
+        if not _is_owner(update):
+            return
+        if not log_capture:
+            await update.message.reply_text("❌ حفظ السجل غير مفعل (log_capture.py غير موجود)")
+            return
+
+        info = log_capture.get_info()
+        keyboard = [
+            [InlineKeyboardButton("⏱️ آخر ساعة", callback_data="log_1"),
+             InlineKeyboardButton("🕒 آخر 3 ساعات", callback_data="log_3")],
+            [InlineKeyboardButton("🕕 آخر 6 ساعات", callback_data="log_6"),
+             InlineKeyboardButton("📅 آخر 24 ساعة", callback_data="log_24")],
+            [InlineKeyboardButton("⚠️ الأخطاء والتحذيرات فقط (24س)", callback_data="log_err")],
+            [InlineKeyboardButton("📦 كل السجل المتاح", callback_data="log_all")],
+        ]
+        await update.message.reply_text(
+            f"📥 <b>تحميل سجل البوت</b>\n\n"
+            f"المحفوظ حالياً: {info['size_mb']} MB ({info['files']} ملف)\n"
+            f"اختر المدة:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"خطأ send_log_menu: {e}")
+
+
+async def send_log_file(query, choice):
+    """إرسال ملف السجل المختار كمستند"""
+    import io
+    try:
+        if str(query.message.chat_id) != str(TELEGRAM_CHAT_ID):
+            return
+
+        hours = {"1": 1, "3": 3, "6": 6, "24": 24}.get(choice)
+        errors_only = (choice == "err")
+        if errors_only:
+            hours = 24
+        label = {"1": "1h", "3": "3h", "6": "6h", "24": "24h", "err": "errors_24h", "all": "all"}.get(choice, choice)
+
+        await query.edit_message_text("⏳ جاري تجهيز السجل...")
+
+        data, lines, t0, t1 = log_capture.get_excerpt(hours=hours, errors_only=errors_only)
+        if lines == 0:
+            await query.edit_message_text("ℹ️ لا توجد أسطر في هذه المدة")
+            return
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M")
+        name = f"bot_log_{label}_{stamp}.txt"
+        bio = io.BytesIO(data)
+        bio.name = name
+
+        span = ""
+        if t0 and t1:
+            span = f"\n🕐 {t0.strftime('%m-%d %H:%M')} → {t1.strftime('%m-%d %H:%M')}"
+        await query.message.reply_document(
+            document=bio, filename=name,
+            caption=f"📥 سجل البوت ({label})\n📄 {lines} سطر | {len(data)/1024:.0f} KB{span}"
+        )
+        await query.edit_message_text("✅ تم إرسال السجل")
+
+    except Exception as e:
+        logger.error(f"❌ send_log_file: {e}")
+        try:
+            await query.edit_message_text(f"❌ فشل إرسال السجل: {str(e)[:120]}")
+        except Exception:
+            pass
+
+
 async def export_command(update: Update, context: CallbackContext):
     """
     🔥 v5.7: /export - يرسل ملفات الذاكرة والتعلم كملفات JSON داخل المحادثة
@@ -556,6 +644,15 @@ async def handle_message(update: Update, context: CallbackContext):
     global _bot_running
 
     logger.info(f"📨 رسالة مستلمة: '{text}'")
+
+    # ==================== 🔥 v5.8: تحميل السجل / تصدير البيانات ====================
+    if text == "📥 تحميل السجل":
+        await send_log_menu(update)
+        return
+
+    if text == "📦 تصدير البيانات":
+        await export_command(update, context)
+        return
 
     # ==================== الرصيد ====================
     if text == "💰 الرصيد":
@@ -1364,6 +1461,10 @@ async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    if data.startswith("log_"):
+        await send_log_file(query, data.split("_", 1)[1])
+        return
 
     if data.startswith("trade_"):
         _, symbol, side = data.split("_")
