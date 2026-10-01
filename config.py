@@ -196,8 +196,8 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # v5.7: مفعل (من دخل Binance الحقيقي)
-DAILY_MAX_LOSS_USDT = 15.0              # توقف حتى منتصف الليل عند خسارة صافية 7$ في اليوم
-DAILY_MAX_LOSS_PERCENT = 10.0           # أو 5% من رصيد المحفظة (أيهما أقرب)
+DAILY_MAX_LOSS_USDT = 7.0              # توقف حتى منتصف الليل عند خسارة صافية 7$ في اليوم
+DAILY_MAX_LOSS_PERCENT = 5.0           # أو 5% من رصيد المحفظة (أيهما أقرب)
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
@@ -308,6 +308,11 @@ ADAPTIVE_MIN_TRADES = 12                # أقل عدد صفقات موثقة ق
 ADAPTIVE_LOOKBACK_DAYS = 14
 ADAPTIVE_RECENT_WINDOW = 15             # نافذة الأداء الأخير
 ADAPTIVE_MAX_SCORE_BOOST = 10           # أقصى رفع لحد النقاط بسبب الأداء الضعيف
-ADAPTIVE_MAX_TOTAL_BOOST = 10           # سقف الرفع الكلي (أداء + اتجاه)
+ADAPTIVE_MAX_TOTAL_BOOST = 12           # سقف الرفع الكلي (أداء + اتجاه)
 ADAPTIVE_MIN_TRADES_PER_DIRECTION = 6
-ADAPTIVE_MIN_TRADES_PER_HOUR = 4
+ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 صفقات ضوضاء إحصائية
+
+# ==================== 🔥 v5.8: من تحليل 65 صفقة موثقة ====================
+# عدد الصفقات المفتوحة بنفس الاتجاه عند الدخول مقابل النتيجة:
+#   0 → نجاح 52% | 1 → 44% | 2 → 33% | 3 → 25%
+MAX_SAME_DIRECTION_POSITIONS = 1

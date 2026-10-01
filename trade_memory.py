@@ -556,7 +556,7 @@ def record_trade(symbol, direction, entry_price, exit_price,
                  volume_ratio, groq_recommendation, groq_confidence,
                  score_details=None, exit_reason="unknown",
                  entry_time_iso=None, net_pnl=None, closed_at_iso=None,
-                 breakdown=None):
+                 breakdown=None, extra=None):
     """
     🔥 v7: إذا مُرِّر net_pnl (من get_real_net_pnl) يُسجَّل كصفقة موثقة.
     وإلا يُقدَّر الرقم وتُعلَّم الصفقة غير موثقة (لا تدخل في الحظر أو التعلم
@@ -621,6 +621,10 @@ def record_trade(symbol, direction, entry_price, exit_price,
             }
             if breakdown:
                 trade_record["fees"] = round(breakdown.get('commission', 0) + breakdown.get('funding', 0), 6)
+            if extra:
+                # مثل mfe_pct / mae_pct (أقصى ربح/خسارة % لحظية أثناء الصفقة)
+                for k, v in extra.items():
+                    trade_record[k] = v
 
             memory["trades"].append(trade_record)
             memory["total_trades"] += 1

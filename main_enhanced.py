@@ -378,6 +378,49 @@ def check_trading_pause():
 
 # ==================== 🔥 خيط المراقبة الشاملة ====================
 
+_last_excursion_save = 0
+
+
+def _update_excursions():
+    """
+    يحدّث mfe_pct (أقصى ربح لحظي %) و mae_pct (أقصى خسارة لحظية %) لكل صفقة متتبعة.
+    % من حركة السعر (لا من الهامش). يعتمد على unrealizedProfit فلا يحتاج طلبات إضافية ثقيلة.
+    """
+    global _last_excursion_save
+    if not _open_trades_tracking:
+        return
+
+    positions = core.get_open_positions_strict()
+    if not positions:
+        return
+
+    changed = False
+    for p in positions:
+        key = f"{p['symbol']}_{p['positionSide']}"
+        with _tracking_lock:
+            td = _open_trades_tracking.get(key)
+            if not td:
+                continue
+            entry = safe_float(p.get('entryPrice', 0))
+            amt = abs(safe_float(p.get('positionAmt', 0)))
+            upnl = safe_float(p.get('unrealizedProfit', 0))
+            notional = entry * amt
+            if notional <= 0:
+                continue
+            pct = upnl / notional * 100
+            if pct > td.get('mfe_pct', 0):
+                td['mfe_pct'] = round(pct, 3)
+                changed = True
+            if pct < td.get('mae_pct', 0):
+                td['mae_pct'] = round(pct, 3)
+                changed = True
+
+    # حفظ دوري كل 5 دقائق (لا مع كل تغيير)
+    if changed and time.time() - _last_excursion_save > 300:
+        _last_excursion_save = time.time()
+        _save_tracking()
+
+
 def monitor_positions_loop():
     """
     🔥 v5.6: مراقبة شاملة + تنظيف الأوامر اليتيمة
@@ -391,6 +434,12 @@ def monitor_positions_loop():
             try:
                 _beat('monitor')
                 current_time = time.time()
+
+                # 0. 🔥 v5.8: تتبع أقصى ربح/خسارة % لكل صفقة (MFE/MAE) لضبط SL/TP مستقبلاً
+                try:
+                    _update_excursions()
+                except Exception as e:
+                    logger.debug(f"excursions: {e}")
 
                 # 1. Trailing SL
                 updated = core.monitor_trailing_sl()
@@ -551,7 +600,11 @@ def record_closed_trade(trade_data):
                     entry_time_iso=entry_time_iso,
                     net_pnl=net if verified else None,
                     closed_at_iso=closed_iso,
-                    breakdown=real if verified else None
+                    breakdown=real if verified else None,
+                    extra={
+                        'mfe_pct': trade_data.get('mfe_pct', 0),
+                        'mae_pct': trade_data.get('mae_pct', 0),
+                    }
                 )
                 try:
                     memory.sync_profit_history()
@@ -815,6 +868,21 @@ def execute_sniper_trade(signal):
         if any(p['symbol'] == symbol for p in bot_positions):
             logger.warning(f"⚠️ صفقة موجودة على {symbol}")
             return False
+
+        # 🔥 v5.8: حد الصفقات المفتوحة في نفس الاتجاه (صفقات الكريبتو المتزامنة تتحرك معاً)
+        # البيانات: 0 مفتوحة بنفس الاتجاه → نجاح 52% | 2 → 33% | 3 → 25%
+        try:
+            max_same = int(globals().get('MAX_SAME_DIRECTION_POSITIONS', 0) or 0)
+        except Exception:
+            max_same = 0
+        if max_same > 0:
+            same_dir = sum(
+                1 for p in bot_positions
+                if (safe_float(p.get('positionAmt', 0)) > 0) == (direction == "BUY")
+            )
+            if same_dir >= max_same:
+                logger.warning(f"🛑 {symbol}: {same_dir} صفقة {direction} مفتوحة (الحد {max_same})")
+                return False
 
         if ENABLE_OPPOSITE_DIRECTION_FILTER:
             for pos in bot_positions:
