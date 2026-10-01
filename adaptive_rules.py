@@ -214,6 +214,21 @@ def update_rules():
                 boost = max_boost
             elif recent['win_rate'] < 0.45 or recent['profit_factor'] < 0.9:
                 boost = max(1, max_boost // 2)
+        # 🔥 v5.9: لو أثبتت صفقات الظل (إشارات رُفضت قرب الحد) أنها كانت رابحة، نخفف الرفع
+        try:
+            import shadow_tracker
+            rel = shadow_tracker.relief_info()
+            rules['stats']['shadow_relief'] = rel
+            if boost and rel['n'] >= rel['min_needed'] and rel['win_rate'] >= 0.50 and rel['profit_factor'] >= 1.3:
+                new_boost = max(0, boost - 5)
+                notes.append(
+                    f"👻 صفقات الظل القريبة من الحد رابحة ({rel['wins']}/{rel['n']} ، PF {rel['profit_factor']}) "
+                    f"← تخفيف الرفع من +{boost} إلى +{new_boost}"
+                )
+                boost = new_boost
+        except Exception as e:
+            logger.debug(f"shadow relief: {e}")
+
         rules['min_score_boost'] = min(boost, max_boost)
         if boost:
             notes.append(

@@ -270,6 +270,54 @@ def get_manual_positions():
         return []
 
 
+_last_trailing_restore = 0
+
+
+def _restore_trailing_tracking():
+    """
+    حالة Breakeven/Trailing تُحفظ في الذاكرة فقط، فتضيع عند كل إعادة تشغيل/نشر.
+    هنا نعيد تسجيل صفقات البوت المفتوحة التي فقدت تتبعها (بدونه لا يتحرك الوقف أبداً).
+    """
+    global _last_trailing_restore
+    now = time.time()
+    if now - _last_trailing_restore < 120:
+        return
+    _last_trailing_restore = now
+    try:
+        for p in get_bot_owned_positions():
+            symbol = p['symbol']
+            side = p['positionSide']
+            key = f"{symbol}_{side}"
+            if key in core._trailing_sl_positions:
+                continue
+            entry = safe_float(p.get('entryPrice', 0))
+            qty = abs(safe_float(p.get('positionAmt', 0)))
+            if entry <= 0 or qty <= 0:
+                continue
+
+            cur_sl = None
+            for o in core.get_open_algo_orders(symbol):
+                if o.get('type') == 'STOP_MARKET' and o.get('positionSide', side) == side:
+                    cur_sl = safe_float(o.get('triggerPrice') or o.get('stopPrice')) or None
+                    break
+
+            core.setup_trailing_sl(symbol, side, entry, qty, sl_price=cur_sl)
+            d = core._trailing_sl_positions.get(key)
+            if not d:
+                continue
+            if cur_sl:
+                locked = (cur_sl >= entry) if side == "LONG" else (cur_sl <= entry)
+                if locked:
+                    d['breakeven_set'] = True
+            price = core.get_price(symbol)
+            if price:
+                d['highest_price'] = max(entry, price)
+                d['lowest_price'] = min(entry, price)
+            logger.info(f"♻️ [TRAILING] أُعيد تسجيل {key} بعد إعادة التشغيل (SL={cur_sl})")
+    except Exception as e:
+        logger.warning(f"⚠️ استعادة Trailing: {e}")
+
+
 # ==================== دوال مساعدة ====================
 
 def get_full_balance_info():
@@ -444,6 +492,7 @@ def monitor_positions_loop():
                     logger.debug(f"excursions: {e}")
 
                 # 1. Trailing SL
+                _restore_trailing_tracking()
                 updated = core.monitor_trailing_sl()
                 if updated > 0:
                     logger.info(f"📊 تحديث Trailing: {updated} صفقة")

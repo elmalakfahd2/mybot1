@@ -185,7 +185,7 @@ main_kb = ReplyKeyboardMarkup([
     ["📊 الأرباح الأسبوعية", "📈 الأرباح الشهرية"],
     ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
     ["🔎 فحص الأوامر المشروطة", "🧠 التعلم التلقائي"],
-    ["📊 تقرير سريع"]
+    ["📊 تقرير سريع", "👻 تقرير الظل"]
 ], resize_keyboard=True)
 
 
@@ -652,6 +652,15 @@ async def handle_message(update: Update, context: CallbackContext):
 
     if text == "📦 تصدير البيانات":
         await export_command(update, context)
+        return
+
+    if text == "👻 تقرير الظل":
+        if _is_owner(update):
+            try:
+                import shadow_tracker
+                await update.message.reply_text(shadow_tracker.summary_text(), parse_mode="HTML", reply_markup=main_kb)
+            except Exception as e:
+                await update.message.reply_text(f"❌ خطأ: {e}", reply_markup=main_kb)
         return
 
     # ==================== الرصيد ====================

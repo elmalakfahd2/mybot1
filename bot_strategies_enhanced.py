@@ -1040,6 +1040,18 @@ def calculate_total_score(signal, analysis):
 
 # ==================== 🔥 توليد الإشارة - AI إلزامي ====================
 
+def _shadow(symbol, direction, price, score, tier, details=None, ai_rec='', ai_conf=0):
+    """تسجيل إشارة مرفوضة كصفقة ظل (تعلّم بدون مال). لا يؤثر أبداً على القرار."""
+    try:
+        import shadow_tracker
+        floor = int(getattr(__import__('config'), 'SHADOW_MIN_SCORE', 50))
+        if score >= floor:
+            shadow_tracker.record(symbol, direction, price, score, tier,
+                                  ai_rec=ai_rec, ai_conf=ai_conf, details=details)
+    except Exception:
+        pass
+
+
 def generate_sniper_signal(symbol):
     try:
         current_price = get_price(symbol)
@@ -1137,11 +1149,15 @@ def generate_sniper_signal(symbol):
                         # AI رفض صريح
                         if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO:
                             logger.warning(f"🛑 {symbol}: AI رفض ({ai_conf}%)")
+                            _shadow(symbol, direction, current_price, total_score, 'ai_veto',
+                                    score_details, rec_ai, ai_conf)
                             return None
                         
                         # تحذير قوي
                         if rec_ai == 'تحذير' and ai_conf >= 75:
                             logger.warning(f"🛑 {symbol}: AI تحذير قوي ({ai_conf}%)")
+                            _shadow(symbol, direction, current_price, total_score, 'ai_veto',
+                                    score_details, rec_ai, ai_conf)
                             return None
                         
                         signal.update(groq_result)
@@ -1158,6 +1174,7 @@ def generate_sniper_signal(symbol):
                         return None
         else:
             logger.info(f"🛑 {symbol}: نقاط {total_score} < {ai_call_threshold} - لا استدعاء AI")
+            _shadow(symbol, direction, current_price, total_score, 'below_ai_gate', score_details)
             return None
 
         signal['total_score'] = total_score
@@ -1169,6 +1186,8 @@ def generate_sniper_signal(symbol):
             return signal
         else:
             logger.info(f"🛑 {symbol} - نقاط غير كافية: {total_score} < {required_score}")
+            _shadow(symbol, direction, current_price, total_score, 'below_required', score_details,
+                    signal.get('groq_recommendation', ''), signal.get('groq_confidence', 0))
             return None
 
     except Exception as e:
@@ -1265,6 +1284,12 @@ def scan_sniper_signals():
             logger.info(f"📊 متوسط النقاط: {avg_score:.1f}/100 - أعلى: {max_score}/100")
         else:
             logger.info(f"📊 النتائج: 0 مقبولة / {stats['rejected']} مرفوضة")
+
+        try:
+            import shadow_tracker
+            shadow_tracker.flush()
+        except Exception:
+            pass
 
         return signals[:MAX_OPEN_POSITIONS]
 

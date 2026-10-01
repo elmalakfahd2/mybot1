@@ -69,7 +69,7 @@ SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 
 # ==================== HuggingFace ====================
 HUGGINGFACE_API_KEY = _get_env("HUGGINGFACE_API_KEY", default="")
-ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=True)
+ENABLE_HUGGINGFACE_ANALYSIS = _get_bool("ENABLE_HUGGINGFACE_ANALYSIS", default=False)  # رصيده منتهٍ
 HUGGINGFACE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
 
@@ -203,8 +203,8 @@ DAILY_MAX_LOSS_PERCENT = 5.0           # أو 5% من رصيد المحفظة (�
 TRAILING_SL_ENABLED = True
 TRAILING_SL_TRIGGER = 1.0
 TRAILING_SL_DISTANCE = 0.5
-BREAKEVEN_TRIGGER = 1.2
-BREAKEVEN_OFFSET_PERCENT = 0.1
+BREAKEVEN_TRIGGER = 0.8          # v5.9: كان 1.2 (صفقات رابحة كانت ترتد قبل الوصول له)
+BREAKEVEN_OFFSET_PERCENT = 0.15     # v5.9: يغطي العمولة + انزلاق بسيط
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
@@ -225,8 +225,8 @@ GOOD_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 AVOID_HOURS = [0, 1, 2, 3, 4, 5]
 
 # ==================== المسح ====================
-AUTO_SCAN_INTERVAL = 900
-TOP_SYMBOLS_TO_SCAN = 20
+AUTO_SCAN_INTERVAL = 420
+TOP_SYMBOLS_TO_SCAN = 30
 
 # ==================== 🔥 Cooldown (معدل) ====================
 COOLDOWN_MINUTES = 5
@@ -316,3 +316,12 @@ ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 ص�
 # عدد الصفقات المفتوحة بنفس الاتجاه عند الدخول مقابل النتيجة:
 #   0 → نجاح 52% | 1 → 44% | 2 → 33% | 3 → 25%
 MAX_SAME_DIRECTION_POSITIONS = 1
+
+
+# ==================== 🔥 v5.9: صفقات الظل (تعلّم من الإشارات المرفوضة بدون مال) ====================
+ENABLE_SHADOW_TRACKING = True
+SHADOW_MIN_SCORE = 50                   # أقل نقاط لتسجيل إشارة مرفوضة كصفقة ظل
+SHADOW_MAX_HOURS = 8                    # أقصى مدة تتبع لصفقة الظل
+SHADOW_MAX_OPEN = 60
+SHADOW_LOOKBACK_DAYS = 14
+SHADOW_RELIEF_MIN_TRADES = 15           # أقل عدد صفقات ظل مغلقة قبل تخفيف رفع الحد

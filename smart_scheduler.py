@@ -18,6 +18,7 @@ logger = logging.getLogger("smart_scheduler")
 _last_learning_run = 0
 _last_report_run = 0
 _last_weekly_report = 0
+_last_shadow_run = 0
 _scheduler_running = False
 _learning_lock = threading.Lock()
 
@@ -75,7 +76,13 @@ def run_learning_session():
 
         try:
             import daily_reporter
-            daily_reporter.send_telegram_message(adaptive_rules.get_status_text())
+            text = adaptive_rules.get_status_text()
+            try:
+                import shadow_tracker
+                text += "\n\n" + shadow_tracker.summary_text()
+            except Exception:
+                pass
+            daily_reporter.send_telegram_message(text)
         except Exception as e:
             logger.debug(f"تعذر إرسال ملخص التعلم: {e}")
 
@@ -118,7 +125,7 @@ def run_weekly_report():
 # ==================== الحلقة الرئيسية ====================
 
 def scheduler_loop():
-    global _last_learning_run, _last_report_run, _last_weekly_report, _scheduler_running
+    global _last_learning_run, _last_report_run, _last_weekly_report, _last_shadow_run, _scheduler_running
 
     _scheduler_running = True
     logger.info("⏰ [SCHEDULER] بدء خيط الجدولة التلقائية...")
@@ -142,6 +149,15 @@ def scheduler_loop():
                     _last_learning_run = now
                     logger.info("🧠 [SCHEDULER] موعد التعلم التلقائي")
                     threading.Thread(target=run_learning_session, daemon=True).start()
+
+            # 👻 v5.9: متابعة صفقات الظل كل 10 دقائق
+            if now - _last_shadow_run >= 600:
+                _last_shadow_run = now
+                try:
+                    import shadow_tracker
+                    threading.Thread(target=shadow_tracker.resolve_open, daemon=True).start()
+                except Exception as e:
+                    logger.debug(f"shadow: {e}")
 
             if ENABLE_DAILY_REPORT:
                 if now_dt.hour == DAILY_REPORT_HOUR and (now - _last_report_run) >= 3600:
