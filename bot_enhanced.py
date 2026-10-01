@@ -446,6 +446,73 @@ async def error_handler(update, context):
 
 # ==================== الأوامر ====================
 
+async def export_command(update: Update, context: CallbackContext):
+    """
+    🔥 v5.7: /export - يرسل ملفات الذاكرة والتعلم كملفات JSON داخل المحادثة
+    (للمالك فقط: يتحقق من TELEGRAM_CHAT_ID لأن الملفات فيها بيانات تداول)
+    """
+    import io
+    try:
+        if str(update.effective_chat.id) != str(TELEGRAM_CHAT_ID):
+            logger.warning(f"🚫 /export من محادثة غير مصرح بها: {update.effective_chat.id}")
+            return
+
+        await update.message.reply_text("📦 جاري تجهيز الملفات...")
+
+        files = []
+
+        # 1) ذاكرة الصفقات
+        try:
+            import trade_memory
+            mem = trade_memory.load_memory()
+            files.append(("trade_memory.json", mem))
+        except Exception as e:
+            logger.error(f"export memory: {e}")
+
+        # 2) قواعد التعلم وحالة المخاطر
+        extra = {}
+        try:
+            import adaptive_rules
+            extra["learned_rules"] = adaptive_rules.load_rules(force=True)
+        except Exception as e:
+            extra["learned_rules_error"] = str(e)
+        try:
+            extra["risk_state"] = {
+                "consecutive_losses": core.get_consecutive_losses(),
+                "paused": core.is_trading_paused(),
+                "pause_reason": core.get_pause_reason(),
+                "risk_multiplier": core.get_risk_multiplier(),
+            }
+        except Exception as e:
+            extra["risk_state_error"] = str(e)
+        files.append(("bot_state.json", extra))
+
+        sent = 0
+        for name, data in files:
+            payload = json.dumps(data, indent=2, ensure_ascii=False, default=str).encode("utf-8")
+            bio = io.BytesIO(payload)
+            bio.name = name
+            await update.message.reply_document(document=bio, filename=name)
+            sent += 1
+
+        trades = 0
+        verified = 0
+        for n, d in files:
+            if n == "trade_memory.json":
+                trades = len(d.get("trades", []))
+                verified = sum(1 for t in d.get("trades", []) if t.get("pnl_verified"))
+        await update.message.reply_text(
+            f"✅ تم إرسال {sent} ملف\n📊 الصفقات: {trades} (موثقة: {verified})"
+        )
+
+    except Exception as e:
+        logger.error(f"❌ export: {e}")
+        try:
+            await update.message.reply_text(f"❌ فشل التصدير: {e}")
+        except Exception:
+            pass
+
+
 async def start(update: Update, context: CallbackContext):
     status = "🟢 نشط" if _bot_running else "🔴 متوقف"
     tp_system = "متعدد المستويات" if ENABLE_MULTIPLE_TP else "مستوى واحد"
@@ -1404,6 +1471,7 @@ def run_bot():
         )
 
         application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("export", export_command))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_error_handler(error_handler)
