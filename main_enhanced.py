@@ -358,7 +358,9 @@ def send_startup():
         )
 
         async def send_async():
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="HTML")
+            # إرسال لوحة المفاتيح مع رسالة البدء ليتحدث شكلها تلقائياً بعد كل نشر
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="HTML",
+                                   reply_markup=getattr(tgbot, 'main_kb', None))
 
         threading.Thread(target=run_async_safe, args=(send_async(),), daemon=True).start()
 
