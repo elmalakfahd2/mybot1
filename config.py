@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v5.7
+config.py - الإعدادات النهائية v5.8 (مصححة - شبكة حقيقية)
 🔧 v5.7: إصلاح التعلم + الاستمرارية
     - إعدادات التعلم التكيفي (ADAPTIVE_*) التي تؤثر فعلياً على القرار
     - إيقاف متصاعد بعد الخسائر + حد خسارة يومي حقيقي + تقليل الحجم
@@ -107,7 +107,9 @@ OPEN_POSITIONS_FILE = "open_positions.json"
 LEARNING_HISTORY_FILE = "learning_history.json"
 TUNING_HISTORY_FILE = "tuning_history.json"
 
-USE_TESTNET = _get_bool("USE_TESTNET", default=True)
+# 🔥 v5.8: الشبكة الحقيقية افتراضياً (كان True = تجريبي)
+# ⚠️ إن وُجد متغير بيئة USE_TESTNET=true في Railway/.env سيتجاوز هذا السطر — احذفه من هناك
+USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 10
@@ -157,7 +159,7 @@ RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 65
+MIN_SCORE_REQUIRED = 55        # 🔥 v5.8: كان 65 - أعاد فتح التداول
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -240,7 +242,7 @@ CONFIRMATION_TIMEFRAME = '15m'
 
 # ==================== 🔥 AI Settings (معدل) ====================
 GROQ_SEND_FULL_DATA = True
-GROQ_MIN_SCORE_BEFORE_CALL = 55       # ← كان 25 (يقلل استدعاءات AI بـ 70%)
+GROQ_MIN_SCORE_BEFORE_CALL = 50       # 🔥 v5.8: كان 55 - بوابة توفير فقط وليست قاتلة
 GROQ_REJECT_IS_VETO = True
 
 # ==================== التنفيذ ====================
@@ -263,7 +265,7 @@ REALTIME_MAX_SUBSCRIPTIONS = 25
 
 # ==================== التعلم التلقائي ====================
 ENABLE_AUTO_LEARNING = True
-AUTO_LEARN_INTERVAL_HOURS = 12
+AUTO_LEARN_INTERVAL_HOURS = 1   # 🔥 v5.8: كان 12 - كل ساعة في البداية
 AUTO_LEARN_MIN_TRADES = 20
 AUTO_LEARN_MIN_PER_SYMBOL = 3
 AUTO_TUNE_WEIGHTS = False   # v5.7: معطل - التعلم الفعلي عبر ADAPTIVE_*
@@ -304,13 +306,18 @@ SYMBOL_BLOCK_TOTAL_LOSS_USDT = 6.0      # أو إجمالي أسوأ من -6$ ف
 
 # ==================== 🔥 v5.7: التعلم التكيفي (يؤثر على القرار فعلاً) ====================
 ENABLE_ADAPTIVE_RULES = True
-ADAPTIVE_MIN_TRADES = 12                # أقل عدد صفقات موثقة قبل تفعيل أي قاعدة
+ADAPTIVE_MIN_TRADES = 6                 # 🔥 v5.8: كان 12 - ليبدأ التعلم مبكراً
 ADAPTIVE_LOOKBACK_DAYS = 14
 ADAPTIVE_RECENT_WINDOW = 15             # نافذة الأداء الأخير
 ADAPTIVE_MAX_SCORE_BOOST = 10           # أقصى رفع لحد النقاط بسبب الأداء الضعيف
 ADAPTIVE_MAX_TOTAL_BOOST = 12           # سقف الرفع الكلي (أداء + اتجاه)
 ADAPTIVE_MIN_TRADES_PER_DIRECTION = 6
 ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 صفقات ضوضاء إحصائية
+
+# ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
+AI_FAIL_MIN_SCORE = 70                  # نقاط القبول الاستثنائي عند فشل كل مزودي AI
+SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
+SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 
 # ==================== 🔥 v5.8: من تحليل 65 صفقة موثقة ====================
 # عدد الصفقات المفتوحة بنفس الاتجاه عند الدخول مقابل النتيجة:

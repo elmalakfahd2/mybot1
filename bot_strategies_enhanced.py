@@ -1,5 +1,10 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.7
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.8
+# 🔧 التعديلات v5.8:
+#    - 🔥 فيتو AI فقط من النموذج الأساسي (gemini) أو بثقة 75+ —
+#      رفض النماذج الاحتياطية ضعيف الثقة يُعامل "تحذير" لا رفضاً قاتلاً
+#    - 🔥 إصلاح مقياس دفتر الأوامر: مضاعف العمق /100000 + نقاط جزئية للدفتر المحايد
+#    - 🔥 قيم افتراضية آمنة إذا غابت GROQ_MIN_SCORE_BEFORE_CALL / AI_FAIL_MIN_SCORE من config
 # 🔧 التعديلات v5.7:
 #    - 🔥 التعلم يؤثر فعلياً: حد النقاط الديناميكي + عقوبة الاتجاه + حظر الساعات (adaptive_rules)
 #    - 🔥 الحظر بنافذة زمنية وصفقات موثقة (ينتهي تلقائياً)
@@ -10,7 +15,7 @@
 #    - 🔥 لا نقاط مجانية لـ AI
 #    - 🔥 Cooldown تصاعدي (60/120/240)
 #    - 🔥 حظر دائم للعملات السيئة
-# 📅 التاريخ: 2026-09-28
+# 📅 التاريخ: 2026-10-01
 # ==================================================
 
 import logging
@@ -28,6 +33,21 @@ except ImportError as e:
     print(f"خطأ config: {e}")
     TELEGRAM_TOKEN = ""
     TELEGRAM_CHAT_ID = ""
+
+# 🔥 v5.8: قيم افتراضية آمنة إذا غابت من config.py (تمنع توقف التداول كاملاً)
+try:
+    GROQ_MIN_SCORE_BEFORE_CALL = int(GROQ_MIN_SCORE_BEFORE_CALL)
+except NameError:
+    GROQ_MIN_SCORE_BEFORE_CALL = 50
+if GROQ_MIN_SCORE_BEFORE_CALL > 55:
+    logger.warning(
+        f"⚠️ GROQ_MIN_SCORE_BEFORE_CALL={GROQ_MIN_SCORE_BEFORE_CALL} مرتفع جداً ويمنع الوصول لـ AI - "
+        f"يُنصح بـ 50-55 في config.py حتى يبدأ التداول"
+    )
+try:
+    AI_FAIL_MIN_SCORE = int(AI_FAIL_MIN_SCORE)
+except NameError:
+    AI_FAIL_MIN_SCORE = 70
 
 try:
     import core_functions as core
@@ -905,26 +925,33 @@ def calculate_total_score(signal, analysis):
         score += details['market_points']
         logger.info(f"📊 سوق: {details['market_points']}/5")
 
-        # 7. دفتر الأوامر (10)
+        # 7. دفتر الأوامر (10) - 🔥 v5.8: مضاعف عمق واقعي + نقاط جزئية للدفتر المحايد
         try:
             ob = core.get_order_book_analysis(symbol) if core else None
             if ob:
                 imbalance = ob.get('imbalance', 0)
                 spread = ob.get('spread_percent', 999)
                 depth = ob.get('total_depth_usdt', 0)
+                details['ob_imb'] = round(imbalance, 3)
+                details['ob_depth'] = int(depth)
 
                 aligned_imbalance = (
                     (direction == "BUY" and imbalance > 0) or
                     (direction == "SELL" and imbalance < 0)
                 )
 
-                depth_multiplier = min(1.0, depth / 500000) if depth > 0 else 0.5
+                # 🔥 v5.8: 100k بدل 500k — معظم الدفات أعماقها 50k-300k فكان المضاعف يقتل النقاط
+                depth_multiplier = min(1.0, depth / 100000) if depth > 0 else 0.5
 
                 if aligned_imbalance:
-                    base_points = abs(imbalance) * 15 * depth_multiplier
-                    details['order_book_points'] = min(10, int(base_points))
+                    base_points = abs(imbalance) * 10 * depth_multiplier
+                    details['order_book_points'] = min(10, 2 + int(base_points))
+                elif abs(imbalance) < 0.3:
+                    # دفتر متوازن تقريباً → نقاط جزئية بدل الصفر القاتل
+                    details['order_book_points'] = 3
                 else:
-                    details['order_book_points'] = 0
+                    # معاكس بضعف خفيف → نقطة واحدة فقط، لا صفر كامل
+                    details['order_book_points'] = 1
 
                 if spread > MAX_SPREAD_PERCENT:
                     details['order_book_points'] = max(0, details['order_book_points'] - 3)
@@ -935,7 +962,7 @@ def calculate_total_score(signal, analysis):
             details['order_book_points'] = 3
 
         score += details['order_book_points']
-        logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/10")
+        logger.info(f"📊 دفتر الأوامر: {details['order_book_points']}/10 (imb={details.get('ob_imb', '؟')}, depth={details.get('ob_depth', '؟')})")
 
         # 8. Funding/OI (10)
         try:
@@ -996,11 +1023,15 @@ def calculate_total_score(signal, analysis):
                 else:
                     details['groq_points'] = 2
             elif groq_rec == "رفض":
-                if GROQ_REJECT_IS_VETO and groq_conf >= 75:
-                    logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%)")
+                # 🔥 v5.8: الفيتو فقط من النموذج الأساسي (gemini) أو بثقة 75+
+                _ai_prov = signal.get('ai_provider', '')
+                _trusted = (_ai_prov == 'gemini') or (groq_conf >= 75)
+                if GROQ_REJECT_IS_VETO and _trusted:
+                    logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%) [{_ai_prov}]")
                     details['rejected'] = True
                     details['reject_reason'] = f'AI رفض ({groq_conf}%)'
                     return 0, details
+                # رفض غير موثوق → لا نقاط فقط، بلا فيتو قاتل
                 details['groq_points'] = 0
             else:
                 # 🔥 لا نقاط إذا AI لم يعمل
@@ -1126,51 +1157,61 @@ def generate_sniper_signal(symbol):
                     signal['ai_context'] = adaptive_rules.build_ai_context(symbol, direction)
                 except Exception as e:
                     logger.debug(f"ai_context: {e}")
-            
+
             if not GROQ_AVAILABLE:
-                if total_score < max(75, required_score):
-                    logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < 75")
+                if total_score < max(AI_FAIL_MIN_SCORE, required_score):
+                    logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < {max(AI_FAIL_MIN_SCORE, required_score)}")
                     return None
                 logger.warning(f"⚠️ {symbol}: AI غير متاح - قبول استثنائي ({total_score})")
             else:
                 try:
                     groq_result = enhance_signal_with_groq(signal, analysis)
-                    
+
                     if not groq_result:
-                        # AI فشل - اقبل فقط 75+
-                        if total_score < max(75, required_score):
-                            logger.warning(f"🛑 {symbol}: AI فشل والنقاط {total_score} < 75")
+                        # AI فشل - اقبل فقط إذا النقاط فوق AI_FAIL_MIN_SCORE
+                        if total_score < max(AI_FAIL_MIN_SCORE, required_score):
+                            logger.warning(f"🛑 {symbol}: AI فشل والنقاط {total_score} < {max(AI_FAIL_MIN_SCORE, required_score)}")
                             return None
                         logger.warning(f"⚠️ {symbol}: AI فشل - قبول استثنائي ({total_score})")
                     else:
                         rec_ai = groq_result.get('groq_recommendation', '')
                         ai_conf = groq_result.get('groq_confidence', 0)
-                        
-                        # AI رفض صريح
-                        if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO:
-                            logger.warning(f"🛑 {symbol}: AI رفض ({ai_conf}%)")
+
+                        # 🔥 v5.8: الفيتو فقط من النموذج الأساسي (gemini) أو بثقة 75+
+                        ai_provider = groq_result.get('ai_provider', '')
+                        trusted_ai = (ai_provider == 'gemini') or (ai_conf >= 75)
+
+                        # AI رفض صريح من نموذج موثوق → فيتو
+                        if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO and trusted_ai:
+                            logger.warning(f"🛑 {symbol}: AI رفض ({ai_conf}%) [{ai_provider}]")
                             _shadow(symbol, direction, current_price, total_score, 'ai_veto',
                                     score_details, rec_ai, ai_conf)
                             return None
-                        
-                        # تحذير قوي
-                        if rec_ai == 'تحذير' and ai_conf >= 75:
-                            logger.warning(f"🛑 {symbol}: AI تحذير قوي ({ai_conf}%)")
+
+                        # 🔥 v5.8: رفض من نموذج احتياطي ضعيف الثقة → تحذير فقط لا فيتو
+                        if rec_ai == 'رفض' and not trusted_ai:
+                            logger.info(f"⚠️ {symbol}: رفض {ai_provider} ضعيف الثقة ({ai_conf}%) — يُعامل كتحذير")
+                            groq_result['groq_recommendation'] = 'تحذير'
+                            rec_ai = 'تحذير'
+
+                        # تحذير قوي من نموذج موثوق فقط
+                        if rec_ai == 'تحذير' and ai_conf >= 75 and trusted_ai:
+                            logger.warning(f"🛑 {symbol}: AI تحذير قوي ({ai_conf}%) [{ai_provider}]")
                             _shadow(symbol, direction, current_price, total_score, 'ai_veto',
                                     score_details, rec_ai, ai_conf)
                             return None
-                        
+
                         signal.update(groq_result)
                         total_score, score_details = calculate_total_score(signal, analysis)
-                        
+
                         if rec_ai == 'تأكيد':
-                            logger.info(f"✅ {symbol}: AI تأكيد ({ai_conf}%)")
+                            logger.info(f"✅ {symbol}: AI تأكيد ({ai_conf}%) [{ai_provider}]")
                         else:
-                            logger.info(f"⚠️ {symbol}: AI تحذير خفيف ({ai_conf}%) - نقاط: {total_score}")
-                        
+                            logger.info(f"⚠️ {symbol}: AI تحذير خفيف ({ai_conf}%) [{ai_provider}] - نقاط: {total_score}")
+
                 except Exception as e:
                     logger.error(f"🛑 {symbol}: خطأ AI: {e}")
-                    if total_score < 75:
+                    if total_score < max(AI_FAIL_MIN_SCORE, required_score):
                         return None
         else:
             logger.info(f"🛑 {symbol}: نقاط {total_score} < {ai_call_threshold} - لا استدعاء AI")

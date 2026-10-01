@@ -1,6 +1,10 @@
 # ==================================================
-# 📁 ملف: adaptive_rules.py - التعلم التكيفي v1.0
-# 🔧 الوصف:
+# 📁 ملف: adaptive_rules.py - التعلم التكيفي v1.1
+# 🔧 التعديلات v1.1:
+#    - 🔥 تعلم من صفقات الظل عند غياب الصفقات الحقيقية: إذا كانت إشارات
+#      الظل قرب الحد رابحة (نجاح 55%+ وPF 1.2+) يُخفض حد الدخول تلقائياً
+#      (min_score_boost سالب) — يكسر الحلقة المفرغة: لا صفقات ← لا تعلم ← لا صفقات
+# 🔧 (v1.0):
 #    - يتعلم من الصفقات الموثقة فقط (PnL حقيقي من Binance)
 #    - قواعده تؤثر فعلياً على قرار الدخول:
 #        1) رفع الحد الأدنى للنقاط بعد أداء ضعيف (ويرجع تلقائياً عند التحسن)
@@ -8,7 +12,7 @@
 #        3) حظر ساعات الدخول الخاسرة
 #    - يبني سياقاً للذكاء الاصطناعي (حالة السوق + سجل العملة + أداء البوت)
 #    - القواعد تُحفظ محلياً وفي Firebase ولا تضيع عند إعادة التشغيل
-# 📅 التاريخ: 2026-09-29
+# 📅 التاريخ: 2026-10-01
 # ==================================================
 
 import json
@@ -194,7 +198,34 @@ def update_rules():
         rules['stats'] = {'overall': overall}
 
         if len(trades) < min_trades:
-            rules['notes'] = [f"بيانات موثقة غير كافية ({len(trades)}/{min_trades}) - القواعد الافتراضية"]
+            # 🔥 v1.1: تعلم من صفقات الظل عند غياب الصفقات الحقيقية
+            # (كسر الحلقة المفرغة: لا صفقات ← لا تعلم ← لا صفقات)
+            shadow_applied = False
+            try:
+                import shadow_tracker
+                rel = shadow_tracker.relief_info()
+                rules['stats']['shadow_relief'] = rel
+                sh_min = int(_c('SHADOW_LEARN_MIN_TRADES', 20))
+                if (rel.get('n', 0) >= sh_min
+                        and rel.get('win_rate', 0) >= 0.55
+                        and rel.get('profit_factor', 0) >= 1.2):
+                    drop = int(_c('SHADOW_LEARN_SCORE_DROP', 6))
+                    rules['min_score_boost'] = -drop
+                    rules['notes'] = [
+                        f"👻 لا صفقات حقيقية كافية ({len(trades)}/{min_trades}) لكن صفقات الظل رابحة "
+                        f"({rel['wins']}/{rel['n']} ، نجاح {rel['win_rate']*100:.0f}% ، PF {rel['profit_factor']}) "
+                        f"← خفض حد الدخول {drop} نقاط"
+                    ]
+                    shadow_applied = True
+                    logger.info(
+                        f"🧠👻 تعلم الظل: خفض حد الدخول {drop} نقاط "
+                        f"(نجاح {rel['win_rate']*100:.0f}% من {rel['n']} صفقة ظل)"
+                    )
+            except Exception as e:
+                logger.debug(f"shadow learn: {e}")
+
+            if not shadow_applied:
+                rules['notes'] = [f"بيانات موثقة غير كافية ({len(trades)}/{min_trades}) - القواعد الافتراضية"]
             _save_rules(rules)
             with _lock:
                 _cache['rules'] = rules
@@ -313,6 +344,7 @@ def get_required_score(direction):
         extra = int(rules.get('min_score_boost', 0))
         extra += int(rules.get('direction_penalty', {}).get(direction, 0))
         cap = int(_c('ADAPTIVE_MAX_TOTAL_BOOST', 12))
+        # ملاحظة: min_score_boost سالب (من تعلم الظل) يمر هنا ويخفض الحد
         return base + min(extra, cap)
     except Exception:
         return base
@@ -417,7 +449,7 @@ def get_status_text():
         msg += f"📊 صفقات موثقة: {r.get('trades_used', 0)}\n"
         if st.get('n'):
             msg += f"   • نجاح: {st.get('win_rate', 0)*100:.0f}% | PF: {st.get('profit_factor', 0)} | صافي: {st.get('pnl', 0):+.2f}$\n"
-        msg += f"\n🎯 رفع حد النقاط: +{r.get('min_score_boost', 0)}\n"
+        msg += f"\n🎯 رفع حد النقاط: {r.get('min_score_boost', 0):+d}\n"
         dp = r.get('direction_penalty', {})
         msg += f"↕️ عقوبة الاتجاه: BUY +{dp.get('BUY', 0)} | SELL +{dp.get('SELL', 0)}\n"
         bh = r.get('blocked_hours', [])

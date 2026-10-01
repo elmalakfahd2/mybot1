@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v8.1
-🔧 التعديلات:
-    - Retry ذكي: 503 فقط (ليس 429)
-    - Fallback فوري على 429
-    - HuggingFace retry محسّن
-    - ترتيب احتياطي: Gemini → HuggingFace → Groq → SambaNova → OpenRouter
+groq_integration.py - الإصدار v8.2
+🔧 التعديلات v8.2:
+    - 🚫 HuggingFace معطل نهائياً: كان يرفض كل الإشارة بثقة منخفضة (0-60%) فيقتل كل شيء
+    - ترتيب الاحتياطي الآن: Gemini → Groq → SambaNova → OpenRouter
+    - (v8.1) Retry ذكي: 503 فقط (ليس 429) - Fallback فوري على 429
 
-📅 آخر تعديل: 2026-09-28
+📅 آخر تعديل: 2026-10-01
 """
 
 import logging
@@ -40,7 +39,7 @@ gemini_working_model = None
 groq_available = False
 groq_working_model = None
 sambanova_available = False
-huggingface_available = False
+huggingface_available = False   # 🔥 v8.2: يبقى False دائماً (معطل)
 openrouter_available = False
 openrouter_working_model = None
 
@@ -93,47 +92,21 @@ def _try_init_gemini():
 
 
 # ============================================================
-# 2. تهيئة HuggingFace (احتياطي 1)
+# 2. تهيئة HuggingFace - 🔥 v8.2: معطل نهائياً
 # ============================================================
 
 def _try_init_huggingface():
-    global huggingface_available
-
-    if not HUGGINGFACE_API_KEY:
-        logger.info("ℹ️ HUGGINGFACE_API_KEY غير موجود")
-        return False
-
-    if not ENABLE_HUGGINGFACE_ANALYSIS:
-        logger.info("ℹ️ HuggingFace معطل")
-        return False
-
-    try:
-        url = f"{HUGGINGFACE_API_BASE_URL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": HUGGINGFACE_MODEL,
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 5
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-
-        if response.status_code == 200:
-            huggingface_available = True
-            logger.info(f"✅ تهيئة HuggingFace: {HUGGINGFACE_MODEL}")
-            return True
-        else:
-            logger.warning(f"⚠️ فشل HuggingFace: {response.status_code} - {response.text[:150]}")
-            return False
-    except Exception as e:
-        logger.warning(f"⚠️ فشل HuggingFace: {e}")
-        return False
+    """
+    🔥 v8.2: HuggingFace معطل نهائياً.
+    السبب: يرفض كل الإشارات بثقة منخفضة (0-60%) والكود كان يطبق فيتو قاتلاً
+    على رفضه، فماتت كل الإشارات. النماذج الأخرى (Gemini/Groq/...) تبقى كما هي.
+    """
+    logger.info("🚫 HuggingFace معطل في v8.2 (كان يرفض كل الإشارات بثقة منخفضة فيقتل التداول)")
+    return False
 
 
 # ============================================================
-# 3. تهيئة Groq (احتياطي 2)
+# 3. تهيئة Groq (احتياطي 1)
 # ============================================================
 
 def _try_init_groq():
@@ -170,7 +143,7 @@ def _try_init_groq():
 
 
 # ============================================================
-# 4. تهيئة SambaNova (احتياطي 3 - معطل)
+# 4. تهيئة SambaNova (احتياطي 2 - معطل)
 # ============================================================
 
 def _try_init_sambanova():
@@ -202,7 +175,7 @@ def _try_init_sambanova():
 
 
 # ============================================================
-# 5. تهيئة OpenRouter (احتياطي 4)
+# 5. تهيئة OpenRouter (احتياطي 3)
 # ============================================================
 
 def _try_init_openrouter():
@@ -267,20 +240,20 @@ else:
 if _try_init_huggingface():
     logger.info("✅ HuggingFace جاهز (احتياطي 1)")
 else:
-    logger.warning("⚠️ HuggingFace غير متاح")
+    logger.info("ℹ️ HuggingFace معطل (v8.2)")
 
 if _try_init_groq():
-    logger.info("✅ Groq جاهز (احتياطي 2)")
+    logger.info("✅ Groq جاهز (احتياطي 1)")
 else:
     logger.warning("⚠️ Groq غير متاح")
 
 if _try_init_sambanova():
-    logger.info("✅ SambaNova جاهز (احتياطي 3)")
+    logger.info("✅ SambaNova جاهز (احتياطي 2)")
 else:
     logger.warning("⚠️ SambaNova غير متاح")
 
 if _try_init_openrouter():
-    logger.info("✅ OpenRouter جاهز (احتياطي 4)")
+    logger.info("✅ OpenRouter جاهز (احتياطي 3)")
 else:
     logger.warning("⚠️ OpenRouter غير متاح")
 
@@ -512,65 +485,13 @@ def _call_gemini(prompt, max_retries=2):
 
 
 def _call_huggingface(prompt, max_retries=3):
-    """🔥 v8.1: retry أفضل"""
-    global _huggingface_rate_limited_until
-
-    if time.time() < _huggingface_rate_limited_until or not huggingface_available:
-        return None
-
-    for attempt in range(max_retries):
-        try:
-            url = f"{HUGGINGFACE_API_BASE_URL}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": HUGGINGFACE_MODEL,
-                "messages": [
-                    {"role": "system", "content": "محلل فني Scalp. أجب JSON فقط."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 800
-            }
-            response = requests.post(url, headers=headers, json=payload, timeout=45)
-
-            if response.status_code == 200:
-                data = response.json()
-                if 'choices' in data and data['choices']:
-                    logger.info(f"✅ HuggingFace نجح")
-                    return data['choices'][0]['message']['content']
-                return None
-            elif response.status_code == 429:
-                _huggingface_rate_limited_until = time.time() + 60
-                logger.warning("⏳ HuggingFace rate limit - انتظار 60s")
-                return None
-            elif response.status_code == 503:
-                if attempt < max_retries - 1:
-                    logger.warning(f"⚠️ HuggingFace 503 - محاولة {attempt+1}")
-                    time.sleep(3)
-                    continue
-                return None
-            elif response.status_code == 402:
-                logger.error("🚫 HuggingFace: نفد الرصيد")
-                _huggingface_rate_limited_until = time.time() + 86400
-                return None
-            else:
-                logger.warning(f"⚠️ HuggingFace: {response.status_code}")
-                return None
-        except Exception as e:
-            logger.warning(f"خطأ HuggingFace: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2)
-                continue
-            return None
-
+    """🔥 v8.2: معطل نهائياً - لا يُستدعى أبداً من السلسلة"""
+    logger.debug("🚫 HuggingFace معطل (v8.2)")
     return None
 
 
 def _call_groq(prompt, max_retries=2):
-    """🔥 استدعاء Groq (احتياطي 2)"""
+    """🔥 استدعاء Groq (احتياطي 1)"""
     global _groq_rate_limited_until, _groq_daily_limit_reached
 
     current_time = time.time()
@@ -619,7 +540,7 @@ def _call_groq(prompt, max_retries=2):
 
 
 def _call_sambanova(prompt):
-    """SambaNova (معطل حالياً)"""
+    """SambaNova (احتياطي 2)"""
     global _sambanova_rate_limited_until
     if time.time() < _sambanova_rate_limited_until or not sambanova_available:
         return None
@@ -653,7 +574,7 @@ def _call_sambanova(prompt):
 
 
 def _call_openrouter(prompt):
-    """OpenRouter (احتياطي أخير)"""
+    """OpenRouter (احتياطي 3)"""
     global openrouter_working_model
     if not openrouter_available:
         return None
@@ -701,17 +622,17 @@ def _call_openrouter(prompt):
 
 
 # ============================================================
-# 🔥 الدالة الرئيسية - الترتيب الجديد
+# 🔥 الدالة الرئيسية - الترتيب الجديد (v8.2: بدون HuggingFace)
 # ============================================================
 
 def analyze_signal_with_groq(signal_data, analysis_data=None):
     """
-    🔥 التسلسل الذكي:
+    🔥 التسلسل الذكي (v8.2):
     1. Gemini (الأساسي - retry ذكي)
-    2. HuggingFace (احتياطي 1 - حصة كبيرة)
-    3. Groq (احتياطي 2 - محمي)
-    4. SambaNova (احتياطي 3 - معطل)
-    5. OpenRouter (احتياطي 4 - أخير)
+    2. Groq (احتياطي 1 - محمي بالحصص)
+    3. SambaNova (احتياطي 2)
+    4. OpenRouter (احتياطي 3 - أخير)
+    (HuggingFace أُزيل في v8.2: كان يرفض كل الإشارات بثقة منخفضة)
     """
     try:
         prompt = build_prompt(signal_data, analysis_data)
@@ -725,18 +646,9 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 result = parse_ai_response(content, "gemini")
                 if result:
                     return result
-            logger.warning("⚠️ Gemini فشل - التبديل إلى HuggingFace")
+            logger.warning("⚠️ Gemini فشل - التبديل إلى Groq")
 
-        # ==================== 2. HuggingFace (احتياطي 1) ====================
-        if AI_FALLBACK_ENABLED and huggingface_available:
-            logger.info("🔄 Fallback → HuggingFace...")
-            content = _call_huggingface(prompt, max_retries=3)
-            if content:
-                result = parse_ai_response(content, "huggingface")
-                if result:
-                    return result
-
-        # ==================== 3. Groq (احتياطي 2) ====================
+        # ==================== 2. Groq (احتياطي 1) ====================
         if AI_FALLBACK_ENABLED and groq_available and not _groq_daily_limit_reached:
             logger.info("🔄 Fallback → Groq...")
             content = _call_groq(prompt, max_retries=1)
@@ -745,7 +657,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== 4. SambaNova ====================
+        # ==================== 3. SambaNova (احتياطي 2) ====================
         if AI_FALLBACK_ENABLED and sambanova_available:
             logger.info("🔄 Fallback → SambaNova...")
             content = _call_sambanova(prompt)
@@ -754,7 +666,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 if result:
                     return result
 
-        # ==================== 5. OpenRouter ====================
+        # ==================== 4. OpenRouter (احتياطي 3) ====================
         if AI_FALLBACK_ENABLED and openrouter_available:
             logger.info("🔄 Fallback → OpenRouter...")
             content = _call_openrouter(prompt)
@@ -775,7 +687,6 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
 def is_groq_available():
     return (
         gemini_available or
-        huggingface_available or
         (groq_available and not _groq_daily_limit_reached) or
         sambanova_available or
         openrouter_available
@@ -796,7 +707,6 @@ def get_ai_status():
         'fallback_enabled': AI_FALLBACK_ENABLED,
         'active_provider': (
             'gemini' if gemini_available
-            else 'huggingface' if huggingface_available
             else 'groq' if groq_available and not _groq_daily_limit_reached
             else 'sambanova' if sambanova_available
             else 'openrouter' if openrouter_available
