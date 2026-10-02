@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-groq_integration.py - الإصدار v8.2
+groq_integration.py - الإصدار v8.3
 🔧 التعديلات v8.2:
     - 🚫 HuggingFace معطل نهائياً: كان يرفض كل الإشارة بثقة منخفضة (0-60%) فيقتل كل شيء
     - ترتيب الاحتياطي الآن: Gemini → Groq → SambaNova → OpenRouter
     - (v8.1) Retry ذكي: 503 فقط (ليس 429) - Fallback فوري على 429
+    - (v8.3) 🔥 Groq: إعادة محاولة تلقائية بعد انتهاء الحصة اليومية (كان يُستثني نهائياً
+      حتى إعادة تشغيل البوت، فتنهار السلسلة كاملة عند انتهاء الحصة)
 
 📅 آخر تعديل: 2026-10-01
 """
@@ -496,7 +498,13 @@ def _call_groq(prompt, max_retries=2):
 
     current_time = time.time()
     if _groq_daily_limit_reached and current_time < _groq_rate_limited_until:
+        remaining = int((_groq_rate_limited_until - current_time) / 3600)
+        logger.info(f"⏳ Groq: الحصة اليومية مستنفدة - إعادة المحاولة بعد ~{remaining} ساعة")
         return None
+    if _groq_daily_limit_reached and current_time >= _groq_rate_limited_until:
+        # 🔥 v8.3: انتهت مهلة الانتظار - جرّب Groq من جديد
+        _groq_daily_limit_reached = False
+        logger.info("🔄 Groq: انتهت مهلة الانتظار - إعادة تفعيل المحاولة")
 
     try:
         headers = {
@@ -528,7 +536,9 @@ def _call_groq(prompt, max_retries=2):
                 _groq_rate_limited_until = time.time() + wait
                 if "tokens per day" in error_text or "TPD" in error_text:
                     _groq_daily_limit_reached = True
-                    logger.error(f"🚫 Groq: الحصة اليومية انتهت!")
+                    # 🔥 v8.3: انتظر ساعتين فقط ثم أعد المحاولة (بدل الاستثناء الدائم)
+                    _groq_rate_limited_until = time.time() + 2 * 3600
+                    logger.error(f"🚫 Groq: الحصة اليومية انتهت! إعادة المحاولة بعد ساعتين")
             else:
                 _groq_rate_limited_until = time.time() + 60
             return None
@@ -646,7 +656,7 @@ def analyze_signal_with_groq(signal_data, analysis_data=None):
                 result = parse_ai_response(content, "gemini")
                 if result:
                     return result
-            logger.warning("⚠️ Gemini فشل - التبديل إلى Groq")
+            logger.warning("⚠️ Gemini فشل - الانتقال إلى المزود الاحتياطي التالي")
 
         # ==================== 2. Groq (احتياطي 1) ====================
         if AI_FALLBACK_ENABLED and groq_available and not _groq_daily_limit_reached:

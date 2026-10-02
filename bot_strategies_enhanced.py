@@ -1,5 +1,8 @@
 # ==================================================
-# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.8
+# 📁 ملف: bot_strategies_enhanced.py - الإصدار v5.9
+# 🔧 التعديلات v5.9:
+#    - 🔥 فيتو gemini لا يقتل إلا بثقة 50+ (رفض 30% من gemini كان يقتل عشوائياً)
+#    - 🔥 AI_FAIL_MIN_SCORE الافتراضي 65 بدل 70 (كان يقتل إشارات 60-69 وقت أعطال AI الجماعية)
 # 🔧 التعديلات v5.8:
 #    - 🔥 فيتو AI فقط من النموذج الأساسي (gemini) أو بثقة 75+ —
 #      رفض النماذج الاحتياطية ضعيف الثقة يُعامل "تحذير" لا رفضاً قاتلاً
@@ -47,7 +50,12 @@ if GROQ_MIN_SCORE_BEFORE_CALL > 55:
 try:
     AI_FAIL_MIN_SCORE = int(AI_FAIL_MIN_SCORE)
 except NameError:
-    AI_FAIL_MIN_SCORE = 70
+    AI_FAIL_MIN_SCORE = 65
+if AI_FAIL_MIN_SCORE > 65:
+    logger.warning(
+        f"⚠️ AI_FAIL_MIN_SCORE={AI_FAIL_MIN_SCORE} مرتفع - وقت أعطال AI الجماعية سيُرفض "
+        f"كل شيء تحته؛ يُنصح بـ 65 في config.py"
+    )
 
 try:
     import core_functions as core
@@ -1025,7 +1033,8 @@ def calculate_total_score(signal, analysis):
             elif groq_rec == "رفض":
                 # 🔥 v5.8: الفيتو فقط من النموذج الأساسي (gemini) أو بثقة 75+
                 _ai_prov = signal.get('ai_provider', '')
-                _trusted = (_ai_prov == 'gemini') or (groq_conf >= 75)
+                # 🔥 v5.9: gemini موثوق فقط إذا كانت ثقته 50+ (رفض 30% كان فيتواً عشوائياً)
+                _trusted = (_ai_prov == 'gemini' and groq_conf >= 50) or (groq_conf >= 75)
                 if GROQ_REJECT_IS_VETO and _trusted:
                     logger.warning(f"🛑 {symbol}: AI رفض ({groq_conf}%) [{_ai_prov}]")
                     details['rejected'] = True
@@ -1179,7 +1188,8 @@ def generate_sniper_signal(symbol):
 
                         # 🔥 v5.8: الفيتو فقط من النموذج الأساسي (gemini) أو بثقة 75+
                         ai_provider = groq_result.get('ai_provider', '')
-                        trusted_ai = (ai_provider == 'gemini') or (ai_conf >= 75)
+                        # 🔥 v5.9: gemini موثوق فقط بثقة 50+، وغير ذلك يحتاج 75+
+                        trusted_ai = (ai_provider == 'gemini' and ai_conf >= 50) or (ai_conf >= 75)
 
                         # AI رفض صريح من نموذج موثوق → فيتو
                         if rec_ai == 'رفض' and GROQ_REJECT_IS_VETO and trusted_ai:
