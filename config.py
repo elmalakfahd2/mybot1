@@ -332,3 +332,19 @@ SHADOW_MAX_HOURS = 8                    # أقصى مدة تتبع لصفقة ا
 SHADOW_MAX_OPEN = 60
 SHADOW_LOOKBACK_DAYS = 14
 SHADOW_RELIEF_MIN_TRADES = 15           # أقل عدد صفقات ظل مغلقة قبل تخفيف رفع الحد
+
+
+# ==================== v6.0: تقليل استدعاءات AI + مقارنة الصفقات السابقة ====================
+AI_CALL_MIN_PRE_SCORE = 60        # لا يُستدعى AI إلا إن كانت نقاط الإشارة (قبل AI) >= هذا
+AI_CACHE_MINUTES = 30             # إعادة استخدام نتيجة AI لنفس العملة والاتجاه
+AI_MAX_CALLS_PER_HOUR = 12        # سقف الاستدعاءات (0 = بلا سقف)
+
+# "log" = يسجّل الحكم فقط (الافتراضي، لا يمنع صفقات) | "block" = يمنع | "off" = معطل
+# تحذير: اختبار 89 صفقة أظهر أن الشبيهة بالرابحة لم تربح أكثر. لا تفعّل block قبل evaluate_similarity.py
+SIMILARITY_FILTER_MODE = "log"
+SIMILARITY_K = 10
+SIMILARITY_MIN_HISTORY = 40
+SIMILARITY_MIN_WIN_RATE = 0.35    # وضع block: 0.5 = نفّذ ما يشبه الرابحة فقط
+
+# v6.1: عند فشل AI أو بلوغ سقف الاستدعاءات: False = لا دخول (وتُسجَّل صفقة ظل) | True = السلوك القديم (يدخل إن النقاط >= AI_FAIL_MIN_SCORE)
+AI_UNAVAILABLE_ALLOW_ENTRY = False

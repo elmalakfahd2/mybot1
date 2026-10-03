@@ -1080,6 +1080,61 @@ def calculate_total_score(signal, analysis):
 
 # ==================== 🔥 توليد الإشارة - AI إلزامي ====================
 
+
+# ==================== 🔥 v6.0: تقليل استدعاءات الذكاء الاصطناعي ====================
+# - لا يُستدعى AI إلا للإشارات الجيدة (نقاط قبل-AI >= AI_CALL_MIN_PRE_SCORE)
+# - نتيجة AI تُخزَّن مؤقتاً لنفس (العملة، الاتجاه) AI_CACHE_MINUTES دقيقة
+# - سقف AI_MAX_CALLS_PER_HOUR استدعاء في الساعة (عند بلوغه = لا دخول ما لم يُسمح عبر AI_UNAVAILABLE_ALLOW_ENTRY)
+def _cfgv(name, default):
+    try:
+        return type(default)(globals().get(name, default))
+    except Exception:
+        return default
+
+_ai_cache = {}          # (symbol, direction) -> (timestamp, result_dict)
+_ai_call_times = []     # أوقات الاستدعاءات الفعلية
+
+
+def _ai_call_limited(symbol, direction, signal, analysis):
+    """يرجع (result, source) حيث source: 'cache' | 'call' | 'cap' | 'fail'"""
+    now = time.time()
+    ttl = _cfgv('AI_CACHE_MINUTES', 30) * 60
+    key = (symbol, direction)
+
+    cached = _ai_cache.get(key)
+    if cached and now - cached[0] < ttl:
+        return dict(cached[1]), 'cache'
+
+    cap = _cfgv('AI_MAX_CALLS_PER_HOUR', 12)
+    while _ai_call_times and now - _ai_call_times[0] > 3600:
+        _ai_call_times.pop(0)
+    if cap > 0 and len(_ai_call_times) >= cap:
+        return None, 'cap'
+
+    _ai_call_times.append(now)
+    result = enhance_signal_with_groq(signal, analysis)
+    if result:
+        _ai_cache[key] = (now, dict(result))
+        return result, 'call'
+    return None, 'fail'
+
+
+
+def _ai_unavailable_ok(symbol, direction, price, total_score, required_score, details):
+    """هل يُسمح بالدخول عند عدم توفر AI (فشل/سقف/معطل)؟
+    الافتراضي: لا (AI_UNAVAILABLE_ALLOW_ENTRY=False) + تسجيل صفقة ظل للتعلم."""
+    if not bool(globals().get('AI_UNAVAILABLE_ALLOW_ENTRY', False)):
+        logger.warning(f"🛑 {symbol}: AI غير متاح - لا دخول (AI_UNAVAILABLE_ALLOW_ENTRY=False)")
+        _shadow(symbol, direction, price, total_score, 'ai_unavailable', details)
+        return False
+    need = max(AI_FAIL_MIN_SCORE, required_score)
+    if total_score < need:
+        logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < {need}")
+        return False
+    logger.warning(f"⚠️ {symbol}: AI غير متاح - قبول استثنائي ({total_score})")
+    return True
+
+
 def _shadow(symbol, direction, price, score, tier, details=None, ai_rec='', ai_conf=0):
     """تسجيل إشارة مرفوضة كصفقة ظل (تعلّم بدون مال). لا يؤثر أبداً على القرار."""
     try:
@@ -1155,10 +1210,27 @@ def generate_sniper_signal(symbol):
         signal['required_score'] = required_score
 
         # AI يضيف حداً أقصى 12 نقطة؛ لا فائدة من استدعائه إن لم يكن الوصول للحد ممكناً
-        ai_call_threshold = max(GROQ_MIN_SCORE_BEFORE_CALL, required_score - 12)
+        ai_call_threshold = max(GROQ_MIN_SCORE_BEFORE_CALL, required_score - 12,
+                                _cfgv('AI_CALL_MIN_PRE_SCORE', 0))
 
         # 🔥 AI إلزامي (فقط إذا النقاط كافية للوصول للحد)
         if total_score >= ai_call_threshold:
+
+            # 🔥 v6.0: مقارنة بصفقات سابقة (محلي ومجاني؛ في وضع block يوفّر استدعاء AI)
+            try:
+                import similarity_filter
+                _vol = (analysis.get('volume_analysis', {}) or {}).get('volume_5m_ratio', 0)
+                sim = similarity_filter.assess(symbol, direction, score_details, _vol)
+                signal['similarity'] = sim
+                if sim['verdict'] != 'unknown':
+                    logger.info(f"🧬 {symbol}: {sim['verdict']} (نجاح الجيران {sim['win_rate']:.0%}) "
+                                f"[{sim['mode']}]")
+                if not sim['allow']:
+                    logger.warning(f"🛑 {symbol}: تشابه ضعيف - {sim['reason']}")
+                    _shadow(symbol, direction, current_price, total_score, 'similarity_block', score_details)
+                    return None
+            except Exception as e:
+                logger.debug(f"similarity: {e}")
 
             # 🔥 v5.7: سياق حقيقي للذكاء الاصطناعي
             if ADAPTIVE_AVAILABLE:
@@ -1168,20 +1240,20 @@ def generate_sniper_signal(symbol):
                     logger.debug(f"ai_context: {e}")
 
             if not GROQ_AVAILABLE:
-                if total_score < max(AI_FAIL_MIN_SCORE, required_score):
-                    logger.warning(f"🛑 {symbol}: AI غير متاح والنقاط {total_score} < {max(AI_FAIL_MIN_SCORE, required_score)}")
+                if not _ai_unavailable_ok(symbol, direction, current_price, total_score, required_score, score_details):
                     return None
-                logger.warning(f"⚠️ {symbol}: AI غير متاح - قبول استثنائي ({total_score})")
             else:
                 try:
-                    groq_result = enhance_signal_with_groq(signal, analysis)
+                    groq_result, _ai_src = _ai_call_limited(symbol, direction, signal, analysis)
+                    if _ai_src == 'cache':
+                        logger.info(f"♻️ {symbol}: استخدام نتيجة AI المخزنة (بدون استدعاء)")
+                    elif _ai_src == 'cap':
+                        logger.warning(f"⏸️ {symbol}: بلغنا سقف استدعاءات AI/ساعة - يُعامل كـ AI غير متاح")
 
                     if not groq_result:
-                        # AI فشل - اقبل فقط إذا النقاط فوق AI_FAIL_MIN_SCORE
-                        if total_score < max(AI_FAIL_MIN_SCORE, required_score):
-                            logger.warning(f"🛑 {symbol}: AI فشل والنقاط {total_score} < {max(AI_FAIL_MIN_SCORE, required_score)}")
+                        # AI فشل أو بلغنا السقف
+                        if not _ai_unavailable_ok(symbol, direction, current_price, total_score, required_score, score_details):
                             return None
-                        logger.warning(f"⚠️ {symbol}: AI فشل - قبول استثنائي ({total_score})")
                     else:
                         rec_ai = groq_result.get('groq_recommendation', '')
                         ai_conf = groq_result.get('groq_confidence', 0)
@@ -1221,7 +1293,7 @@ def generate_sniper_signal(symbol):
 
                 except Exception as e:
                     logger.error(f"🛑 {symbol}: خطأ AI: {e}")
-                    if total_score < max(AI_FAIL_MIN_SCORE, required_score):
+                    if not _ai_unavailable_ok(symbol, direction, current_price, total_score, required_score, score_details):
                         return None
         else:
             logger.info(f"🛑 {symbol}: نقاط {total_score} < {ai_call_threshold} - لا استدعاء AI")
