@@ -1482,6 +1482,22 @@ def get_today_net_income(max_age=45):
         if _income_cache['value'] is not None and time.time() - _income_cache['ts'] < max_age:
             return _income_cache['value']
 
+        # 🔥 v6.2: حد الخسارة اليومية لصفقات البوت فقط (من trade_memory) - لا يحسب صفقاتك اليدوية
+        if _cfg_val('BOT_ONLY_DAILY_LOSS', True):
+            try:
+                import trade_memory as _tm
+                _start_iso = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                _tot = 0.0
+                for _t in (_tm.load_memory().get("trades", []) or []):
+                    _when = _t.get("closed_at") or _t.get("entry_time") or ""
+                    if _when >= _start_iso:
+                        _tot += float(_t.get("pnl", 0) or 0)
+                _income_cache['ts'] = time.time()
+                _income_cache['value'] = round(_tot, 4)
+                return _income_cache['value']
+            except Exception as _e:
+                logger.warning(f"⚠️ تعذر حساب خسارة البوت من الذاكرة، استخدام Binance: {_e}")
+
         client_obj = get_client()
         if not client_obj:
             return None
@@ -1503,10 +1519,32 @@ def get_today_net_income(max_age=45):
         return None
 
 
+def _release_daily_pause_if_ok():
+    """🔥 v6.2: إيقاف 'حد الخسارة اليومية' القديم يُرفع فوراً إن كانت خسارة البوت الآن أقل من الحد الحالي."""
+    global _pause_until, _pause_reason
+    try:
+        if _pause_reason != "حد الخسارة اليومية" or _pause_until <= time.time():
+            return
+        today = get_today_net_income()
+        if today is None:
+            return
+        limit = float(_cfg_val('DAILY_MAX_LOSS_USDT', 0) or 0)
+        loss = abs(today) if today < 0 else 0.0
+        if limit > 0 and loss < limit:
+            with _risk_lock:
+                _pause_until = 0
+                _pause_reason = ""
+            _save_risk_state()
+            logger.info(f"✅ رُفع إيقاف الخسارة اليومية: خسارة البوت {loss:.2f}$ < الحد {limit:.2f}$")
+    except Exception as e:
+        logger.debug(f"_release_daily_pause_if_ok: {e}")
+
+
 def is_trading_paused():
     global _pause_until
 
     try:
+        _release_daily_pause_if_ok()
         if _pause_until == 0:
             return False, 0
 
@@ -1690,6 +1728,49 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
         return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
 
 
+
+# ==================== 🔥 v6.2: رافعة آمنة لكل عملة (خطأ -4028) ====================
+# بعض العملات لا تقبل الرافعة المطلوبة (مثل 15x). بدل فشل الصفقة:
+#   LEVERAGE_FALLBACK_MODE = "max"  → استخدم أعلى رافعة تقبلها العملة (الهامش يبقى كما هو)
+#   LEVERAGE_FALLBACK_MODE = "skip" → تجاهل الصفقة (لا تفتح)
+_LEV_CAP = {}  # symbol -> أعلى رافعة مقبولة
+
+
+def _apply_leverage(client_obj, symbol, leverage):
+    """يضبط الرافعة ويرجع الرافعة الفعلية، أو None إن تعذّر/منع الوضع skip."""
+    wanted = int(leverage)
+    lev = min(wanted, _LEV_CAP.get(symbol, wanted))
+    mode = str(globals().get('LEVERAGE_FALLBACK_MODE', 'max')).lower()
+    if lev < 1:
+        return None   # عملة سبق تخطّيها (وضع skip)
+    for _ in range(5):
+        try:
+            client_obj.futures_change_leverage(symbol=symbol, leverage=lev)
+            if lev != wanted:
+                logger.warning(f"⚠️ {symbol}: الرافعة {wanted}x غير مقبولة - استخدام {lev}x (أعلى مسموح)")
+            return lev
+        except Exception as e:
+            code = getattr(e, 'code', None)
+            if code != -4028 and 'not valid' not in str(e):
+                raise
+            if mode == 'skip':
+                _LEV_CAP[symbol] = 0
+                logger.warning(f"⏭️ {symbol}: الرافعة {lev}x غير مقبولة - تخطّي (LEVERAGE_FALLBACK_MODE=skip)")
+                return None
+            mx = None
+            try:
+                br = client_obj.futures_leverage_bracket(symbol=symbol)
+                mx = int(br[0]['brackets'][0]['initialLeverage'])
+            except Exception:
+                pass
+            new = mx if (mx and mx < lev) else lev - 1
+            if new < 1:
+                return None
+            lev = new
+            _LEV_CAP[symbol] = lev
+    return None
+
+
 def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
                                         tp_levels=None, tp_ratios=None, sl_percent=None):
     try:
@@ -1709,14 +1790,17 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             logger.error(f"لا يمكن الحصول على سعر {symbol}")
             return None
 
-        notional = float(amount_usdt) * float(leverage)
+        # 🔥 v6.2: اضبط الرافعة أولاً (قد تُخفَّض لعملة لا تقبل 15x) ثم احسب الكمية
+        eff_leverage = _apply_leverage(client_obj, symbol, leverage)
+        if not eff_leverage:
+            return None
+
+        notional = float(amount_usdt) * float(eff_leverage)
         total_qty = _round_quantity(symbol, notional / price)
 
         if total_qty <= 0:
             logger.error(f"كمية غير صالحة: {total_qty}")
             return None
-
-        client_obj.futures_change_leverage(symbol=symbol, leverage=int(leverage))
 
         logger.info(f"🚀 فتح صفقة: {symbol} {side} {total_qty}")
 
