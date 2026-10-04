@@ -2,25 +2,17 @@
 """
 pattern_guard.py — بوابة الأنماط المُتعلَّمة + تخنيق استدعاءات AI
 =================================================================
-يعالج ثلاث مشاكل مؤكدة بالأرقام من trade_memory (96 صفقة):
+v6.5: إصلاح سباق الكتابة — adaptive_rules (ملف كلود) يستبدل learned_rules
+كاملاً بعد كل إغلاق صفقة، فيمحو مفاتيح البوابة. الآن:
+  - القواعد تُخزَّن في الذاكرة (_RULES_CACHE) + مفتاح منفصل "guard_rules" في الملف
+  - القراءات وقت التشغيل لا تعتمد على learned_rules أبداً
 
-1) تكرار الصفقات الخاسرة:
-   - حظر الساعات الخاسرة (الحد الأدنى 3 صفقات فقط — النظام القديم كان صارماً جداً
-     فلم يحظر شيئاً رغم أن الساعة 17: 0/5 و -10.54$)
-   - حظر "بصمات" الأنماط الخاسرة: (اتجاه|جلسة|فئة RSI|فئة حجم)
-     مثال مؤكد من بياناتك: BUY|أمريكا|RSIعالٍ|vol متوسط = 0/5  (-8.15$)
-   - عقوبة اتجاه متدرجة حسب Profit Factor (النظام القديم لم يفعّل أبداً)
-
-2) الدخول بدون AI (أكبر ثغرة: -26.26$ = 56% من الخسائر):
-   - لا دخول إطلاقاً بدون قرار AI ناجح (الفشل أو بلوغ السقف = صفقة ظل فقط)
-
-3) هدر استدعاءات AI:
-   - استدعاء AI فقط عند pre-score >= 60
-   - كاش 30 دقيقة لكل (عملة+اتجاه)، سقف 12 استدعاء/ساعة
-
-ملاحظة: كل القواعد تُبنى وتُحدَّث من trade_memory.json نفسه —
-لا شيء ثابت سوى بذور أولية مأخوذة من تحليل 96 صفقة (تُلغى تلقائياً
-حين تتراكم بيانات أحدث).
+الحمايات:
+  1) ساعات محظورة (3+ صفقات، نجاح ≤35%، خسارة < -2$)
+  2) بصمات (اتجاه|جلسة|RSI|حجم): حمراء تُمنع، خضراء تُشجَّع — مدرَّبة من كل التاريخ
+     وتُحدَّث تلقائياً مع كل صفقة جديدة
+  3) لا دخول بدون AI ناجح (شبكة أمان التنفيذ)
+  4) كاش AI 30-45 دقيقة + سقف استدعاءات/ساعة
 """
 
 import json
@@ -34,32 +26,30 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 # ═══════════════════════ الإعدادات ═══════════════════════
-# (عدّلها هنا أو مرّرها عبر البيئة — تطابق config.py)
-BASE_MIN_SCORE         = 65     # MIN_SCORE_REQUIRED الفعلي
-AI_CALL_MIN_PRE_SCORE  = 0      # 0 مع ملفات كلود v6+ — بوابة الـ60 موجودة أصلاً داخل bot_strategies
+BASE_MIN_SCORE         = 65
+AI_CALL_MIN_PRE_SCORE  = 0      # 0 مع ملفات كلود v6+ — بوابة الـ60 موجودة داخل bot_strategies
                                 # على total_score الحقيقي، بينما الإشارة الواصلة للغلاف تحمل 'confidence'
-                                # (45-85 وليست total_score) — تفعيل العتبة هنا يسبب منعاً زائداً للإشارات الجيدة
-AI_CALL_HOURLY_CAP     = 12
-AI_CACHE_TTL_SEC       = 30 * 60
-WARNING_PENALTY        = -4     # تحذير AI يخصم 4 نقاط (كان +2!)
-REQUIRE_AI_FOR_ENTRY   = True   # لا دخول بدون AI ناجح إطلاقاً
-LOG_ONLY               = True   # ⚠️ ابدأ True (تسجيل فقط) → بعد 2-3 أيام False
+AI_CALL_HOURLY_CAP     = 25
+AI_CACHE_TTL_SEC       = 45 * 60
+WARNING_PENALTY        = -4
+REQUIRE_AI_FOR_ENTRY   = True
+LOG_ONLY               = True   # ⚠️ ابدأ True (تسجيل فقط) → بعد يومين False
 
-HOUR_MIN_TRADES        = 3      # كان ضمنياً أعلى بكثير → لم يحظر شيئاً
+HOUR_MIN_TRADES        = 3
 HOUR_BLOCK_WINRATE     = 0.35
 HOUR_BLOCK_PNL         = -2.0
 
 PATTERN_MIN_TRADES     = 3
-PATTERN_BLOCK_PF       = 0.60   # بصمة بهذا PF أو أقل → رفض
-PATTERN_BLOCK_PNL      = -1.5   # وشرط أن يكون مجموع خسارتها أسوأ من هذا
-PATTERN_GREEN_PF       = 1.50   # بصمة بهذا PF أو أكثر → تسهيل الدخول
-GREEN_SCORE_RELAX      = 5      # الأنماط الخضراء تدخل عند 60 بدل 65
+PATTERN_BLOCK_PF       = 0.60
+PATTERN_BLOCK_PNL      = -1.5
+PATTERN_GREEN_PF       = 1.50
+GREEN_SCORE_RELAX      = 5
 RED_SCORE_BLOCK        = True
 
 DIRECTION_MIN_TRADES   = 15
 DIRECTION_MAX_PENALTY  = 10
 
-CHOPPY_SPIKE_VOL       = 2.5    # سوق متذبذب + حجم انفجاري → تشديد
+CHOPPY_SPIKE_VOL       = 2.5
 CHOPPY_EXTRA_SCORE     = 5
 
 # بذور من تدريب 96 صفقة (2026-09-17 → 2026-10-03) — مُستخرجة آلياً من condition_stats
@@ -91,6 +81,10 @@ STATE_FILE = DATA_DIR / "bot_state.json"
 CACHE_FILE = DATA_DIR / "ai_cache.json"
 
 # ═══════════════════════ أدوات ملفات ═══════════════════════
+# نسخة الذاكرة من القواعد — تحمي من مسح adaptive_rules لمفاتيحنا في الملف
+_RULES_CACHE = {"rules": None, "ts": 0.0}
+_CACHE_TTL = 300  # 5 دقائق
+
 
 def _load(path, default):
     try:
@@ -117,6 +111,31 @@ def configure(data_dir=None):
             DATA_DIR / "bot_state.json",
             DATA_DIR / "ai_cache.json",
         )
+
+
+def _load_rules():
+    """قراءة القواعد: الذاكرة أولاً، ثم guard_rules (المفتاح المنفصل)، ثم learned_rules."""
+    now = time.time()
+    if _RULES_CACHE["rules"] is not None and now - _RULES_CACHE["ts"] < _CACHE_TTL:
+        return _RULES_CACHE["rules"]
+    state = _load(STATE_FILE, {})
+    rules = state.get("guard_rules") or state.get("learned_rules", {}) or {}
+    _RULES_CACHE["rules"] = rules
+    _RULES_CACHE["ts"] = now
+    return rules
+
+
+def _persist_rules(state, rules):
+    """حفظ القواعد: المفتاح المنفصل guard_rules (لا يمسه adaptive) + نسخة في learned_rules للعرض."""
+    state["guard_rules"] = rules
+    lr = state.setdefault("learned_rules", {})
+    for k in ("blocked_hours", "pattern_rules", "direction_penalty",
+              "pattern_guard_version", "updated"):
+        if k in rules:
+            lr[k] = rules[k]
+    _save(STATE_FILE, state)
+    _RULES_CACHE["rules"] = rules
+    _RULES_CACHE["ts"] = time.time()
 
 # ═══════════════════════ البصمات ═══════════════════════
 
@@ -147,15 +166,10 @@ def vol_band(volume_ratio: float) -> str:
 def signature(direction: str, hour: int, rsi_points: int, volume_ratio: float) -> str:
     return "|".join([direction, session_of(hour), rsi_band(rsi_points), vol_band(volume_ratio)])
 
-
-def _sig_key(direction, session, rsi_b, vol_b):
-    return "|".join([direction, session, rsi_b, vol_b])
-
-# ═══════════════════════ قواعد الساعات ═══════════════════════
+# ═══════════════════════ بناء القواعد من التاريخ ═══════════════════════
 
 def get_blocked_hours() -> set:
-    state = _load(STATE_FILE, {})
-    rules = state.get("learned_rules", {})
+    rules = _load_rules()
     hours = rules.get("blocked_hours") or []
     return {int(h) for h in hours}
 
@@ -164,12 +178,12 @@ def rebuild_rules():
     """
     إعادة بناء القواعد كلها من trade_memory.json:
     blocked_hours + pattern_rules + direction_penalties.
-    تُستدعى في جلسة التعلم (smart_scheduler) بعد adaptive_rules.update_rules()
+    تُستدعى عند كل إغلاق صفقة وبعد جلسة التعلم.
     """
     mem = _load(MEM_FILE, {})
     trades = mem.get("trades", [])
 
-    # ── الساعات: الحد الأدنى 3 صفقات، نجاح ≤35%، خسارة < -2$ ──
+    # ── الساعات ──
     hs = defaultdict(lambda: {"n": 0, "w": 0, "pnl": 0.0})
     for t in trades:
         h = t.get("hour")
@@ -182,11 +196,10 @@ def rebuild_rules():
                if d["n"] >= HOUR_MIN_TRADES
                and d["w"] / d["n"] <= HOUR_BLOCK_WINRATE
                and d["pnl"] < HOUR_BLOCK_PNL}
-    if len(trades) < 30:  # بيانات قليلة → أبقِ البذور المؤكدة
+    if len(trades) < 30:
         blocked |= SEED_BLOCKED_HOURS
 
     # ── البصمات: تدريب مباشر من كل الصفقات التاريخية ──
-    # (كان يقرأ condition_stats فقط — وهو فارغ تاريخياً، فلم يتعلم شيئاً من الماضي)
     sig_stats = defaultdict(lambda: {"n": 0, "w": 0, "gw": 0.0, "gl": 0.0})
     for t in trades:
         sd = t.get("score_details", {}) or {}
@@ -200,7 +213,6 @@ def rebuild_rules():
         elif p < 0:
             sig_stats[sig]["gl"] += abs(p)
 
-    # كتابة condition_stats المدربة إلى الذاكرة (تعبئة الحقل الفارغ + أرشفة)
     trained_cond = {}
     greens, reds = [], []
     for sig, d in sig_stats.items():
@@ -217,12 +229,11 @@ def rebuild_rules():
         mem["condition_stats"] = trained_cond
         _save(MEM_FILE, mem)
 
-    # دمج البذور المؤكدة دائماً (أولويات مثبتة على 96 صفقة) مع المدربة —
-    # حتى لا تضيع التغطية عندما يظهر توقيع بلا عينات تاريخية كافية
+    # دمج البذور المؤكدة دائماً (أولويات مثبتة على 96+ صفقة)
     greens += ["|".join(s) for s in SEED_GREEN_PATTERNS]
     reds   += ["|".join(s) for s in SEED_RED_PATTERNS]
 
-    # ── عقوبة الاتجاه: متدرجة حسب PF (تتطلب 15+ صفقة) ──
+    # ── عقوبة الاتجاه ──
     dirs = defaultdict(lambda: {"n": 0, "gw": 0.0, "gl": 0.0})
     for t in trades:
         d = t.get("direction")
@@ -242,16 +253,17 @@ def rebuild_rules():
         if pf < 1.0:
             dir_pen[d] = min(DIRECTION_MAX_PENALTY, round((1.0 - pf) * 10))
         elif pf > 1.5:
-            dir_pen[d] = -3  # راحة طفيفة للاتجاه القوي
+            dir_pen[d] = -3
 
     state = _load(STATE_FILE, {})
-    rules = state.setdefault("learned_rules", {})
-    rules["blocked_hours"] = sorted(blocked)
-    rules["pattern_rules"] = {"green": sorted(set(greens)), "red": sorted(set(reds))}
-    rules["direction_penalty"] = dir_pen
-    rules["pattern_guard_version"] = 2
-    rules["updated"] = datetime.now().isoformat()
-    _save(STATE_FILE, state)
+    rules = {
+        "blocked_hours": sorted(blocked),
+        "pattern_rules": {"green": sorted(set(greens)), "red": sorted(set(reds))},
+        "direction_penalty": dir_pen,
+        "pattern_guard_version": 2,
+        "updated": datetime.now().isoformat(),
+    }
+    _persist_rules(state, rules)
     logger.info(f"🛡️ pattern_guard: ساعات محظورة={sorted(blocked)} "
                 f"أنماط خضراء={len(set(greens))} حمراء={len(set(reds))} عقوبات={dir_pen}")
     return rules
@@ -260,13 +272,12 @@ def rebuild_rules():
 
 def _pattern_verdict(direction, hour, rsi_points, volume_ratio):
     sig = signature(direction, hour, rsi_points, volume_ratio)
-    state = _load(STATE_FILE, {})
-    pr = state.get("learned_rules", {}).get("pattern_rules", {})
+    pr = _load_rules().get("pattern_rules", {})
     if sig in (pr.get("red") or []):
         return "red", sig
     if sig in (pr.get("green") or []):
         return "green", sig
-    # تحقق إحصائي مباشر من الذاكرة حتى لو لم تُبنَ القواعد بعد
+    # تحقق إحصائي مباشر من الذاكرة (لا يعتمد على ملف الحالة)
     cond = _load(MEM_FILE, {}).get("condition_stats", {})
     d = cond.get(sig)
     if d and d.get("n", 0) >= PATTERN_MIN_TRADES:
@@ -279,10 +290,8 @@ def _pattern_verdict(direction, hour, rsi_points, volume_ratio):
 
 
 def required_score(direction, hour, pattern_verdict) -> int:
-    base = BASE_MIN_SCORE
-    state = _load(STATE_FILE, {})
-    rules = state.get("learned_rules", {})
-    score = base
+    rules = _load_rules()
+    score = BASE_MIN_SCORE
     score += int(rules.get("direction_penalty", {}).get(direction, 0))
     if pattern_verdict == "green":
         score = max(55, score - GREEN_SCORE_RELAX)
@@ -292,25 +301,18 @@ def required_score(direction, hour, pattern_verdict) -> int:
 
 def check_gates(symbol, direction, hour, rsi_points, volume_ratio,
                 pre_ai_score, market_regime=None) -> dict:
-    """
-    تُستدعى في الماسح قبل استدعاء AI.
-    ترجع {allow, reasons, required_score, ai_required}
-    """
     reasons = []
     allow = True
 
-    # بوابة 1: الساعة المحظورة
     if hour in get_blocked_hours():
         allow = False
-        reasons.append(f"ساعة {hour} محظورة (أداء تاريخي سيئ)")
+        reasons.append(f"ساعة {hour} محظورة")
 
-    # بوابة 2: البصمة الخاسرة
     verdict, sig = _pattern_verdict(direction, hour, rsi_points, volume_ratio)
     if verdict == "red":
         allow = False
         reasons.append(f"نمط خاسر متكرر [{sig}]")
 
-    # بوابة 3: عتبة استدعاء AI
     ai_required = pre_ai_score >= AI_CALL_MIN_PRE_SCORE
     if not ai_required:
         allow = False
@@ -318,21 +320,19 @@ def check_gates(symbol, direction, hour, rsi_points, volume_ratio,
 
     req = required_score(direction, hour, verdict)
 
-    # تشديد في السوق المتذبذب مع حجم انفجاري (نمط قمة/قاع منهك)
     if market_regime == "متذبذب" and volume_ratio >= CHOPPY_SPIKE_VOL and verdict != "green":
         req += CHOPPY_EXTRA_SCORE
-        reasons.append("سوق متذبذب + حجم انفجاري → تشديد")
+        reasons.append("سوق متذبذب + حجم انفجاري")
 
     if not allow and LOG_ONLY:
         logger.info(f"🛡️ [SHADOW] {symbol}: رفض بوابات ({'; '.join(reasons)})")
-        # في وضع التسجيل: نسمح للمسح أن يكمل لكن نعلّم أنها ستُرفض
-    return {"allow": allow or LOG_ONLY,          # LOG_ONLY=True → allow لكن مسجّلة
-            "will_block": not allow,             # الحقيقة — تُستخدم عند LOG_ONLY=False
+    return {"allow": allow or LOG_ONLY,
+            "will_block": not allow,
             "reasons": reasons,
             "required_score": req,
             "pattern": verdict,
             "signature": sig,
-            "ai_required": True}                 # AI مطلوب دائماً للدخول
+            "ai_required": True}
 
 # ═══════════════════════ كاش + سقف استدعاءات AI ═══════════════════════
 
@@ -348,16 +348,14 @@ def get_cached_ai(symbol, direction):
 def cache_ai(symbol, direction, result):
     cache = _load(CACHE_FILE, {})
     key = f"{symbol}:{direction}"
-    # تنظيف المنتهي
     now = time.time()
     cache = {k: v for k, v in cache.items() if now - v.get("ts", 0) < AI_CACHE_TTL_SEC}
     cache[key] = {"ts": now, "result": result}
-    # عدّاد الساعة
-    hour_key = datetime.now().strftime("%Y-%m-%dT%H")
     cache.setdefault("_calls", {})
     cache["_calls"] = {k: v for k, v in cache["_calls"].items()
-                       if k == hour_key or now - v.get("ts", 0) < 3600}
-    cache["_calls"][hour_key] = {"ts": now, "n": cache["_calls"].get(hour_key, {}).get("n", 0) + 1}
+                       if k == datetime.now().strftime("%Y-%m-%dT%H") or now - v.get("ts", 0) < 3600}
+    hk = datetime.now().strftime("%Y-%m-%dT%H")
+    cache["_calls"][hk] = {"ts": now, "n": cache["_calls"].get(hk, {}).get("n", 0) + 1}
     _save(CACHE_FILE, cache)
 
 
@@ -369,16 +367,11 @@ def ai_call_available() -> bool:
 
 
 def ai_unavailable_action() -> str:
-    """ما يحدث عند فشل AI أو بلوغ السقف. البيانات تقول: لا دخول إطلاقاً."""
     return "skip" if REQUIRE_AI_FOR_ENTRY else "fallback_old"
 
 # ═══════════════════════ نقاط توصية AI ═══════════════════════
 
 def resolve_groq_points(recommendation: str, confidence: float, trusted: bool):
-    """
-    تأكيد → موجب كما في النظام القديم (مع فيتو عند رفض قوي).
-    تحذير → سالب (النظام القديم كان يعطي +2!). تحذير قوي من نموذج موثوق → فيتو.
-    """
     rec = (recommendation or "").strip()
     conf = confidence or 0
     if rec == "رفض" and (trusted or conf >= 60):
@@ -399,10 +392,10 @@ def resolve_groq_points(recommendation: str, confidence: float, trusted: bool):
 
 def record_trade(trade: dict):
     """
-    تُستدعى بعد تسجيل الصفقة في trade_memory (أي بعد سطر '📝 تسجيل:').
+    تُستدعى بعد تسجيل الصفقة في trade_memory.
     تحدّث condition_stats (البصمات) + تعيد بناء القواعد.
     """
-    sd = trade.get("score_details", {})
+    sd = trade.get("score_details", {}) or {}
     sig = signature(
         trade.get("direction", "?"),
         trade.get("hour", 12),
