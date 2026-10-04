@@ -15,6 +15,10 @@
 # 📅 التاريخ: 2026-09-26
 # ==================================================
 
+# 🔥 v6.4: بوابة الأنماط المُتعلَّمة — يجب أن تُستورد قبل أي شيء لتلتف على الدوال أولاً
+import guard_bootstrap
+guard_bootstrap.apply_patches()
+
 import logging
 import threading
 import time
