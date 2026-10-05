@@ -9,6 +9,7 @@ main_enhanced.py - النظام الرئيسي المحسن v5.7
     - تقارير أسبوعية إضافية
     - 🔥 v5.7: إصلاح التعلم (adaptive_rules يؤثر فعلياً) + تبريد صحيح بنتيجة حقيقية
     - 🔥 فحص أداء يومي تلقائي مع حكم آلي على Telegram (performance_check)
+    - 🔥 دالة main() رسمية (نقطة دخول run_bot.py) — كان __main__ فقط ففشل الاستيراد
 """
 
 import guard_bootstrap; guard_bootstrap.apply_patches()
@@ -750,7 +751,9 @@ def supervisor_loop():
         logger.error(f"خطأ في المراقب الرئيسي: {e}")
 
 
-if __name__ == "__main__":
+def main():
+    """🔥 نقطة الدخول الرسمية — يستدعيها run_bot.py"""
+    global main_system
     main_system = MainSystem()
 
     try:
@@ -759,3 +762,7 @@ if __name__ == "__main__":
         logger.error(f"❌ خطأ في بدء البوت: {e}")
 
     main_system.run()
+
+
+if __name__ == "__main__":
+    main()
