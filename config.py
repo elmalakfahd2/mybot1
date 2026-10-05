@@ -61,10 +61,11 @@ ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== SambaNova (مفعّل) ====================
-# يحتاج متغير SAMBANOVA_API_KEY في Railway Variables
+# ==================== SambaNova (مفعّل — يحتاج SAMBANOVA_API_KEY في Railway Variables) ====================
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
-ENABLE_SAMBANOVA_ANALYSIS = _get_bool("ENABLE_SAMBANOVA_ANALYSIS", default=True)
+# 🔥 v5.8: معطل نهائياً — الحساب بلا رصيد (402 PAYMENT_METHOD_REQUIRED).
+# لتفعيله لاحقاً: أضف رصيداً في cloud.sambanova.ai ثم غيّر default إلى True
+ENABLE_SAMBANOVA_ANALYSIS = _get_bool("ENABLE_SAMBANOVA_ANALYSIS", default=False)
 SAMBANOVA_MODEL = _get_env("SAMBANOVA_MODEL", default="Meta-Llama-3.3-70B-Instruct")
 SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 

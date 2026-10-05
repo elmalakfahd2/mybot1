@@ -270,7 +270,7 @@ class MainSystem:
         self.daily_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0})
 
         logger.info("=" * 60)
-        logger.info("🚀 [MAIN] بدء main_enhanced v5.7...")
+        logger.info("🚀 [MAIN] بدء main_enhanced v5.8 (موحّد)...")
         logger.info("=" * 60)
 
     # ==================== الإقلاع (بدون حلقة طويلة) ====================
@@ -566,6 +566,26 @@ class MainSystem:
                 self.last_signal_time = time.time()
                 self.signals_sent += 1
                 self._update_daily_stats(symbol, direction, 'OPEN', 0)
+
+                # 🔥 تسجيل في الذاكرة — بصمات pattern_guard تتعلم منه عند الإغلاق
+                if MEMORY_AVAILABLE:
+                    try:
+                        qty = amount / signal['entry_price'] if signal.get('entry_price') else 0
+                        memory.record_trade(
+                            symbol=symbol, direction=direction,
+                            entry_price=signal.get('entry_price', 0),
+                            exit_price=0, quantity=qty, pnl=None,
+                            confidence=signal.get('confidence', 0),
+                            timeframe_alignment=signal.get('timeframe_alignment', 0),
+                            volume_ratio=signal.get('analysis', {}).get('volume_analysis', {}).get('volume_5m_ratio', 1.0),
+                            groq_recommendation=signal.get('groq_recommendation'),
+                            groq_confidence=signal.get('groq_confidence'),
+                            score_details=signal.get('score_details', {}),
+                            entry_time_iso=datetime.now().isoformat()
+                        )
+                    except Exception as e:
+                        logger.debug(f"تسجيل الصفقة: {e}")
+
                 # سجّل الصفقة كصفقة بوت (لحماية TP/SL وفصلها عن الصفقات اليدوية)
                 try:
                     bot_enhanced.add_open_position(result)
@@ -601,6 +621,13 @@ class MainSystem:
             if not positions:
                 return
 
+            # 🔥 صفقات البوت فقط — الصفقات اليدوية (كـ SANDUSDT) مسؤوليتك أنت
+            bot_keys = set()
+            try:
+                bot_keys = {f"{s.get('symbol')}_{s.get('positionSide')}" for s in bot_enhanced.load_state()}
+            except Exception:
+                pass
+
             logger.info(f"📊 [MONITOR] مراقبة {len(positions)} صفقة...")
 
             for pos in positions:
@@ -612,6 +639,10 @@ class MainSystem:
                     amount = abs(float(pos.get('positionAmt', 0)))
 
                     if not symbol or amount == 0:
+                        continue
+
+                    # 🔥 تخطي الصفقات اليدوية — لا فحص TP/SL ولا trailing لها
+                    if bot_keys and f"{symbol}_{position_side}" not in bot_keys:
                         continue
 
                     # get_open_positions ترجع LONG/SHORT
@@ -723,6 +754,14 @@ class MainSystem:
             logger.info("🔧 [START] بدء تشغيل الخيوط...")
             logger.info("=" * 60)
 
+            # 🔥 خادم فحص الصحة أولاً — إلزامي لنجاح Railway healthcheck (منفذ 8080)
+            try:
+                import health_server
+                health_server.run_in_background()
+                logger.info("✅ [START] Health Check Server")
+            except Exception as e:
+                logger.warning(f"⚠️ [START] health_server: {e}")
+
             threads = [
                 ("SniperScanner", self.sniper_scanner_loop),
                 ("Monitor", self.monitor_loop),
@@ -760,7 +799,8 @@ def supervisor_loop():
     try:
         logger.info("🛡️ [SUPERVISOR] بدء المراقبة")
         tracked = {"Monitor", "SniperScanner", "Scheduler",
-                   "PerformanceTracker", "StallChecker", "PerformanceCheck"}
+                   "PerformanceTracker", "StallChecker", "PerformanceCheck",
+                   "HealthServer"}
 
         def _restart(name):
             global main_system
@@ -775,6 +815,12 @@ def supervisor_loop():
             }
             if name in mapping:
                 threading.Thread(target=mapping[name], daemon=True, name=name).start()
+            elif name == "HealthServer":
+                try:
+                    import health_server
+                    health_server.run_in_background()
+                except Exception:
+                    pass
             elif name == "PerformanceCheck":
                 try:
                     import performance_check
