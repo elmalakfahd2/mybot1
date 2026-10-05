@@ -1116,6 +1116,15 @@ def cleanup_orphan_algo_orders():
         return 0
 
 
+def cleanup_orphan_orders():
+    """🔥 اسم بديل يستخدمه main_enhanced — يرجع عدد الأوامر المحذوفة"""
+    try:
+        return int(cleanup_orphan_algo_orders() or 0)
+    except Exception as e:
+        logger.error(f"خطأ في cleanup_orphan_orders: {e}")
+        return 0
+
+
 # ==================== Trailing SL ====================
 
 _trailing_sl_positions = {}

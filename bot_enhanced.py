@@ -567,7 +567,7 @@ async def export_command(update: Update, context: CallbackContext):
         try:
             extra["risk_state"] = {
                 "consecutive_losses": core.get_consecutive_losses(),
-                "paused": core.is_trading_paused(),
+                "paused": (lambda r: bool(r[0]) if isinstance(r, (tuple, list)) else bool(r))(core.is_trading_paused()),
                 "pause_reason": core.get_pause_reason(),
                 "risk_multiplier": core.get_risk_multiplier(),
             }

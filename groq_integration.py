@@ -151,29 +151,51 @@ def _try_init_groq():
 def _try_init_sambanova():
     global sambanova_available
 
-    if not SAMBANOVA_API_KEY or not ENABLE_SAMBANOVA_ANALYSIS:
+    if not ENABLE_SAMBANOVA_ANALYSIS:
+        logger.warning("⚠️ SambaNova: معطل (ENABLE_SAMBANOVA_ANALYSIS=false)")
+        return False
+    if not SAMBANOVA_API_KEY:
+        logger.warning("⚠️ SambaNova: متغير SAMBANOVA_API_KEY غير موجود في Variables")
         return False
 
-    try:
-        url = f"{SAMBANOVA_API_BASE_URL}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {SAMBANOVA_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": SAMBANOVA_MODEL,
-            "messages": [{"role": "user", "content": "test"}],
-            "max_tokens": 5
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
+    url = f"{SAMBANOVA_API_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {SAMBANOVA_API_KEY.strip()}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": SAMBANOVA_MODEL,
+        "messages": [{"role": "user", "content": "test"}],
+        "max_tokens": 5
+    }
 
-        if response.status_code == 200:
-            sambanova_available = True
-            logger.info(f"✅ تهيئة SambaNova: {SAMBANOVA_MODEL}")
-            return True
-        return False
-    except Exception as e:
-        return False
+    for attempt in (1, 2):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            code = response.status_code
+
+            if code == 200:
+                sambanova_available = True
+                logger.info(f"✅ تهيئة SambaNova: {SAMBANOVA_MODEL}")
+                return True
+            if code == 429:
+                # المفتاح سليم لكن الحصة مؤقتاً ممتلئة → نفعّله، و _call_sambanova يتعامل مع 429
+                sambanova_available = True
+                logger.warning("⚠️ SambaNova: 429 (حد مؤقت) - تم التفعيل والمحاولة لاحقاً")
+                return True
+            if code in (401, 403):
+                logger.error(f"❌ SambaNova: المفتاح مرفوض ({code}) - تحقق من SAMBANOVA_API_KEY")
+                return False
+            if code == 404 or code == 400:
+                logger.error(f"❌ SambaNova: النموذج/الطلب غير صحيح ({code}) "
+                             f"model={SAMBANOVA_MODEL} - {response.text[:150]}")
+                return False
+            logger.warning(f"⚠️ SambaNova: HTTP {code} (محاولة {attempt}) - {response.text[:120]}")
+        except Exception as e:
+            logger.warning(f"⚠️ SambaNova: خطأ اتصال (محاولة {attempt}): {e}")
+        time.sleep(2)
+
+    return False
 
 
 # ============================================================

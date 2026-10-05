@@ -61,10 +61,11 @@ ENABLE_GROQ_ANALYSIS = _get_bool("ENABLE_GROQ_ANALYSIS", default=True)
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_API_BASE_URL = "https://api.groq.com/openai/v1"
 
-# ==================== SambaNova (معطل) ====================
+# ==================== SambaNova (مفعّل) ====================
+# يحتاج متغير SAMBANOVA_API_KEY في Railway Variables
 SAMBANOVA_API_KEY = _get_env("SAMBANOVA_API_KEY", default="")
-ENABLE_SAMBANOVA_ANALYSIS = False
-SAMBANOVA_MODEL = "Meta-Llama-3.3-70B-Instruct"
+ENABLE_SAMBANOVA_ANALYSIS = _get_bool("ENABLE_SAMBANOVA_ANALYSIS", default=True)
+SAMBANOVA_MODEL = _get_env("SAMBANOVA_MODEL", default="Meta-Llama-3.3-70B-Instruct")
 SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
 
 # ==================== HuggingFace ====================

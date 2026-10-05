@@ -10,10 +10,6 @@ main_enhanced.py - النظام الرئيسي المحسن v5.7
     - 🔥 v5.7: إصلاح التعلم (adaptive_rules يؤثر فعلياً) + تبريد صحيح بنتيجة حقيقية
     - 🔥 فحص أداء يومي تلقائي مع حكم آلي على Telegram (performance_check)
     - 🔥 دالة main() رسمية (نقطة دخول run_bot.py)
-🔧 إصلاحات v5.7.3 (توافق core_functions v4.2 الكامل):
-    - is_trading_paused تُرجع (paused, remaining) tuple — كان bool() يجعلها True دائماً
-    - cleanup_orphan_algo_orders (الاسم الصحيح) + verify_tp_sl_created + close_position_safe
-    - get_risk_multiplier() لتقليل الحجم + تسجيل الصفقة في الذاكرة عند الفتح
 🔧 إصلاحات v5.7.1 (بنية التوافق الكاملة مع bot_enhanced):
     - bot_enhanced.run_bot() (كان start_bot غير موجود)
     - دوال على مستوى الوحدة يتوقعها bot_enhanced:
@@ -175,42 +171,60 @@ _auto_trading_enabled = True
 main_system = None
 
 def _risk_status():
-    """🔥 حالة المخاطر — is_trading_paused تُرجع tuple (paused, remaining)"""
+    """🔥 حالة المخاطر — يكتشف اسم الدالة المتاح في core_functions عبر الإصدارات"""
     if not core:
         return {'paused': False, 'remaining_minutes': 0, 'consecutive_losses': 0}
-    paused, remaining = False, 0
-    fn = getattr(core, 'is_trading_paused', None)
-    if callable(fn):
-        try:
-            r = fn()
-            if isinstance(r, tuple):
-                paused, remaining = bool(r[0]), int(r[1])
-            else:
-                paused = bool(r)
-        except Exception:
-            pass
-    losses = 0
-    fn = getattr(core, 'get_consecutive_losses', None)
-    if callable(fn):
-        try:
-            losses = int(fn())
-        except Exception:
-            pass
-    return {'paused': paused, 'remaining_minutes': remaining, 'consecutive_losses': losses}
-
-
-def _cleanup_orphans():
-    """تنظيف الأوامر اليتيمة — الاسم الصحيح cleanup_orphan_algo_orders"""
-    if not core:
-        return 0
-    for name in ('cleanup_orphan_algo_orders', 'cleanup_orphan_orders'):
+    # 1) دوال مجمعة محتملة
+    for name in ('get_risk_status', 'get_risk_state', 'risk_status',
+                 'get_protection_status', 'get_risk_info'):
         fn = getattr(core, name, None)
         if callable(fn):
             try:
-                return fn()
-            except Exception as e:
-                logger.debug(f"تنظيف يتيمة ({name}): {e}")
-    return 0
+                r = fn() or {}
+                if isinstance(r, (tuple, list)):
+                    r = {'paused': bool(r[0]) if len(r) > 0 else False,
+                         'remaining_minutes': r[1] if len(r) > 1 else 0}
+                return {
+                    'paused': bool(r.get('paused', r.get('is_paused', False))),
+                    'remaining_minutes': int(r.get('remaining_minutes',
+                                                   r.get('pause_remaining', r.get('minutes', 0)))),
+                    'consecutive_losses': int(r.get('consecutive_losses', r.get('losses', 0))),
+                }
+            except Exception:
+                pass
+    # 2) تركيب يدوي من الدوال المؤكدة (is_trading_paused / get_pause_reason ...)
+    paused, remaining, losses = False, 0, 0
+    try:
+        fn = getattr(core, 'is_trading_paused', None)
+        if callable(fn):
+            res = fn()
+            # 🔥 is_trading_paused ترجع (paused, remaining_minutes) — bool(tuple) كانت دائماً True
+            if isinstance(res, (tuple, list)):
+                paused = bool(res[0]) if len(res) > 0 else False
+                if len(res) > 1:
+                    try:
+                        remaining = int(res[1])
+                    except Exception:
+                        remaining = 0
+            else:
+                paused = bool(res)
+    except Exception:
+        pass
+    for name in ('get_pause_remaining_minutes', 'get_pause_remaining',
+                 'get_pause_minutes', 'get_pause_time_remaining'):
+        fn = getattr(core, name, None)
+        if callable(fn):
+            try:
+                remaining = int(fn())
+                break
+            except Exception:
+                pass
+    try:
+        fn = getattr(core, 'get_consecutive_losses', None)
+        losses = int(fn()) if callable(fn) else 0
+    except Exception:
+        pass
+    return {'paused': paused, 'remaining_minutes': remaining, 'consecutive_losses': losses}
 
 
 def _daily_pnl():
@@ -256,9 +270,15 @@ class MainSystem:
         try:
             self.health_check()
 
+            if core:
+                try:
+                    core.sync_trade_files()
+                except Exception as e:
+                    logger.debug(f"sync_trade_files: {e}")
+
             if _cfg('ENABLE_ORPHAN_CLEANUP', True) and core:
                 try:
-                    deleted = _cleanup_orphans()
+                    deleted = core.cleanup_orphan_orders()
                     if deleted:
                         logger.info(f"🧹 [MAIN] تم حذف {deleted} أمر يتيم")
                 except Exception as e:
@@ -276,12 +296,15 @@ class MainSystem:
 
             stats = {}
             if MEMORY_AVAILABLE:
-                fn = getattr(memory, 'get_memory_stats', None)
-                if callable(fn):
+                try:
+                    stats = memory.get_memory_stats()
+                except AttributeError:
                     try:
-                        stats = fn()
-                    except Exception as e:
-                        logger.debug(f"get_memory_stats: {e}")
+                        stats = memory.get_trading_stats()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
             logger.info(f"📊 [MAIN] عدد الصفقات: {stats.get('total_trades', 0)}")
             logger.info(f"📊 [MAIN] نسبة النجاح: {stats.get('win_rate', 0)}%")
 
@@ -384,7 +407,7 @@ class MainSystem:
                 current_time = time.time()
                 if current_time - self.orphan_cleanup_last >= _cfg('ORPHAN_CLEANUP_INTERVAL', 300):
                     self.orphan_cleanup_last = current_time
-                    deleted = _cleanup_orphans()
+                    deleted = core.cleanup_orphan_orders()
                     if deleted > 0:
                         logger.info(f"🧹 [CLEANUP] تم حذف {deleted} أمر يتيم")
         except Exception as e:
@@ -493,18 +516,24 @@ class MainSystem:
             except Exception as e:
                 logger.debug(f"فحص الاتجاه: {e}")
 
-            # خفض الحجم بعد خسائر متتالية (دالة core الجاهزة)
+            # خفض الحجم بعد خسائر متتالية
             amount = _cfg('TRADE_USDT', 10)
             try:
-                mult = core.get_risk_multiplier() if hasattr(core, 'get_risk_multiplier') else 1.0
-                if mult < 1.0:
-                    amount = amount * mult
-                    logger.warning(f"⚠️ {symbol}: تقليل الحجم إلى {amount:.1f}$ (مضاعف المخاطر {mult})")
+                risk = _risk_status()
+                if risk.get('consecutive_losses', 0) >= _cfg('RISK_REDUCE_AFTER_LOSSES', 3):
+                    amount = amount * _cfg('AUTO_RISK_REDUCTION_FACTOR', 0.5)
+                    logger.warning(f"⚠️ {symbol}: تقليل الحجم إلى {amount}$ بسبب خسائر متتالية")
             except Exception:
                 pass
 
             sl_percent = _cfg('SL_PERCENT', 1.3)
             tp_percent = _cfg('TP_PERCENT', 2.5)
+            if _cfg('DYNAMIC_SL_ENABLED', True):
+                try:
+                    sl_percent = core.calculate_dynamic_sl(symbol, signal['entry_price'], direction)
+                    sl_percent = max(_cfg('SL_MIN_PERCENT', 1.0), min(_cfg('SL_MAX_PERCENT', 1.6), sl_percent))
+                except Exception:
+                    pass
 
             logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ ({amount}$)")
 
@@ -517,25 +546,6 @@ class MainSystem:
                 self.last_signal_time = time.time()
                 self.signals_sent += 1
                 self._update_daily_stats(symbol, direction, 'OPEN', 0)
-
-                # 🔥 تسجيل في الذاكرة — بصمات pattern_guard تتعلم منه
-                if MEMORY_AVAILABLE:
-                    try:
-                        qty = amount / signal['entry_price'] if signal.get('entry_price') else 0
-                        memory.record_trade(
-                            symbol=symbol, direction=direction,
-                            entry_price=signal.get('entry_price', 0),
-                            exit_price=0, quantity=qty, pnl=None,
-                            confidence=signal.get('confidence', 0),
-                            timeframe_alignment=signal.get('timeframe_alignment', 0),
-                            volume_ratio=signal.get('analysis', {}).get('volume_analysis', {}).get('volume_5m_ratio', 1.0),
-                            groq_recommendation=signal.get('groq_recommendation'),
-                            groq_confidence=signal.get('groq_confidence'),
-                            score_details=signal.get('score_details', {}),
-                            entry_time_iso=datetime.now().isoformat()
-                        )
-                    except Exception as e:
-                        logger.debug(f"تسجيل الصفقة: {e}")
             else:
                 logger.error(f"❌ {symbol}: فشل فتح الصفقة")
 
@@ -580,20 +590,23 @@ class MainSystem:
 
                     direction = "BUY" if position_side == "LONG" or float(pos.get('positionAmt', 0)) > 0 else "SELL"
 
-                    if _cfg('VERIFY_TP_SL_AFTER_CREATION', True) and \
-                            time.time() - getattr(self, '_tp_sl_fix_last', 0) > 300:
-                        self._tp_sl_fix_last = time.time()
-                        has_tp, has_sl, det = core.verify_tp_sl_created(symbol, position_side)
-                        if not has_sl:
-                            logger.warning(f"⚠️ {symbol}: لا SL! إعادة الإنشاء...")
-                            core.check_and_add_tp_sl_to_existing_positions()
+                    if _cfg('VERIFY_TP_SL_AFTER_CREATION', True):
+                        tp_orders, sl_orders = core.get_position_tp_sl(symbol)
+                        if len(tp_orders) == 0 and len(sl_orders) == 0:
+                            logger.warning(f"⚠️ {symbol}: لا TP/SL! إنشاؤهما...")
+                            sl_percent = _cfg('SL_PERCENT', 1.3)
+                            if _cfg('DYNAMIC_SL_ENABLED', True):
+                                sl_percent = core.calculate_dynamic_sl(symbol, entry_price, direction)
+                                sl_percent = max(_cfg('SL_MIN_PERCENT', 1.0), min(_cfg('SL_MAX_PERCENT', 1.6), sl_percent))
+                            core.place_market_order_with_tp_sl(symbol, direction, amount,
+                                                               _cfg('LEVERAGE', 15), sl_percent, _cfg('TP_PERCENT', 2.5))
 
                     if _cfg('TRAILING_SL_ENABLED', True):
                         core.update_trailing_sl(symbol, direction, entry_price, mark_price)
 
                     if pnl <= -abs(entry_price * amount) * (_cfg('SL_PERCENT', 1.3) / 100) * 1.5:
                         logger.warning(f"🛑 {symbol}: خسارة حرجة {pnl:.2f}$ - إغلاق طارئ")
-                        core.close_position_safe(symbol, position_side)
+                        core.close_position(symbol, direction, "إغلاق طارئ")
 
                 except Exception as e:
                     logger.error(f"خطأ في مراقبة {pos.get('symbol', '?')}: {e}")
