@@ -1,19 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-config.py - الإعدادات النهائية v6.4 (جاهزة للاستبدال الكامل)
-🔧 v6.4:
-    - LEVERAGE = 10 (طلب المستخدم) — خسارة SL الكاملة ≈ -2.6$
-    - MAX_SAME_DIRECTION_POSITIONS = 2 — خانتان لكل اتجاه (الفحوص هي الحماية)
-    - AI_MAX_CALLS_PER_HOUR = 25 + AI_CACHE_MINUTES = 45 — السقف القديم كان يمنع صفقات جيدة
-🔧 v6.3 (من محاكاة مسارات الأسعار على 96 صفقة موثقة):
-    - إصلاح خروج "SL الضيق يُقتل بالضوضاء": 11/11 خسارة لم تهبط أبعد من -2.4%
-      → SL أوسع (1.8-2.6%) + TP1 سريع (+1.0%) + تأمين مبكر (+0.6%)
-🔧 v6.2 (ملفات كلود):
-    - حد الخسارة اليومية 20$ لصفقات البوت فقط (لا يشمل اليدوية)
-    - تعطيل حد النسبة + رفع الإيقاف تلقائياً عندما تقل الخسارة عن الحد
-    - LEVERAGE_FALLBACK_MODE = "max" (إصلاح رفض Binance للرافعة -4028)
-🔧 v6.0/v6.1:
-    - AI إلزامي (AI_UNAVAILABLE_ALLOW_ENTRY=False) — لا دخول بدون AI ناجح
+config.py - الإعدادات النهائية v5.8 (مصححة - شبكة حقيقية)
+🔧 v5.7: إصلاح التعلم + الاستمرارية
+    - إعدادات التعلم التكيفي (ADAPTIVE_*) التي تؤثر فعلياً على القرار
+    - إيقاف متصاعد بعد الخسائر + حد خسارة يومي حقيقي + تقليل الحجم
+    - حظر العملات مؤقت بنافذة زمنية (كان دائماً)
+    - AUTO_TUNE_WEIGHTS = False (الأوزان لا تُقرأ في حساب النقاط)
+🔧 التعديلات السابقة:
+    - GROQ_MIN_SCORE_BEFORE_CALL: 55 (كان 25) - يقلل استدعاءات AI
+    - COOLDOWN_MINUTES_AFTER_LOSS: 60 (كان 30)
+    - MAX_CONSECUTIVE_LOSSES: 2 (كان 3)
 """
 
 import os
@@ -117,23 +113,21 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 10
-LEVERAGE = 10                        # 🔥 v6.4: خسارة SL الكاملة ≈ -2.6$ (حد 20$ ≈ 7-8 خسائر كاملة)
-MAX_OPEN_POSITIONS = 4
+LEVERAGE = 15
+MAX_OPEN_POSITIONS = 6               # 🔥 كان 4 - رفع تدريجي بقرار المستخدم (اختبار)
 
 # ==================== TP المتعدد ====================
-# 🔥 v6.3: "الربح السريع" — نصف الكمية يُقفل عند +1.0% فوراً بدل انتظار 2.5%
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.0, 2.0, 3.5]     # 🔥 v6.3: كان [2.5, 3.5, 5.0]
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]     # 🔥 v6.3: كان [0.4, 0.35, 0.25]
-SL_PERCENT = 1.3                          # احتياطي إذا عُطّل SL الديناميكي
-TP_PERCENT = 2.5                          # احتياطي إذا عُطّل TP المتعدد
+TP_MULTIPLE_LEVELS = [2.5, 3.5, 5.0]
+TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
+SL_PERCENT = 1.3
+TP_PERCENT = 2.5
 
 # ==================== SL ديناميكي ====================
-# 🔥 v6.3: أوسع ليتنفس من الضوضاء — 11/11 خسارة سابقة لم تهبط أبعد من -2.4%
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.5              # 🔥 v6.3: كان 2.0
-SL_MIN_PERCENT = 1.8                 # 🔥 v6.3: كان 1.0
-SL_MAX_PERCENT = 2.6                 # 🔥 v6.3: كان 1.6
+SL_ATR_MULTIPLIER = 2.0
+SL_MIN_PERCENT = 1.0
+SL_MAX_PERCENT = 1.6
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -204,17 +198,15 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # v5.7: مفعل (من دخل Binance الحقيقي)
-DAILY_MAX_LOSS_USDT = 20.0             # v6.2: توقف حتى منتصف الليل عند خسارة صافية 20$ في اليوم (للبوت فقط)
-DAILY_MAX_LOSS_PERCENT = 0             # v6.2: معطّل حتى لا يوقف البوت قبل 20$ (ضع 5.0 لإعادته)
-BOT_ONLY_DAILY_LOSS = True             # v6.2: الحساب من صفقات البوت فقط، لا يشمل صفقاتك اليدوية
+DAILY_MAX_LOSS_USDT = 7.0              # توقف حتى منتصف الليل عند خسارة صافية 7$ في اليوم
+DAILY_MAX_LOSS_PERCENT = 5.0           # أو 5% من رصيد المحفظة (أيهما أقرب)
 
 # ==================== Trailing SL ====================
-# 🔥 v6.3: تأمين أسرع للربح المتحقق
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 0.9            # 🔥 v6.3: كان 1.0
-TRAILING_SL_DISTANCE = 0.4           # 🔥 v6.3: كان 0.5
-BREAKEVEN_TRIGGER = 0.6              # 🔥 v6.3: كان 0.8 — الصفقة مؤمَّنة عند +0.6%
-BREAKEVEN_OFFSET_PERCENT = 0.1       # 🔥 v6.3: كان 0.15
+TRAILING_SL_TRIGGER = 1.0
+TRAILING_SL_DISTANCE = 0.5
+BREAKEVEN_TRIGGER = 0.8          # v5.9: كان 1.2 (صفقات رابحة كانت ترتد قبل الوصول له)
+BREAKEVEN_OFFSET_PERCENT = 0.15     # v5.9: يغطي العمولة + انزلاق بسيط
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 3
@@ -323,14 +315,16 @@ ADAPTIVE_MIN_TRADES_PER_DIRECTION = 6
 ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 صفقات ضوضاء إحصائية
 
 # ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
-AI_FAIL_MIN_SCORE = 70                  # نقاط القبول الاستثنائي عند فشل كل مزودي AI
+AI_FAIL_MIN_SCORE = 65                  # 🔥 v8.3: كان 70 - يقتل إشارات 60-69 وقت أعطال AI الجماعية
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 
 # ==================== 🔥 v5.8: من تحليل 65 صفقة موثقة ====================
 # عدد الصفقات المفتوحة بنفس الاتجاه عند الدخول مقابل النتيجة:
 #   0 → نجاح 52% | 1 → 44% | 2 → 33% | 3 → 25%
-MAX_SAME_DIRECTION_POSITIONS = 2       # 🔥 v6.4: كان 1 — خانتان لكل اتجاه (الفحوص هي الحماية لا العدد)
+MAX_SAME_DIRECTION_POSITIONS = 3     # 🔥 كان 1 - يتيح حتى 3 شراء + 3 بيع = 6
+                                     # ⚠️ بياناتك: نجاح أقل مع تعدد نفس الاتجاه (2→33% | 3→25%)
+                                     # راقب PF في تقرير performance_check اليومي
 
 
 # ==================== 🔥 v5.9: صفقات الظل (تعلّم من الإشارات المرفوضة بدون مال) ====================
@@ -342,20 +336,6 @@ SHADOW_LOOKBACK_DAYS = 14
 SHADOW_RELIEF_MIN_TRADES = 15           # أقل عدد صفقات ظل مغلقة قبل تخفيف رفع الحد
 
 
-# ==================== v6.0: تقليل استدعاءات AI + مقارنة الصفقات السابقة ====================
-AI_CALL_MIN_PRE_SCORE = 60        # لا يُستدعى AI إلا إن كانت نقاط الإشارة (قبل AI) >= هذا
-AI_CACHE_MINUTES = 45             # 🔥 v6.4: كان 30 — توفير أكثر لاستدعاءات AI
-AI_MAX_CALLS_PER_HOUR = 25        # 🔥 v6.4: كان 12 — كان ينفد في دورتي مسح ويمنع صفقات جيدة
-
-# "log" = يسجّل الحكم فقط (الافتراضي، لا يمنع صفقات) | "block" = يمنع | "off" = معطل
-# تحذير: اختبار 89 صفقة أظهر أن الشبيهة بالرابحة لم تربح أكثر. لا تفعّل block قبل evaluate_similarity.py
-SIMILARITY_FILTER_MODE = "log"
-SIMILARITY_K = 10
-SIMILARITY_MIN_HISTORY = 40
-SIMILARITY_MIN_WIN_RATE = 0.35    # وضع block: 0.5 = نفّذ ما يشبه الرابحة فقط
-
-# v6.1: عند فشل AI أو بلوغ سقف الاستدعاءات: False = لا دخول (وتُسجَّل صفقة ظل) | True = السلوك القديم (يدخل إن النقاط >= AI_FAIL_MIN_SCORE)
-AI_UNAVAILABLE_ALLOW_ENTRY = False
-
-# v6.2: عند رفض Binance للرافعة (-4028): "max" = أعلى رافعة تقبلها العملة | "skip" = تخطّي الصفقة
-LEVERAGE_FALLBACK_MODE = "max"
+# ==================== 🔥 v1.0: فحص الأداء اليومي (performance_check.py) ====================
+ENABLE_PERFORMANCE_CHECK = True
+PERFORMANCE_CHECK_HOUR = 10        # ساعة إرسال الحكم اليومي (توقيت الخادم)
