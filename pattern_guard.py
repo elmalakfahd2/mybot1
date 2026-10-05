@@ -2,10 +2,11 @@
 """
 pattern_guard.py — بوابة الأنماط المُتعلَّمة + تخنيق استدعاءات AI
 =================================================================
-v6.5: إصلاح سباق الكتابة — adaptive_rules (ملف كلود) يستبدل learned_rules
-كاملاً بعد كل إغلاق صفقة، فيمحو مفاتيح البوابة. الآن:
-  - القواعد تُخزَّن في الذاكرة (_RULES_CACHE) + مفتاح منفصل "guard_rules" في الملف
-  - القراءات وقت التشغيل لا تعتمد على learned_rules أبداً
+v6.6: 🔥 تفعيل فعلي (LOG_ONLY=False) — الأنماط الحمراء الخاسرة تُمنع والساعات
+      الخاسرة تُحظر فعلياً (كان v6.5 يراقب ويسجل فقط)
+v6.5: إصلاح سباق الكتابة — adaptive_rules يستبدل learned_rules كاملاً بعد كل
+      إغلاق صفقة فيمحو مفاتيح البوابة. الآن القواعد في الذاكرة + مفتاح منفصل
+      "guard_rules" في الملف، والقراءات وقت التشغيل لا تعتمد على learned_rules
 
 الحمايات:
   1) ساعات محظورة (3+ صفقات، نجاح ≤35%، خسارة < -2$)
@@ -33,7 +34,7 @@ AI_CALL_HOURLY_CAP     = 25
 AI_CACHE_TTL_SEC       = 45 * 60
 WARNING_PENALTY        = -4
 REQUIRE_AI_FOR_ENTRY   = True
-LOG_ONLY               = True   # ⚠️ ابدأ True (تسجيل فقط) → بعد يومين False
+LOG_ONLY               = False  # 🔥 v6.6: تفعيل فعلي (كان True مراقبة فقط — الأنماط الخاسرة تُمنع الآن)
 
 HOUR_MIN_TRADES        = 3
 HOUR_BLOCK_WINRATE     = 0.35
@@ -392,8 +393,9 @@ def resolve_groq_points(recommendation: str, confidence: float, trusted: bool):
 
 def record_trade(trade: dict):
     """
-    تُستدعى بعد تسجيل الصفقة في trade_memory.
-    تحدّث condition_stats (البصمات) + تعيد بناء القواعد.
+    تُستدعى بعد تسجيل الصفقة في trade_memory (عبر guard_bootstrap).
+    تحدّث condition_stats (البصمات) + تعيد بناء القواعد —
+    هكذا يتعلم البوت من كل صفقة خاسرة ولا يكرر نمطها.
     """
     sd = trade.get("score_details", {}) or {}
     sig = signature(

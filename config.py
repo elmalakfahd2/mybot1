@@ -276,7 +276,7 @@ AUTO_LEARN_MAX_ADJUSTMENT = 0.30
 AUTO_LEARN_BACKUP_ENABLED = True
 
 # ==================== الحماية الذاتية ====================
-AUTO_PAUSE_ON_LOSS_STREAK = 4
+AUTO_PAUSE_ON_LOSS_STREAK = 6        # 🔥 v5.8: كان 4
 AUTO_PAUSE_DURATION_MINUTES = 60
 AUTO_REDUCE_RISK_ON_LOSS = True
 AUTO_RISK_REDUCTION_FACTOR = 0.5
@@ -291,7 +291,7 @@ REPORT_INCLUDE_SUGGESTIONS = True
 LOSS_EPSILON = 0.10                     # |الصافي| أقل من هذا = تعادل (لا يُعد خسارة ولا ربحاً)
 
 # إيقاف متصاعد: (عدد الخسائر المتتالية, دقائق الإيقاف)
-PAUSE_ESCALATION = [(3, 60), (5, 240), (7, 720)]
+PAUSE_ESCALATION = [(5, 30), (7, 240), (9, 720)]  # 🔥 v5.8: لا توقف قبل 5 خسائر متتالية (كان 3) — الحارس الحقيقي هو حد الخسارة اليومية
 STREAK_RESET_HOURS = 24                 # تصفير عداد الخسائر بعد 24 ساعة بلا خسارة
 AUTO_REDUCE_RISK_ON_LOSS = True
 RISK_REDUCE_AFTER_LOSSES = 3            # بعد 3 خسائر متتالية
