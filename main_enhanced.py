@@ -137,6 +137,14 @@ except ImportError:
     logger.warning("⚠️ firebase_backup غير متاح")
     firebase_backup = None
 
+# 🔔 v5.8: وحدة الإشعارات (بدء التشغيل / فتح / إغلاق)
+try:
+    import notifier
+    logger.info("✅ notifier متاح")
+except Exception as _e:
+    logger.error(f"❌ notifier غير متاح: {_e}")
+    notifier = None
+
 try:
     import adaptive_rules
     logger.info("✅ adaptive_rules متاح")
@@ -249,6 +257,8 @@ class MainSystem:
         self.signals_sent = 0
         self.last_signal_time = time.time()
         self.last_scan_time = time.time()
+        self.last_heartbeat = time.time()   # 🔥 v5.8: نبض الماسح (للـ StallChecker)
+        self.tracker = None                 # 🔔 كاشف إغلاق الصفقات
         self.daily_report_sent = False
         self.last_daily_report_date = None
         self.last_weekly_report_date = None
@@ -449,6 +459,7 @@ class MainSystem:
 
             while self.running:
                 try:
+                    self.last_heartbeat = time.time()
                     global _auto_scan_enabled
                     if not _auto_scan_enabled:
                         time.sleep(30)
@@ -467,6 +478,7 @@ class MainSystem:
                     logger.info("🎯 [SCAN] بدء مسح القناص...")
                     signals = strategies.scan_sniper_signals() if strategies else []
                     self.last_scan_time = time.time()
+                    self.last_heartbeat = time.time()
 
                     if signals:
                         logger.info(f"🎯 {len(signals)} إشارة")
@@ -527,25 +539,40 @@ class MainSystem:
                 pass
 
             sl_percent = _cfg('SL_PERCENT', 1.3)
-            tp_percent = _cfg('TP_PERCENT', 2.5)
+            pside = "LONG" if str(direction).upper() == "BUY" else "SHORT"
             if _cfg('DYNAMIC_SL_ENABLED', True):
                 try:
-                    sl_percent = core.calculate_dynamic_sl(symbol, signal['entry_price'], direction)
-                    sl_percent = max(_cfg('SL_MIN_PERCENT', 1.0), min(_cfg('SL_MAX_PERCENT', 1.6), sl_percent))
+                    # calculate_dynamic_sl ترجع (sl_price, sl_percent)
+                    _dyn = core.calculate_dynamic_sl(symbol, float(signal['entry_price']), pside)
+                    _dyn_pct = _dyn[1] if isinstance(_dyn, (tuple, list)) else _dyn
+                    sl_percent = max(_cfg('SL_MIN_PERCENT', 1.0), min(_cfg('SL_MAX_PERCENT', 1.6), float(_dyn_pct)))
                 except Exception:
                     pass
 
-            logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ ({amount}$)")
+            leverage = _cfg('LEVERAGE', 15)
+            logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ ({amount}$ | SL {sl_percent:.2f}%)")
 
-            result = core.place_market_order_with_tp_sl(
-                symbol, direction, amount, _cfg('LEVERAGE', 15), sl_percent, tp_percent
+            # 🔥 v5.8: التوقيع الصحيح (كان يُمرَّر 6 وسائط لدالة تقبل 4 → TypeError ولا تُفتح صفقة)
+            result = core.place_market_order_with_multiple_tp(
+                symbol, direction, amount, leverage, sl_percent=sl_percent
             )
 
-            if result:
+            if result and result.get('closed_due_to_failure'):
+                logger.error(f"❌ {symbol}: أُغلقت فوراً (فشل SL)")
+                if notifier:
+                    notifier.notify_trade_opened(result, signal, amount, leverage)
+            elif result:
                 logger.info(f"✅ {symbol}: تم فتح الصفقة بنجاح")
                 self.last_signal_time = time.time()
                 self.signals_sent += 1
                 self._update_daily_stats(symbol, direction, 'OPEN', 0)
+                # سجّل الصفقة كصفقة بوت (لحماية TP/SL وفصلها عن الصفقات اليدوية)
+                try:
+                    bot_enhanced.add_open_position(result)
+                except Exception as e:
+                    logger.debug(f"add_open_position: {e}")
+                if notifier:
+                    notifier.notify_trade_opened(result, signal, amount, leverage)
             else:
                 logger.error(f"❌ {symbol}: فشل فتح الصفقة")
 
@@ -580,33 +607,37 @@ class MainSystem:
                 try:
                     symbol = pos.get('symbol')
                     position_side = pos.get('positionSide', 'BOTH')
-                    pnl = float(pos.get('unRealizedProfit', 0))
+                    pnl = float(pos.get('unrealizedProfit', pos.get('unRealizedProfit', 0)))
                     entry_price = float(pos.get('entryPrice', 0))
-                    mark_price = float(pos.get('markPrice', 0))
                     amount = abs(float(pos.get('positionAmt', 0)))
 
                     if not symbol or amount == 0:
                         continue
 
-                    direction = "BUY" if position_side == "LONG" or float(pos.get('positionAmt', 0)) > 0 else "SELL"
+                    # get_open_positions ترجع LONG/SHORT
+                    if position_side not in ("LONG", "SHORT"):
+                        position_side = "LONG" if float(pos.get('positionAmt', 0)) > 0 else "SHORT"
+                    mark_price = core.get_price(symbol) or entry_price
 
+                    # 🔥 v5.8: التحقق من TP/SL بالدوال الموجودة فعلاً (get_position_tp_sl/close_position غير موجودتين)
                     if _cfg('VERIFY_TP_SL_AFTER_CREATION', True):
-                        tp_orders, sl_orders = core.get_position_tp_sl(symbol)
-                        if len(tp_orders) == 0 and len(sl_orders) == 0:
-                            logger.warning(f"⚠️ {symbol}: لا TP/SL! إنشاؤهما...")
-                            sl_percent = _cfg('SL_PERCENT', 1.3)
-                            if _cfg('DYNAMIC_SL_ENABLED', True):
-                                sl_percent = core.calculate_dynamic_sl(symbol, entry_price, direction)
-                                sl_percent = max(_cfg('SL_MIN_PERCENT', 1.0), min(_cfg('SL_MAX_PERCENT', 1.6), sl_percent))
-                            core.place_market_order_with_tp_sl(symbol, direction, amount,
-                                                               _cfg('LEVERAGE', 15), sl_percent, _cfg('TP_PERCENT', 2.5))
+                        try:
+                            has_tp, has_sl, _details = core.verify_tp_sl_created(symbol, position_side)
+                            if not has_sl:
+                                logger.warning(f"⚠️ {symbol}: لا SL! محاولة الإصلاح...")
+                                core.check_and_add_tp_sl_to_existing_positions()
+                        except Exception as e:
+                            logger.debug(f"verify TP/SL {symbol}: {e}")
 
                     if _cfg('TRAILING_SL_ENABLED', True):
-                        core.update_trailing_sl(symbol, direction, entry_price, mark_price)
+                        try:
+                            core.update_trailing_sl(symbol, position_side, mark_price)
+                        except Exception as e:
+                            logger.debug(f"trailing {symbol}: {e}")
 
                     if pnl <= -abs(entry_price * amount) * (_cfg('SL_PERCENT', 1.3) / 100) * 1.5:
                         logger.warning(f"🛑 {symbol}: خسارة حرجة {pnl:.2f}$ - إغلاق طارئ")
-                        core.close_position(symbol, direction, "إغلاق طارئ")
+                        core.close_position_safe(symbol, position_side)
 
                 except Exception as e:
                     logger.error(f"خطأ في مراقبة {pos.get('symbol', '?')}: {e}")
@@ -618,6 +649,13 @@ class MainSystem:
         try:
             while self.running:
                 try:
+                    if notifier and core:
+                        try:
+                            if self.tracker is None:
+                                self.tracker = notifier.PositionTracker(core)
+                            self.tracker.check()      # 🔔 إشعارات الإغلاق
+                        except Exception as e:
+                            logger.error(f"خطأ في كاشف الإغلاق: {e}")
                     self.monitor_positions()
                     self.cleanup_orphan_orders()
                     time.sleep(_cfg('MONITOR_TP_SL_INTERVAL', 60))
@@ -666,7 +704,7 @@ class MainSystem:
             while self.running:
                 try:
                     current_time = time.time()
-                    if current_time - self.last_signal_time > stall_minutes * 60:
+                    if current_time - self.last_heartbeat > stall_minutes * 60:
                         logger.warning("⚠️ [STALL] لا إشارات - إعادة تشغيل...")
                         self.running = False
                         time.sleep(2)
@@ -769,6 +807,8 @@ def start_scanner_threads():
         main_system = MainSystem()
         main_system.initialize()
     main_system.start_scanner_threads()
+    if notifier:
+        notifier.notify_startup(core)   # 🔔 "بدأ البوت العمل"
 
 
 def toggle_auto_trading():

@@ -171,7 +171,7 @@ def _try_init_sambanova():
 
     for attempt in (1, 2):
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
             code = response.status_code
 
             if code == 200:
@@ -183,6 +183,10 @@ def _try_init_sambanova():
                 sambanova_available = True
                 logger.warning("⚠️ SambaNova: 429 (حد مؤقت) - تم التفعيل والمحاولة لاحقاً")
                 return True
+            if code == 402:
+                logger.error("❌ SambaNova: الرصيد 0 / مطلوب إضافة وسيلة دفع — "
+                             "https://cloud.sambanova.ai/plans/billing (سيستمر البوت بدونه)")
+                return False
             if code in (401, 403):
                 logger.error(f"❌ SambaNova: المفتاح مرفوض ({code}) - تحقق من SAMBANOVA_API_KEY")
                 return False
@@ -193,7 +197,7 @@ def _try_init_sambanova():
             logger.warning(f"⚠️ SambaNova: HTTP {code} (محاولة {attempt}) - {response.text[:120]}")
         except Exception as e:
             logger.warning(f"⚠️ SambaNova: خطأ اتصال (محاولة {attempt}): {e}")
-        time.sleep(2)
+        time.sleep(1)
 
     return False
 
