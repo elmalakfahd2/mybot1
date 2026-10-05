@@ -170,6 +170,64 @@ _auto_scan_enabled = True
 _auto_trading_enabled = True
 main_system = None
 
+def _risk_status():
+    """🔥 حالة المخاطر — يكتشف اسم الدالة المتاح في core_functions عبر الإصدارات"""
+    if not core:
+        return {'paused': False, 'remaining_minutes': 0, 'consecutive_losses': 0}
+    # 1) دوال مجمعة محتملة
+    for name in ('get_risk_status', 'get_risk_state', 'risk_status',
+                 'get_protection_status', 'get_risk_info'):
+        fn = getattr(core, name, None)
+        if callable(fn):
+            try:
+                r = fn() or {}
+                return {
+                    'paused': bool(r.get('paused', r.get('is_paused', False))),
+                    'remaining_minutes': int(r.get('remaining_minutes',
+                                                   r.get('pause_remaining', r.get('minutes', 0)))),
+                    'consecutive_losses': int(r.get('consecutive_losses', r.get('losses', 0))),
+                }
+            except Exception:
+                pass
+    # 2) تركيب يدوي من الدوال المؤكدة (is_trading_paused / get_pause_reason ...)
+    paused, remaining, losses = False, 0, 0
+    try:
+        fn = getattr(core, 'is_trading_paused', None)
+        paused = bool(fn()) if callable(fn) else False
+    except Exception:
+        pass
+    for name in ('get_pause_remaining_minutes', 'get_pause_remaining',
+                 'get_pause_minutes', 'get_pause_time_remaining'):
+        fn = getattr(core, name, None)
+        if callable(fn):
+            try:
+                remaining = int(fn())
+                break
+            except Exception:
+                pass
+    try:
+        fn = getattr(core, 'get_consecutive_losses', None)
+        losses = int(fn()) if callable(fn) else 0
+    except Exception:
+        pass
+    return {'paused': paused, 'remaining_minutes': remaining, 'consecutive_losses': losses}
+
+
+def _daily_pnl():
+    """صافي اليوم — بأسماء متعددة محتملة"""
+    if not core:
+        return {'pnl': 0.0}
+    for name in ('get_daily_pnl', 'get_accurate_daily_pnl', 'get_today_pnl'):
+        fn = getattr(core, name, None)
+        if callable(fn):
+            try:
+                r = fn() or {}
+                pnl = r.get('pnl', r.get('daily_pnl', 0))
+                return {'pnl': float(pnl)}
+            except Exception:
+                pass
+    return {'pnl': 0.0}
+
 
 class MainSystem:
     def __init__(self):
@@ -213,15 +271,14 @@ class MainSystem:
                     logger.debug(f"cleanup: {e}")
 
             if MEMORY_AVAILABLE:
-                try:
-                    memory.sync_from_firebase()
-                except AttributeError:
-                    try:
-                        memory.sync_from_binance()
-                    except Exception as e:
-                        logger.debug(f"sync: {e}")
-                except Exception as e:
-                    logger.debug(f"sync: {e}")
+                for sync_name in ('sync_from_binance', 'sync_from_firebase', 'sync_from_file'):
+                    fn = getattr(memory, sync_name, None)
+                    if callable(fn):
+                        try:
+                            fn()
+                            break
+                        except Exception as e:
+                            logger.debug(f"{sync_name}: {e}")
 
             stats = {}
             if MEMORY_AVAILABLE:
@@ -310,7 +367,7 @@ class MainSystem:
             if balance < 5:
                 return False, f"رصيد منخفض ({balance:.2f}$)"
 
-            risk = core.get_risk_status()
+            risk = _risk_status()
             if risk.get('paused', False):
                 return False, f"التداول موقوف ({risk.get('remaining_minutes', 0)} دقيقة)"
 
@@ -320,8 +377,7 @@ class MainSystem:
                 return False, f"أقصى عدد صفقات ({len(open_pos)}/{max_pos})"
 
             if _cfg('ENABLE_DAILY_DRAWDOWN_LIMIT', True):
-                daily = core.get_daily_pnl()
-                daily_pnl = daily.get('pnl', 0)
+                daily_pnl = _daily_pnl().get('pnl', 0)
                 loss_limit = -float(_cfg('DAILY_MAX_LOSS_USDT', 7.0))
                 if daily_pnl <= loss_limit:
                     return False, f"حد الخسارة اليومية ({daily_pnl:.2f}$)"
@@ -388,7 +444,7 @@ class MainSystem:
                         time.sleep(60)
                         continue
 
-                    risk = core.get_risk_status() if core else {'paused': False}
+                    risk = _risk_status()
                     if risk.get('paused', False):
                         logger.warning(f"⏸️ توقف - {risk.get('remaining_minutes', 0)} د")
                         time.sleep(60)
@@ -449,7 +505,7 @@ class MainSystem:
             # خفض الحجم بعد خسائر متتالية
             amount = _cfg('TRADE_USDT', 10)
             try:
-                risk = core.get_risk_status()
+                risk = _risk_status()
                 if risk.get('consecutive_losses', 0) >= _cfg('RISK_REDUCE_AFTER_LOSSES', 3):
                     amount = amount * _cfg('AUTO_RISK_REDUCTION_FACTOR', 0.5)
                     logger.warning(f"⚠️ {symbol}: تقليل الحجم إلى {amount}$ بسبب خسائر متتالية")
@@ -565,7 +621,7 @@ class MainSystem:
                     continue
                 try:
                     balance = core.get_futures_balance()
-                    daily = core.get_daily_pnl()
+                    daily = _daily_pnl()
                     self.performance_history.append({
                         'time': datetime.now().strftime('%H:%M'),
                         'balance': balance,
@@ -748,7 +804,7 @@ def get_system_status():
         pass
     try:
         status['consecutive_losses'] = core.get_consecutive_losses()
-        risk = core.get_risk_status()
+        risk = _risk_status()
         status['is_paused'] = risk.get('paused', False)
         status['pause_remaining'] = risk.get('remaining_minutes', 0)
     except Exception:
