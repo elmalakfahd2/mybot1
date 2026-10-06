@@ -2,6 +2,7 @@
 """
 pattern_guard.py — بوابة الأنماط المُتعلَّمة + تخنيق استدعاءات AI
 =================================================================
+v6.7 هجين: التعلم من الصفقات المغلقة/الموثقة فقط + وضع مراقبة أولاً (LOG_ONLY=True)
 v6.6: 🔥 تفعيل فعلي (LOG_ONLY=False) — الأنماط الحمراء الخاسرة تُمنع والساعات
       الخاسرة تُحظر فعلياً (كان v6.5 يراقب ويسجل فقط)
 v6.5: إصلاح سباق الكتابة — adaptive_rules يستبدل learned_rules كاملاً بعد كل
@@ -34,13 +35,13 @@ AI_CALL_HOURLY_CAP     = 25
 AI_CACHE_TTL_SEC       = 45 * 60
 WARNING_PENALTY        = -4
 REQUIRE_AI_FOR_ENTRY   = True
-LOG_ONLY               = False  # 🔥 v6.6: تفعيل فعلي (كان True مراقبة فقط — الأنماط الخاسرة تُمنع الآن)
+LOG_ONLY               = True   # هجين: مراقبة فقط أولاً — لا يمنع الصفقات قبل إثبات الأنماط من إغلاقات موثقة
 
-HOUR_MIN_TRADES        = 3
+HOUR_MIN_TRADES        = 4
 HOUR_BLOCK_WINRATE     = 0.35
 HOUR_BLOCK_PNL         = -2.0
 
-PATTERN_MIN_TRADES     = 3
+PATTERN_MIN_TRADES     = 4
 PATTERN_BLOCK_PF       = 0.60
 PATTERN_BLOCK_PNL      = -1.5
 PATTERN_GREEN_PF       = 1.50
@@ -138,6 +139,21 @@ def _persist_rules(state, rules):
     _RULES_CACHE["rules"] = rules
     _RULES_CACHE["ts"] = time.time()
 
+
+def is_verified_closed_trade(t) -> bool:
+    """فلتر التعلم الصحيح: نتيجة نهائية فقط، لا صفقات مفتوحة/قيد التحقق."""
+    if not isinstance(t, dict):
+        return False
+    if t.get("pnl_verified"):
+        return True
+    # بعض الصفقات القديمة قد لا تحمل pnl_verified لكن لها حالة نتيجة صريحة
+    if t.get("is_win") or t.get("is_loss"):
+        return True
+    pnl = t.get("pnl")
+    if t.get("closed_at") and pnl is not None:
+        return True
+    return False
+
 # ═══════════════════════ البصمات ═══════════════════════
 
 def session_of(hour: int) -> str:
@@ -183,10 +199,11 @@ def rebuild_rules():
     """
     mem = _load(MEM_FILE, {})
     trades = mem.get("trades", [])
+    verified_trades = [t for t in trades if is_verified_closed_trade(t)]
 
     # ── الساعات ──
     hs = defaultdict(lambda: {"n": 0, "w": 0, "pnl": 0.0})
-    for t in trades:
+    for t in verified_trades:
         h = t.get("hour")
         if h is None:
             continue
@@ -197,12 +214,12 @@ def rebuild_rules():
                if d["n"] >= HOUR_MIN_TRADES
                and d["w"] / d["n"] <= HOUR_BLOCK_WINRATE
                and d["pnl"] < HOUR_BLOCK_PNL}
-    if len(trades) < 30:
+    if len(verified_trades) < 30:
         blocked |= SEED_BLOCKED_HOURS
 
-    # ── البصمات: تدريب مباشر من كل الصفقات التاريخية ──
+    # ── البصمات: تدريب مباشر من الصفقات المغلقة/الموثقة فقط ──
     sig_stats = defaultdict(lambda: {"n": 0, "w": 0, "gw": 0.0, "gl": 0.0})
-    for t in trades:
+    for t in verified_trades:
         sd = t.get("score_details", {}) or {}
         sig = signature(t.get("direction", "?"), t.get("hour", 12),
                         sd.get("rsi_points", 5), t.get("volume_ratio", 1.0))
@@ -236,7 +253,7 @@ def rebuild_rules():
 
     # ── عقوبة الاتجاه ──
     dirs = defaultdict(lambda: {"n": 0, "gw": 0.0, "gl": 0.0})
-    for t in trades:
+    for t in verified_trades:
         d = t.get("direction")
         if not d:
             continue
@@ -397,6 +414,9 @@ def record_trade(trade: dict):
     تحدّث condition_stats (البصمات) + تعيد بناء القواعد —
     هكذا يتعلم البوت من كل صفقة خاسرة ولا يكرر نمطها.
     """
+    if not is_verified_closed_trade(trade):
+        logger.debug("guard learning: تخطي صفقة غير مغلقة/غير موثقة")
+        return
     sd = trade.get("score_details", {}) or {}
     sig = signature(
         trade.get("direction", "?"),

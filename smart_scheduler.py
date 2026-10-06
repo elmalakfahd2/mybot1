@@ -67,6 +67,13 @@ def run_learning_session():
         except Exception as e:
             logger.warning(f"⚠️ [SCHEDULER] تصحيح الصفقات: {e}")
 
+        # هجين: بناء قواعد الحارس مباشرة بعد التحقق من الصفقات المغلقة
+        try:
+            import pattern_guard
+            pattern_guard.rebuild_rules()
+        except Exception as e:
+            logger.debug(f"guard rebuild after reconcile: {e}")
+
         import adaptive_rules
         rules = adaptive_rules.update_rules()
 

@@ -1142,6 +1142,9 @@ def generate_sniper_signal(symbol):
         }
 
         total_score, score_details = calculate_total_score(signal, analysis)
+        # هجين: إتاحة النقاط الحقيقية للحارس بدل الاعتماد على confidence فقط
+        signal['pre_ai_total_score'] = total_score
+        signal['score_details'] = score_details
 
         if score_details.get('rejected'):
             logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")

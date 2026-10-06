@@ -49,7 +49,9 @@ def _extract(signal_data):
     return {
         "symbol": sd.get("symbol", ""),
         "direction": sd.get("direction", ""),
-        "score": sd.get("confidence", 0) or 0,
+        "score": ((sd.get("score_details") or {}).get("total")
+                  or sd.get("pre_ai_total_score")
+                  or sd.get("confidence", 0) or 0),
         "rsi": float(tech.get("rsi", 50) or 50),
         "vol_ratio": float(vol.get("volume_5m_ratio", 1.0) or 1.0),
     }
@@ -205,14 +207,16 @@ def _wrap_record(orig):
         result = orig(*args, **kwargs)
         try:
             trade_like = {}
+            net_arg = None
             if sig:
                 bound = sig.bind_partial(*args, **kwargs)
                 d = bound.arguments
+                net_arg = d.get("net_pnl")
                 trade_like = {
                     "symbol": d.get("symbol"),
                     "direction": d.get("direction", "BUY"),
                     "volume_ratio": d.get("volume_ratio", 1.0),
-                    "pnl": d.get("net_pnl") if d.get("net_pnl") is not None else d.get("pnl", 0),
+                    "pnl": net_arg if net_arg is not None else d.get("pnl"),
                     "is_win": False, "is_loss": False,
                     "hour": datetime.now().hour,
                     "score_details": d.get("score_details") or {},
@@ -223,10 +227,14 @@ def _wrap_record(orig):
                 last = mem["trades"][-1]
                 if not trade_like.get("symbol") or last.get("symbol") == trade_like["symbol"]:
                     for k in ("is_win", "is_loss", "hour", "volume_ratio", "pnl",
-                              "score_details", "direction"):
+                              "score_details", "direction", "pnl_verified", "closed_at"):
                         if k in last:
                             trade_like[k] = last[k]
-            if trade_like.get("direction"):
+            # هجين: لا تعلم من تسجيل دخول مفتوح pnl=None؛ التعلم بعد الإغلاق/التوثيق فقط
+            if net_arg is None and not pg.is_verified_closed_trade(trade_like):
+                logger.debug("guard learning: تسجيل دخول مفتوح — تخطي التعلم")
+                return result
+            if trade_like.get("direction") and pg.is_verified_closed_trade(trade_like):
                 pg.record_trade(trade_like)
         except Exception as e:
             logger.debug(f"guard learning skipped: {e}")

@@ -115,8 +115,8 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 10
-LEVERAGE = 15
-MAX_OPEN_POSITIONS = 6               # 🔥 كان 4 - رفع تدريجي بقرار المستخدم (اختبار)
+LEVERAGE = 10
+MAX_OPEN_POSITIONS = 4               # هجين: حد التعرض الكلي أقل من النسخة السابقة
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
@@ -199,20 +199,20 @@ ENABLE_CORRELATION_FILTER = False
 MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
-ENABLE_DAILY_DRAWDOWN_LIMIT = True     # v5.7: مفعل (من دخل Binance الحقيقي)
-DAILY_MAX_LOSS_USDT = 7.0              # توقف حتى منتصف الليل عند خسارة صافية 7$ في اليوم
-DAILY_MAX_LOSS_PERCENT = 5.0           # أو 5% من رصيد المحفظة (أيهما أقرب)
+ENABLE_DAILY_DRAWDOWN_LIMIT = True     # هجين: مفعل لكن الحد أقل تشدداً من النسخة السابقة
+DAILY_MAX_LOSS_USDT = 15.0             # توقف يومي عند خسارة صافية 15$
+DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً لتجنب التوقف المبكر بسبب الرصيد/الصفقات المفتوحة
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 0.5          # 🔥 v5.9: كان 1.0 — يفعّل الحماية عند +0.5% بدلاً من انتظار 1%
-TRAILING_SL_DISTANCE = 0.25        # 🔥 v5.9: قفل ~0.25% ربحاً على الباقي
-BREAKEVEN_TRIGGER = 0.5            # 🔥 v5.9: كان 0.8 — انقل SL للتعادل+ عند +0.5%          # v5.9: كان 1.2 (صفقات رابحة كانت ترتد قبل الوصول له)
-BREAKEVEN_OFFSET_PERCENT = 0.15     # v5.9: يغطي العمولة + انزلاق بسيط
+TRAILING_SL_TRIGGER = 0.6          # هجين: أسرع من القديم وأقل إحكاماً من 0.5
+TRAILING_SL_DISTANCE = 0.3         # هجين: يعطي الصفقة مساحة تنفس قبل القفل
+BREAKEVEN_TRIGGER = 0.5            # انقل SL للتعادل+ عند +0.5%
+BREAKEVEN_OFFSET_PERCENT = 0.12    # يغطي العمولة + انزلاق بسيط
 
 # ==================== الحماية ====================
-MAX_CONSECUTIVE_LOSSES = 3
-PAUSE_DURATION_MINUTES = 30
+MAX_CONSECUTIVE_LOSSES = 2
+PAUSE_DURATION_MINUTES = 20
 
 ENABLE_TRADE_MEMORY = True
 COMMISSION_RATE = 0.0004
@@ -235,7 +235,7 @@ TOP_SYMBOLS_TO_SCAN = 30
 # ==================== 🔥 Cooldown (معدل) ====================
 COOLDOWN_MINUTES = 5
 COOLDOWN_MULTIPLIER_AFTER_LOSS = 2
-COOLDOWN_MINUTES_AFTER_LOSS = 60     # ← كان 30
+COOLDOWN_MINUTES_AFTER_LOSS = 30     # هجين: تبريد أسرع بعد الخسارة
 
 # ==================== الفريمات ====================
 TIMEFRAMES = ['1m', '3m', '5m', '15m']
@@ -293,10 +293,10 @@ REPORT_INCLUDE_SUGGESTIONS = True
 LOSS_EPSILON = 0.10                     # |الصافي| أقل من هذا = تعادل (لا يُعد خسارة ولا ربحاً)
 
 # إيقاف متصاعد: (عدد الخسائر المتتالية, دقائق الإيقاف)
-PAUSE_ESCALATION = [(5, 30), (7, 240), (9, 720)]  # 🔥 v5.8: لا توقف قبل 5 خسائر متتالية (كان 3) — الحارس الحقيقي هو حد الخسارة اليومية
+PAUSE_ESCALATION = [(2, 20), (3, 60), (5, 240)]  # هجين: كسر سريع بعد خسارتين متتاليتين
 STREAK_RESET_HOURS = 24                 # تصفير عداد الخسائر بعد 24 ساعة بلا خسارة
 AUTO_REDUCE_RISK_ON_LOSS = True
-RISK_REDUCE_AFTER_LOSSES = 3            # بعد 3 خسائر متتالية
+RISK_REDUCE_AFTER_LOSSES = 2            # تقليل المخاطرة بعد خسارتين متتاليتين
 AUTO_RISK_REDUCTION_FACTOR = 0.5        # حجم الصفقة 50%
 
 STALL_RESTART_MINUTES = 30              # إعادة تشغيل العملية إن تجمّد الماسح/المراقب
@@ -317,7 +317,8 @@ ADAPTIVE_MIN_TRADES_PER_DIRECTION = 6
 ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 صفقات ضوضاء إحصائية
 
 # ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
-AI_FAIL_MIN_SCORE = 65                  # 🔥 v8.3: كان 70 - يقتل إشارات 60-69 وقت أعطال AI الجماعية
+AI_UNAVAILABLE_ALLOW_ENTRY = False      # هجين: لا دخول إطلاقاً إذا فشل الـ AI/الشبكة
+AI_FAIL_MIN_SCORE = 70                  # هجين: إشارة قوية فقط إذا تعطل الـ AI
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 
