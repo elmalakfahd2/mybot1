@@ -51,10 +51,21 @@ def evaluate_signal(signal, analysis, score_details):
     regime = _regime_name(signal)
 
     alignment = _f(signal.get('timeframe_alignment', analysis.get('timeframe_alignment', 0)))
-    volume = _f(signal.get('volume_ratio', analysis.get('volume_ratio', 0)))
-    rsi = _f(signal.get('rsi', analysis.get('rsi', 50)), 50)
-    body = abs(_f(signal.get('body_percent', analysis.get('body_percent', 0))))
-    momentum = _f(signal.get('momentum', analysis.get('momentum', 0)))
+
+    # استخراج الحقول من بنية التحليل الفعلية وليس من مفاتيح غير موجودة
+    volume_info = analysis.get('volume_analysis') or {}
+    volume = _f(signal.get('volume_ratio') or volume_info.get('volume_5m_ratio') or volume_info.get('volume_ratio') or 0)
+
+    technical = analysis.get('technical_indicators') or {}
+    rsi = _f(signal.get('rsi') or technical.get('rsi', 50), 50)
+
+    pa_info = analysis.get('price_action') or {}
+    body = abs(_f(signal.get('body_percent') or pa_info.get('body_ratio') or pa_info.get('body_percent') or 0))
+
+    mom_info = analysis.get('momentum') or {}
+    momentum_strength = _f(mom_info.get('strength', 0))
+    momentum_dir = str(mom_info.get('direction', '')).strip()
+
     confidence = _f(signal.get('confidence', 0))
 
     orderbook = _f((score_details or {}).get('order_book_points', 0))
@@ -87,13 +98,16 @@ def evaluate_signal(signal, analysis, score_details):
 
     # تحديد الاستراتيجية
     strategy = 'NO_SETUP'
-    aligned_momentum = (direction == 'BUY' and momentum > 0) or (direction == 'SELL' and momentum < 0)
+    aligned_momentum = (
+        (direction == 'BUY' and momentum_dir == 'صاعد') or
+        (direction == 'SELL' and momentum_dir == 'هابط')
+    )
 
-    if alignment >= 8 and volume >= 1.5 and body >= 0.65 and aligned_momentum and orderbook >= 3:
+    if alignment >= 8 and volume >= 1.5 and body >= 0.60 and aligned_momentum and orderbook >= 3:
         strategy = 'BREAKOUT'
         score += 12
         reasons.append('اختراق قوي بحجم وترابط')
-    elif alignment >= 8 and volume >= 1.0 and body >= 0.40 and aligned_momentum and orderbook >= 3:
+    elif alignment >= 8 and volume >= 1.0 and body >= 0.35 and aligned_momentum and orderbook >= 3:
         strategy = 'TREND_SCALP'
         score += 8
         reasons.append('ترند سليم قابل للخطف السريع')
