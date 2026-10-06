@@ -579,6 +579,9 @@ def record_trade(symbol, direction, entry_price, exit_price,
                 net = float(net_pnl)
             elif exit_price and exit_price > 0:
                 net = calculate_net_pnl(entry_price, exit_price, quantity, direction)
+            elif pnl is None:
+                # صفقة مفتوحة: لا نحسب ربحاً/خسارة الآن، فقط نسجل الدخول
+                net = 0.0
             else:
                 commission = entry_price * quantity * COMMISSION_RATE * 2
                 net = pnl - commission
@@ -600,7 +603,7 @@ def record_trade(symbol, direction, entry_price, exit_price,
                 "entry_price": entry_price,
                 "exit_price": round(exit_price, 8) if exit_price else 0,
                 "quantity": quantity,
-                "pnl_gross": round((breakdown or {}).get('realized', pnl), 4),
+                "pnl_gross": round((breakdown or {}).get('realized', pnl if pnl is not None else 0.0), 4),
                 "pnl": round(net, 4),
                 "pnl_percent": round(pnl_percent, 4),
                 "is_win": is_win,

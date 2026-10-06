@@ -96,6 +96,20 @@ def create_algo_order(order_params, max_retries=None):
                 logger.error("❌ خطأ دائم - إيقاف المحاولات")
                 return None
 
+            # -2021: السعر تجاوز مستوى الـ STOP قبل إنشاء الأمر
+            # نحرك الـ trigger قليلاً بعيداً عن السعر الحالي حتى لا ينفذ فوراً.
+            if code == -2021 and params.get('type') == 'STOP_MARKET' and 'triggerPrice' in params:
+                try:
+                    old_trigger = float(params['triggerPrice'])
+                    if params.get('side') == 'BUY':      # إغلاق SHORT: الوقف فوق السعر
+                        new_trigger = old_trigger * 1.002
+                    else:                                # إغلاق LONG: الوقف تحت السعر
+                        new_trigger = old_trigger * 0.998
+                    params['triggerPrice'] = round(new_trigger, 8)
+                    logger.info(f"🔧 تعديل SL بعد -2021: {old_trigger} → {params['triggerPrice']}")
+                except Exception as adjust_err:
+                    logger.debug(f"تعذر تعديل SL بعد -2021: {adjust_err}")
+
         except Exception as e:
             logger.warning(f"⚠️ Algo محاولة {attempt+1}/{max_retries} فشلت: {e}")
 

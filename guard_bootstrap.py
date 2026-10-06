@@ -31,7 +31,9 @@ import pattern_guard as pg
 
 logger = logging.getLogger("guard_bootstrap")
 
-LOG_ONLY = pg.LOG_ONLY           # وضع التسجيل فقط (ابدأ به True 2-3 أيام)
+# إجبار وضع المراقبة: لا تسمح لأي نسخة قديمة/ملف غير مُستبدل بإعادة تفعيل المنع
+pg.LOG_ONLY = True
+LOG_ONLY = pg.LOG_ONLY           # وضع التسجيل فقط — لا يمنع الصفقات، فقط يسجل الأنماط
 FEATURE_TTL = 60 * 60            # صلاحية مؤشرات الإشارة المحفوظة
 AI_FRESH_SEC = 45 * 60           # قرار AI يُقبل خلال 45 دقيقة من التنفيذ
 
