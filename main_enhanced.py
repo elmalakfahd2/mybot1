@@ -659,6 +659,36 @@ class MainSystem:
                         position_side = "LONG" if float(pos.get('positionAmt', 0)) > 0 else "SHORT"
                     mark_price = core.get_price(symbol) or entry_price
 
+                    # Hybrid Time Stop: الصفقة البطيئة خسارة محتملة — نخرج قبل أن تتحول
+                    try:
+                        if _cfg('TIME_STOP_ENABLED', True):
+                            pos_info = (getattr(bot_enhanced, 'open_positions', {}) or {}).get(symbol, {}) or {}
+                            entry_time = pos_info.get('entry_time')
+                            entry_dt = None
+                            if entry_time:
+                                try:
+                                    entry_dt = datetime.fromisoformat(str(entry_time).replace('Z', '+00:00'))
+                                    if entry_dt.tzinfo is not None:
+                                        entry_dt = entry_dt.replace(tzinfo=None)
+                                except Exception:
+                                    entry_dt = None
+                            if entry_dt:
+                                age_minutes = (datetime.now() - entry_dt).total_seconds() / 60.0
+                                side_sign = 1.0 if position_side == 'LONG' else -1.0
+                                pnl_pct_now = ((mark_price - entry_price) / entry_price * 100.0) * side_sign
+                                max_age = float(_cfg('TIME_STOP_MINUTES', 8))
+                                min_profit = float(_cfg('TIME_STOP_MIN_PROFIT_PERCENT', 0.20))
+                                if age_minutes >= max_age and pnl_pct_now < min_profit:
+                                    logger.warning(f"⏱️ TIME STOP {symbol}: عمر {age_minutes:.1f} دقيقة وربح {pnl_pct_now:.2f}% — خروج")
+                                    core.close_position_safe(symbol, position_side)
+                                    memory.record_trade(symbol=symbol, direction=position_side,
+                                                        entry_price=entry_price, exit_price=mark_price,
+                                                        quantity=amount, exit_reason='TIME_STOP',
+                                                        net_pnl=position_pnl, mfe_pct=None, mae_pct=None)
+                                    continue
+                    except Exception as ts_err:
+                        logger.debug(f"time stop skipped: {ts_err}")
+
                     # 🔥 v5.8: التحقق من TP/SL بالدوال الموجودة فعلاً (get_position_tp_sl/close_position غير موجودتين)
                     if _cfg('VERIFY_TP_SL_AFTER_CREATION', True):
                         try:

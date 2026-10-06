@@ -131,6 +131,14 @@ SL_ATR_MULTIPLIER = 2.0
 SL_MIN_PERCENT = 1.0
 SL_MAX_PERCENT = 1.6
 
+# ==================== Hybrid Engine v1 ====================
+USE_HYBRID_ENGINE = True
+TP_R_MULTIPLES = [1.2, 2.0, 3.2]     # الهدف الأول لا يقل عن 1.2R من الوقف الفعلي
+TP_MAX_PERCENT = 5.0
+TIME_STOP_ENABLED = True
+TIME_STOP_MINUTES = 8                # خروج الصفقة البطيئة بعد 8 دقائق
+TIME_STOP_MIN_PROFIT_PERCENT = 0.20  # إذا لم تحقق 0.2% خلال المدة نخرج
+
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
 TP_SL_MAX_RETRIES = 3
@@ -161,7 +169,7 @@ RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 55        # 🔥 v5.8: كان 65 - أعاد فتح التداول
+MIN_SCORE_REQUIRED = 65        # هجين: صفقات أقل لكن أوضح — لا دخول للإشارات المتوسطة الضعيفة
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -200,7 +208,7 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # هجين: مفعل لكن الحد أقل تشدداً من النسخة السابقة
-DAILY_MAX_LOSS_USDT = 15.0             # توقف يومي عند خسارة صافية 15$
+DAILY_MAX_LOSS_USDT = 10.0             # هجين: حماية يومية أشد لوقف النزيف السريع
 DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً لتجنب التوقف المبكر بسبب الرصيد/الصفقات المفتوحة
 
 # ==================== Trailing SL ====================
@@ -318,7 +326,7 @@ ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 ص�
 
 # ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
 AI_UNAVAILABLE_ALLOW_ENTRY = False      # هجين: لا دخول إطلاقاً إذا فشل الـ AI/الشبكة
-AI_FAIL_MIN_SCORE = 70                  # هجين: إشارة قوية فقط إذا تعطل الـ AI
+AI_FAIL_MIN_SCORE = 75                  # هجين: لا دخول طارئ إلا لإشارة قوية جداً
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 

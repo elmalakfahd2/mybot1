@@ -1146,6 +1146,20 @@ def generate_sniper_signal(symbol):
         signal['pre_ai_total_score'] = total_score
         signal['score_details'] = score_details
 
+        # Hybrid Engine: اختيار الاستراتيجية، منع الإشارات الضعيفة، وتعديل النقاط قبل AI
+        try:
+            from hybrid_engine import evaluate_signal
+            allow, total_score, strategy, hybrid_info = evaluate_signal(signal, analysis, score_details)
+            score_details.update(hybrid_info)
+            score_details['total'] = total_score
+            signal['strategy'] = strategy
+            signal['score_details'] = score_details
+            if not allow:
+                logger.info(f"🧠 HYBRID رفض {symbol}: {' | '.join(hybrid_info.get('hybrid_reasons', []))}")
+                return None
+        except Exception as e:
+            logger.debug(f"hybrid_engine skipped: {e}")
+
         if score_details.get('rejected'):
             logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")
             return None

@@ -890,18 +890,29 @@ def _cleanup_symbol_orders(symbol, algo_ids=None):
         return 0
 
 
-def close_position_safe(symbol, position_side, algo_ids=None):
+def close_position_safe(symbol, position_side, algo_ids=None, error_ref=None):
     """
-    🔥 v4.2: إغلاق آمن
-    - إذا algo_ids محددة → يحذفها فقط
-    - ثم يغلق الصفقة
+    🔥 إغلاق آمن مع سبب فشل واضح.
+    - إذا algo_ids محددة → يحذفها
+    - ثم يحاول الإغلاق بعدة طرق: reduceOnly → عادي → closePosition
     """
+    def _fail(msg):
+        logger.error(f"❌ فشل إغلاق {symbol} {position_side}: {msg}")
+        if error_ref is not None:
+            try:
+                error_ref.append(str(msg))
+            except Exception:
+                pass
+        return False
+
     try:
         client_obj = get_client()
         if not client_obj:
-            return False
+            return _fail("لا يوجد اتصال بـ Binance")
 
-        positions = get_open_positions()
+        positions = get_open_positions_strict()
+        if positions is None:
+            return _fail("فشل جلب الصفقات من Binance")
         position = None
         for pos in positions:
             if pos["symbol"] == symbol and pos["positionSide"] == position_side:
@@ -909,28 +920,28 @@ def close_position_safe(symbol, position_side, algo_ids=None):
                 break
 
         if not position:
-            logger.error(f"لا صفقة: {symbol} {position_side}")
-            # محاولة تنظيف الأوامر
             if algo_ids:
                 _cleanup_symbol_orders(symbol, algo_ids)
-            return False
+            return _fail("الصفقة غير موجودة الآن أو أُغلقت مسبقاً")
 
         quantity = abs(float(position["positionAmt"]))
         if quantity <= 0:
             if algo_ids:
                 _cleanup_symbol_orders(symbol, algo_ids)
-            return False
+            return _fail("كمية الصفقة صفر")
 
         close_side = "SELL" if position_side == "LONG" else "BUY"
 
-        # 🔥 1. حذف الأوامر (بالalgo_ids إن وُجدت)
-        if algo_ids:
-            _cleanup_symbol_orders(symbol, algo_ids)
-        else:
-            # fallback: حذف كل شيء (سلوك قديم)
-            _cleanup_symbol_orders(symbol)
+        # 1) تنظيف أوامر الصفقة
+        try:
+            if algo_ids:
+                _cleanup_symbol_orders(symbol, algo_ids)
+            else:
+                _cleanup_symbol_orders(symbol)
+        except Exception as cleanup_err:
+            logger.warning(f"⚠️ تنظيف أوامر {symbol} قبل الإغلاق: {cleanup_err}")
 
-        # 🔥 2. إغلاق الصفقة
+        # 2) الإغلاق: محاولات متدرجة
         try:
             client_obj.futures_create_order(
                 symbol=symbol,
@@ -940,29 +951,46 @@ def close_position_safe(symbol, position_side, algo_ids=None):
                 positionSide=position_side,
                 reduceOnly="true"
             )
-            logger.info(f"✅ إغلاق: {symbol} {position_side}")
+            logger.info(f"✅ إغلاق reduceOnly: {symbol} {position_side}")
             remove_trailing_sl_tracking(symbol, position_side)
             return True
-
         except BinanceAPIException as e:
-            if e.code == -4061:
-                try:
-                    client_obj.futures_create_order(
-                        symbol=symbol,
-                        side=close_side,
-                        type="MARKET",
-                        quantity=quantity,
-                        positionSide=position_side
-                    )
-                    remove_trailing_sl_tracking(symbol, position_side)
-                    return True
-                except:
-                    return False
-            return False
+            logger.warning(f"⚠️ إغلاق reduceOnly فشل ({e.code}): {e.message}")
+
+        # 3) بدون reduceOnly
+        try:
+            client_obj.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                type="MARKET",
+                quantity=quantity,
+                positionSide=position_side
+            )
+            logger.info(f"✅ إغلاق عادي: {symbol} {position_side}")
+            remove_trailing_sl_tracking(symbol, position_side)
+            return True
+        except BinanceAPIException as e:
+            logger.warning(f"⚠️ الإغلاق العادي فشل ({e.code}): {e.message}")
+
+        # 4) closePosition كحل أخير
+        try:
+            close_kwargs = {
+                "symbol": symbol,
+                "side": close_side,
+                "type": "MARKET",
+                "closePosition": "true"
+            }
+            if position_side in ("LONG", "SHORT"):
+                close_kwargs["positionSide"] = position_side
+            client_obj.futures_create_order(**close_kwargs)
+            logger.info(f"✅ إغلاق closePosition: {symbol} {position_side}")
+            remove_trailing_sl_tracking(symbol, position_side)
+            return True
+        except Exception as e:
+            return _fail(f"فشلت كل محاولات الإغلاق: {e}")
 
     except Exception as e:
-        logger.error(f"خطأ إغلاق: {e}")
-        return False
+        return _fail(f"استثناء غير متوقع: {e}")
 
 
 def close_all_positions():
@@ -1695,6 +1723,24 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
                     logger.info(f"✅ SL: {formatted_sl} ({actual_sl_percent:.2f}%)")
                 else:
                     logger.error(f"❌ فشل إنشاء SL")
+
+        # Hybrid RR: بناء TP من الوقف الفعلي حتى لا تقل جودة الصفقة عن 1.2R
+        try:
+            if 'actual_sl_percent' not in locals() or actual_sl_percent is None:
+                actual_sl_percent = float(sl_percent or SL_PERCENT)
+            r_multipliers = list(getattr(cfg, 'TP_R_MULTIPLES', [1.2, 2.0, 3.2]))
+            tp_min = float(getattr(cfg, 'TP_PERCENT', 1.2))
+            tp_max = float(getattr(cfg, 'TP_MAX_PERCENT', 5.0))
+            dynamic_tp_levels = []
+            for idx, r in enumerate(r_multipliers[:len(tp_levels)]):
+                pct = max(tp_min, float(actual_sl_percent) * float(r))
+                pct = min(tp_max, pct)
+                dynamic_tp_levels.append(round(pct, 2))
+            if len(dynamic_tp_levels) == len(tp_levels):
+                tp_levels = dynamic_tp_levels
+                logger.info(f"🎯 TP RR levels: {tp_levels} بناءً على SL {actual_sl_percent:.2f}%")
+        except Exception as rr_err:
+            logger.debug(f"dynamic TP RR skipped: {rr_err}")
 
         # TP متعدد
         for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):

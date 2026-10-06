@@ -1,0 +1,144 @@
+"""
+Hybrid Engine v1
+محرك هجين صغير لكن صارم: يحدد نوع السوق/الاستراتيجية، يمنع الإشارات الضعيفة،
+ويمنح نقاطاً إضافية فقط للإعدادات عالية الجودة.
+
+الهدف: ليس فتح صفقات أكثر، بل فتح صفقات أوضح وأفضل R:R.
+"""
+import logging
+import config as cfg
+
+logger = logging.getLogger("hybrid_engine")
+
+
+def _f(value, default=0.0):
+    try:
+        if value is None:
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _regime_name(signal):
+    regime = (signal.get('market_regime') or {}).get('regime') or signal.get('regime') or 'UNKNOWN'
+    return str(regime).upper()
+
+
+def _direction(signal):
+    return str(signal.get('direction', '')).upper()
+
+
+def evaluate_signal(signal, analysis, score_details):
+    """
+    يرجع: (allow, adjusted_score, strategy, info)
+    - allow: هل نسمح باستدعاء الـ AI والدخول المحتمل؟
+    - adjusted_score: النقاط بعد مكافآت/عقوبات الهجين
+    - strategy: TREND_SCALP / BREAKOUT / RANGE_REVERT / NO_SETUP
+    - info: يُضاف داخل score_details للتتبع
+    """
+    total_score = _f((score_details or {}).get('total'), 0.0)
+    info = {
+        'hybrid_points': 0,
+        'hybrid_strategy': 'OFF',
+        'hybrid_reasons': [],
+    }
+
+    if not getattr(cfg, 'USE_HYBRID_ENGINE', True):
+        return True, total_score, 'HYBRID_OFF', info
+
+    direction = _direction(signal)
+    regime = _regime_name(signal)
+
+    alignment = _f(signal.get('timeframe_alignment', analysis.get('timeframe_alignment', 0)))
+    volume = _f(signal.get('volume_ratio', analysis.get('volume_ratio', 0)))
+    rsi = _f(signal.get('rsi', analysis.get('rsi', 50)), 50)
+    body = abs(_f(signal.get('body_percent', analysis.get('body_percent', 0))))
+    momentum = _f(signal.get('momentum', analysis.get('momentum', 0)))
+    confidence = _f(signal.get('confidence', 0))
+
+    orderbook = _f((score_details or {}).get('order_book_points', 0))
+    funding_oi = _f((score_details or {}).get('funding_oi_points', 5), 5)
+    pa_points = _f((score_details or {}).get('price_action_points', 0))
+    momentum_points = _f((score_details or {}).get('momentum_points', 0))
+
+    reasons = []
+    score = total_score
+    allow = True
+
+    # فلتر صلابة أساسي
+    if volume < 0.75 and not (alignment >= 9 and body >= 0.70 and orderbook >= 5):
+        allow = False
+        reasons.append(f'حجم ضعيف جداً {volume:.2f}x')
+    if alignment <= 4 and regime not in ('RANGE', 'NEUTRAL'):
+        allow = False
+        reasons.append(f'ترابط ضعيف {alignment:.1f} في سوق غير رينج')
+    if confidence < _f(getattr(cfg, 'MIN_CONFIDENCE_AUTO', 60), 60):
+        allow = False
+        reasons.append(f'ثقة AI منخفضة {confidence:.0f}%')
+
+    # منع الدخول العكسي للترند القوي
+    if regime in ('STRONG_UP', 'UP', 'BULLISH') and direction == 'SELL':
+        allow = False
+        reasons.append('بيع عكس ترند صاعد قوي')
+    if regime in ('STRONG_DOWN', 'DOWN', 'BEARISH') and direction == 'BUY':
+        allow = False
+        reasons.append('شراء عكس ترند هابط قوي')
+
+    # تحديد الاستراتيجية
+    strategy = 'NO_SETUP'
+    aligned_momentum = (direction == 'BUY' and momentum > 0) or (direction == 'SELL' and momentum < 0)
+
+    if alignment >= 8 and volume >= 1.5 and body >= 0.65 and aligned_momentum and orderbook >= 3:
+        strategy = 'BREAKOUT'
+        score += 12
+        reasons.append('اختراق قوي بحجم وترابط')
+    elif alignment >= 8 and volume >= 1.0 and body >= 0.40 and aligned_momentum and orderbook >= 3:
+        strategy = 'TREND_SCALP'
+        score += 8
+        reasons.append('ترند سليم قابل للخطف السريع')
+    elif alignment <= 6 and ((direction == 'BUY' and rsi <= 35) or (direction == 'SELL' and rsi >= 65)):
+        strategy = 'RANGE_REVERT'
+        score += 5
+        reasons.append('ارتداد رينج فقط')
+    else:
+        score -= 12
+        reasons.append('لا توجد استراتيجية واضحة')
+
+    # عقوبات جودة
+    if volume < 1.0:
+        score -= 4
+        reasons.append('حجم أقل من المتوسط')
+    if volume < 0.8:
+        score -= 4
+        reasons.append('حجم منخفض جداً')
+    if alignment < 6:
+        score -= 5
+        reasons.append('ترابط ضعيف')
+    if orderbook <= 2:
+        score -= 4
+        reasons.append('دفتر أوامر ضعيف')
+    if funding_oi <= 4:
+        score -= 2
+        reasons.append('Funding/OI غير مؤيد')
+    if pa_points <= 3:
+        score -= 3
+        reasons.append('PA ضعيف')
+    if momentum_points <= 3:
+        score -= 2
+        reasons.append('Momentum غير حاسم')
+    if (direction == 'BUY' and rsi >= 70) or (direction == 'SELL' and rsi <= 30):
+        score -= 5
+        reasons.append('RSI معادي للاتجاه')
+
+    score = max(0, min(100, score))
+    info['hybrid_points'] = round(score - total_score, 2)
+    info['hybrid_strategy'] = strategy
+    info['hybrid_reasons'] = reasons
+
+    min_required = _f(getattr(cfg, 'MIN_SCORE_REQUIRED', 55), 55)
+    if score < min_required:
+        allow = False
+        reasons.append(f'النقاط النهائية {score:.0f} < {min_required:.0f}')
+
+    return allow, score, strategy, info

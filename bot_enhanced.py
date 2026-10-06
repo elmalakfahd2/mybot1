@@ -1405,12 +1405,16 @@ def _close_profitable_positions(update: Update):
                 symbol = position.get("symbol")
                 position_side = position.get("positionSide")
                 profit = float(position.get("unrealizedProfit", 0))
+                close_reason = []
 
-                if core.close_position_safe(symbol, position_side):
+                if core.close_position_safe(symbol, position_side, error_ref=close_reason):
                     closed_count += 1
                     total_profit += profit
                     remove_open_position(symbol, position_side)
                     time.sleep(0.5)
+                else:
+                    reason = close_reason[0] if close_reason else "close_position_safe أعاد False — راجع اللوج"
+                    errors.append(f"{symbol}: {reason}"[:160])
             except Exception as e:
                 logger.error(f"⚠️ فشل إغلاق {position.get('symbol', '?')}: {e}")
                 errors.append(str(e)[:80])
