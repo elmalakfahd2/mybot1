@@ -120,10 +120,10 @@ MAX_OPEN_POSITIONS = 6               # 🔥 كان 4 - رفع تدريجي بق�
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [2.5, 3.5, 5.0]
+TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.5]   # 🔥 v5.9: TP1 أقرب (40% من الصفقة تُقفل ربحاً مبكراً)
 TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
 SL_PERCENT = 1.3
-TP_PERCENT = 2.5
+TP_PERCENT = 1.2                   # 🔥 v5.9: كان 2.5 — متوسط MFE الفعلي ~1% فقط، كان الربح لا يُلامس أبداً
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
@@ -205,9 +205,9 @@ DAILY_MAX_LOSS_PERCENT = 5.0           # أو 5% من رصيد المحفظة (�
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 1.0
-TRAILING_SL_DISTANCE = 0.5
-BREAKEVEN_TRIGGER = 0.8          # v5.9: كان 1.2 (صفقات رابحة كانت ترتد قبل الوصول له)
+TRAILING_SL_TRIGGER = 0.5          # 🔥 v5.9: كان 1.0 — يفعّل الحماية عند +0.5% بدلاً من انتظار 1%
+TRAILING_SL_DISTANCE = 0.25        # 🔥 v5.9: قفل ~0.25% ربحاً على الباقي
+BREAKEVEN_TRIGGER = 0.5            # 🔥 v5.9: كان 0.8 — انقل SL للتعادل+ عند +0.5%          # v5.9: كان 1.2 (صفقات رابحة كانت ترتد قبل الوصول له)
 BREAKEVEN_OFFSET_PERCENT = 0.15     # v5.9: يغطي العمولة + انزلاق بسيط
 
 # ==================== الحماية ====================
