@@ -1131,7 +1131,9 @@ async def _show_open_positions(update: Update):
                 msg += f"{side} <b>{symbol}</b> {profit_status}\n"
                 msg += f"💰 الدخول: {format_number_english(entry)} | 💵 الربح: {format_number_english(profit, 2)} USDT\n"
                 msg += f"📊 TP/SL: {order_status}\n—\n"
-            except:
+            except Exception as e:
+                logger.error(f"⚠️ فشل إغلاق {position.get('symbol', '?')}: {e}")
+                errors.append(str(e)[:80])
                 continue
 
         msg += f"\n💰 <b>إجمالي الأرباح:</b> {format_number_english(total_profit, 2)} USDT"
@@ -1356,6 +1358,7 @@ def _close_all_positions(update: Update):
 
         closed_count = 0
         total_profit = 0
+        errors = []
 
         for position in positions:
             try:
@@ -1368,7 +1371,9 @@ def _close_all_positions(update: Update):
                     total_profit += profit
                     remove_open_position(symbol, position_side)
                     time.sleep(0.5)
-            except:
+            except Exception as e:
+                logger.error(f"⚠️ فشل إغلاق {position.get('symbol', '?')}: {e}")
+                errors.append(str(e)[:80])
                 continue
 
         if closed_count > 0:
@@ -1385,7 +1390,7 @@ def _close_all_positions(update: Update):
 def _close_profitable_positions(update: Update):
     try:
         positions = core.get_open_positions()
-        profitable = [p for p in positions if float(p.get("unrealizedProfit", 0)) > 0]
+        profitable = [p for p in positions if float(p.get("unRealizedProfit", p.get("unrealizedProfit", 0))) > 0]
 
         if not profitable:
             run_async_safe(send_message_safe(update, "📭 <b>لا توجد صفقات رابحة</b>", reply_markup=main_kb))
@@ -1393,6 +1398,7 @@ def _close_profitable_positions(update: Update):
 
         closed_count = 0
         total_profit = 0
+        errors = []
 
         for position in profitable:
             try:
@@ -1405,13 +1411,21 @@ def _close_profitable_positions(update: Update):
                     total_profit += profit
                     remove_open_position(symbol, position_side)
                     time.sleep(0.5)
-            except:
+            except Exception as e:
+                logger.error(f"⚠️ فشل إغلاق {position.get('symbol', '?')}: {e}")
+                errors.append(str(e)[:80])
                 continue
 
         if closed_count > 0:
             msg = f"🔒 <b>تم قفل {closed_count} صفقة</b>\n\n💰 الأرباح: {total_profit:.2f} USDT"
+            if errors:
+                msg += f"\n\n⚠️ تعذر قفل {len(errors)}:\n" + "\n".join("• " + e for e in errors[:3])
         else:
             msg = "❌ <b>فشل</b>"
+            if errors:
+                msg += "\n\nالأسباب:\n" + "\n".join("• " + e for e in errors[:3])
+            else:
+                msg += "\n\n(close_position_safe أعاد False — راجع اللوج)"
 
         run_async_safe(send_message_safe(update, msg, reply_markup=main_kb))
     except Exception as e:
@@ -1421,7 +1435,7 @@ def _close_profitable_positions(update: Update):
 def _close_losing_positions(update: Update):
     try:
         positions = core.get_open_positions()
-        losing = [p for p in positions if float(p.get("unrealizedProfit", 0)) < 0]
+        losing = [p for p in positions if float(p.get("unRealizedProfit", p.get("unrealizedProfit", 0))) < 0]
 
         if not losing:
             run_async_safe(send_message_safe(update, "📭 <b>لا توجد صفقات خاسرة</b>", reply_markup=main_kb))
@@ -1429,6 +1443,7 @@ def _close_losing_positions(update: Update):
 
         closed_count = 0
         total_loss = 0
+        errors = []
 
         for position in losing:
             try:
@@ -1441,7 +1456,9 @@ def _close_losing_positions(update: Update):
                     total_loss += loss
                     remove_open_position(symbol, position_side)
                     time.sleep(0.5)
-            except:
+            except Exception as e:
+                logger.error(f"⚠️ فشل إغلاق {position.get('symbol', '?')}: {e}")
+                errors.append(str(e)[:80])
                 continue
 
         if closed_count > 0:
