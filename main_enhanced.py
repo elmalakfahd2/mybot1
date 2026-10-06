@@ -294,6 +294,17 @@ class MainSystem:
                 except Exception as e:
                     logger.debug(f"cleanup: {e}")
 
+            # 🔥 Firebase: تهيئة + نسخ احتياطي دوري حتى لا تضيع الذاكرة بعد إعادة التشغيل
+            if firebase_backup is not None and _cfg('ENABLE_FIREBASE_BACKUP', True):
+                try:
+                    firebase_backup.initialize_firebase()
+                except Exception as e:
+                    logger.warning(f"⚠️ initialize_firebase: {e}")
+                try:
+                    firebase_backup.start_auto_backup()
+                except Exception as e:
+                    logger.warning(f"⚠️ start_auto_backup: {e}")
+
             if MEMORY_AVAILABLE:
                 for sync_name in ('sync_from_binance', 'sync_from_firebase', 'sync_from_file'):
                     fn = getattr(memory, sync_name, None)
@@ -662,7 +673,8 @@ class MainSystem:
                     # Hybrid Time Stop: الصفقة البطيئة خسارة محتملة — نخرج قبل أن تتحول
                     try:
                         if _cfg('TIME_STOP_ENABLED', True):
-                            pos_info = (getattr(bot_enhanced, 'open_positions', {}) or {}).get(symbol, {}) or {}
+                            pos_key = f"{symbol}_{position_side}"
+                            pos_info = (getattr(bot_enhanced, 'open_positions', {}) or {}).get(pos_key, {}) or {}
                             entry_time = pos_info.get('entry_time')
                             entry_dt = None
                             if entry_time:
@@ -679,12 +691,34 @@ class MainSystem:
                                 max_age = float(_cfg('TIME_STOP_MINUTES', 8))
                                 min_profit = float(_cfg('TIME_STOP_MIN_PROFIT_PERCENT', 0.20))
                                 if age_minutes >= max_age and pnl_pct_now < min_profit:
+                                    if not _cfg('TIME_STOP_CLOSE_ENABLED', False):
+                                        logger.info(f"⏱️ TIME STOP AUDIT {symbol}: عمر {age_minutes:.1f} دقيقة وربح {pnl_pct_now:.2f}% — تدقيق فقط")
+                                        continue
                                     logger.warning(f"⏱️ TIME STOP {symbol}: عمر {age_minutes:.1f} دقيقة وربح {pnl_pct_now:.2f}% — خروج")
                                     core.close_position_safe(symbol, position_side)
-                                    memory.record_trade(symbol=symbol, direction=position_side,
-                                                        entry_price=entry_price, exit_price=mark_price,
-                                                        quantity=amount, exit_reason='TIME_STOP',
-                                                        net_pnl=position_pnl, mfe_pct=None, mae_pct=None)
+                                    score_details = pos_info.get('score_details') or {}
+                                    entry_time_iso = pos_info.get('entry_time')
+                                    try:
+                                        real_net = memory.get_real_net_pnl(symbol, entry_time_iso, int(time.time()*1000)) if entry_time_iso else None
+                                    except Exception:
+                                        real_net = None
+                                    memory.record_trade(
+                                        symbol=symbol, direction=position_side,
+                                        entry_price=entry_price, exit_price=mark_price,
+                                        quantity=amount, pnl=pnl,
+                                        confidence=pos_info.get('confidence', score_details.get('confidence', 0)),
+                                        timeframe_alignment=pos_info.get('timeframe_alignment', score_details.get('timeframe_alignment', 0)),
+                                        volume_ratio=pos_info.get('volume_ratio', score_details.get('volume_ratio', 0)),
+                                        groq_recommendation=pos_info.get('groq_recommendation', 'TIME_STOP'),
+                                        groq_confidence=pos_info.get('groq_confidence', pos_info.get('confidence', 0)),
+                                        score_details=score_details, exit_reason='TIME_STOP',
+                                        entry_time_iso=entry_time_iso, net_pnl=real_net,
+                                        extra={'hybrid_strategy': pos_info.get('strategy', score_details.get('hybrid_strategy'))}
+                                    )
+                                    try:
+                                        bot_enhanced.remove_open_position(symbol, position_side)
+                                    except Exception:
+                                        pass
                                     continue
                     except Exception as ts_err:
                         logger.debug(f"time stop skipped: {ts_err}")
@@ -719,6 +753,62 @@ class MainSystem:
         except Exception as e:
             logger.error(f"خطأ في المراقبة: {e}")
 
+    def record_missing_closed_trades(self):
+        """يسجل الصفقات التي أُغلقت عبر TP/SL من Binance ولم تُسجل محلياً بعد."""
+        try:
+            bot_positions = getattr(bot_enhanced, 'open_positions', {}) or {}
+            if not bot_positions:
+                return
+            live_positions = core.get_open_positions_strict() or []
+            live_keys = {f"{p.get('symbol')}_{p.get('positionSide')}" for p in live_positions}
+            now_ms = int(time.time() * 1000)
+            for key, info in list(bot_positions.items()):
+                try:
+                    if key in live_keys:
+                        continue
+                    symbol, side = key.rsplit('_', 1)
+                    entry_price = float(info.get('entry_price') or 0)
+                    quantity = abs(float(info.get('quantity') or info.get('positionAmt') or 0))
+                    entry_time_iso = info.get('entry_time')
+                    exit_price = core.get_price(symbol) or entry_price
+                    score_details = info.get('score_details') or {}
+                    side_sign = 1.0 if side == 'LONG' else -1.0
+                    estimated_pnl = 0.0
+                    if entry_price and quantity and exit_price:
+                        estimated_pnl = ((exit_price - entry_price) / entry_price * 100.0) * side_sign / 100.0 * quantity * entry_price
+                    real_net = None
+                    try:
+                        real_net = memory.get_real_net_pnl(symbol, entry_time_iso, now_ms) if entry_time_iso else None
+                    except Exception:
+                        real_net = None
+                    memory.record_trade(
+                        symbol=symbol, direction=side,
+                        entry_price=entry_price, exit_price=exit_price,
+                        quantity=quantity, pnl=estimated_pnl,
+                        confidence=info.get('confidence', score_details.get('confidence', 0)),
+                        timeframe_alignment=info.get('timeframe_alignment', score_details.get('timeframe_alignment', 0)),
+                        volume_ratio=info.get('volume_ratio', score_details.get('volume_ratio', 0)),
+                        groq_recommendation=info.get('groq_recommendation', 'CLOSED_BY_EXCHANGE'),
+                        groq_confidence=info.get('groq_confidence', info.get('confidence', 0)),
+                        score_details=score_details, exit_reason='TP_SL_OR_MANUAL',
+                        entry_time_iso=entry_time_iso, net_pnl=real_net,
+                        extra={'hybrid_strategy': info.get('strategy', score_details.get('hybrid_strategy'))}
+                    )
+                    try:
+                        bot_enhanced.remove_open_position(symbol, side)
+                    except Exception:
+                        pass
+                    logger.info(f"🧠 تعلّم من إغلاق: {symbol} {side} net={real_net if real_net is not None else estimated_pnl:.4f}")
+                    try:
+                        import similarity_engine
+                        similarity_engine.refresh()
+                    except Exception:
+                        pass
+                except Exception as inner:
+                    logger.debug(f"record_missing_closed_trades item failed: {inner}")
+        except Exception as e:
+            logger.debug(f"record_missing_closed_trades skipped: {e}")
+
     def monitor_loop(self):
         try:
             while self.running:
@@ -731,6 +821,7 @@ class MainSystem:
                         except Exception as e:
                             logger.error(f"خطأ في كاشف الإغلاق: {e}")
                     self.monitor_positions()
+                    self.record_missing_closed_trades()
                     self.cleanup_orphan_orders()
                     time.sleep(_cfg('MONITOR_TP_SL_INTERVAL', 60))
                 except Exception as e:

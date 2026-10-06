@@ -1160,6 +1160,23 @@ def generate_sniper_signal(symbol):
         except Exception as e:
             logger.debug(f"hybrid_engine skipped: {e}")
 
+        # 🧬 Similarity Engine v2: يقارن الإشارة بأقرب صفقات مغلقة ويتعلم ذاتياً
+        try:
+            import similarity_engine
+            vol_info = analysis.get('volume_analysis') or {}
+            actual_volume = (signal.get('volume_ratio') or vol_info.get('volume_5m_ratio')
+                             or vol_info.get('volume_ratio') or 0)
+            sim = similarity_engine.assess(symbol, direction, score_details, actual_volume)
+            score_details['similarity'] = sim
+            signal['similarity'] = sim
+            if not sim.get('allow', True):
+                logger.warning(f"🧬 SIMILARITY منع {symbol}: {sim.get('reason', '')}")
+                return None
+            if sim.get('verdict') in ('similar_to_loss', 'similar_to_win'):
+                logger.info(f"🧬 SIMILARITY {symbol}: {sim.get('verdict')} wr={sim.get('win_rate')} mode={sim.get('effective_mode')}")
+        except Exception as e:
+            logger.debug(f"similarity_engine skipped: {e}")
+
         if score_details.get('rejected'):
             logger.info(f"🛑 {symbol} - مرفوض: {score_details.get('reject_reason', '')}")
             return None

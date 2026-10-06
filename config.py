@@ -136,8 +136,9 @@ USE_HYBRID_ENGINE = True
 TP_R_MULTIPLES = [1.2, 2.0, 3.2]     # الهدف الأول لا يقل عن 1.2R من الوقف الفعلي
 TP_MAX_PERCENT = 5.0
 TIME_STOP_ENABLED = True
-TIME_STOP_MINUTES = 8                # خروج الصفقة البطيئة بعد 8 دقائق
-TIME_STOP_MIN_PROFIT_PERCENT = 0.20  # إذا لم تحقق 0.2% خلال المدة نخرج
+TIME_STOP_CLOSE_ENABLED = False      # False = تدقيق فقط حتى نثبت أنه لا يقتل الصفقات الرابحة
+TIME_STOP_MINUTES = 8                # عمر الصفقة البطيئة المراد فحصه
+TIME_STOP_MIN_PROFIT_PERCENT = 0.20  # إذا لم تحقق 0.2% خلال المدة تُسجّل كملاحظة/خروج
 
 # ==================== إصلاح TP/SL ====================
 VERIFY_TP_SL_AFTER_CREATION = True
@@ -169,7 +170,7 @@ RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 65        # هجين: صفقات أقل لكن أوضح — لا دخول للإشارات المتوسطة الضعيفة
+MIN_SCORE_REQUIRED = 60        # هجين متوازن: صارم لكن غير مشلول في السوق المتذبذب
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -208,7 +209,7 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # هجين: مفعل لكن الحد أقل تشدداً من النسخة السابقة
-DAILY_MAX_LOSS_USDT = 10.0             # هجين: حماية يومية أشد لوقف النزيف السريع
+DAILY_MAX_LOSS_USDT = 20.0             # حسب إعدادك الأساسي: حد يومي 20$
 DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً لتجنب التوقف المبكر بسبب الرصيد/الصفقات المفتوحة
 
 # ==================== Trailing SL ====================
@@ -327,6 +328,25 @@ ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 ص�
 # ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
 AI_UNAVAILABLE_ALLOW_ENTRY = False      # هجين: لا دخول إطلاقاً إذا فشل الـ AI/الشبكة
 AI_FAIL_MIN_SCORE = 75                  # هجين: لا دخول طارئ إلا لإشارة قوية جداً
+
+# ==================== 🧬 Similarity Engine v2.0 (من Claude v6.5 بدمج آمن) ====================
+SIMILARITY_FILTER_MODE = 'audit'        # audit أولاً: يتعلم ويسجل ولا يمنع حتى يثبت
+SIMILARITY_REQUIRE_AUDIT = True         # لا حجب فعلي إلا إذا أثبت التدقيق أنه يتنبأ صح
+SIMILARITY_K_NEAREST = 10
+SIMILARITY_MIN_NEIGHBORS = 5
+SIMILARITY_THRESHOLD = 0.20
+SIMILARITY_DISTANCE_CAP = 0.40
+SIMILARITY_AUDIT_MIN_TRADES = 20
+SIMILARITY_AUDIT_MIN_CORR = 0.10
+SIMILARITY_AUDIT_MIN_NET_GAIN = 0.0
+SIMILARITY_REPORT_FILE = 'similarity_report.json'
+SIMILARITY_WEIGHT_RSI = 1.5
+SIMILARITY_WEIGHT_VOLUME = 1.2
+SIMILARITY_WEIGHT_CONFIDENCE = 1.0
+SIMILARITY_WEIGHT_SCORE = 1.0
+SIMILARITY_WEIGHT_ALIGNMENT = 1.2
+SIMILARITY_WEIGHT_HYBRID = 1.0
+SIMILARITY_WEIGHT_DIRECTION = 2.0
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 

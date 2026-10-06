@@ -77,6 +77,13 @@ def run_learning_session():
         import adaptive_rules
         rules = adaptive_rules.update_rules()
 
+        # 🧬 تحديث محرك التشابه بعد أي إغلاقات جديدة
+        try:
+            import similarity_engine
+            similarity_engine.refresh()
+        except Exception as e:
+            logger.debug(f"similarity refresh: {e}")
+
         if not rules or rules.get('trades_used', 0) == 0:
             logger.info("⏳ [SCHEDULER] لا توجد صفقات موثقة بعد")
             return False

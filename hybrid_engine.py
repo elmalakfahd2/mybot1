@@ -78,10 +78,10 @@ def evaluate_signal(signal, analysis, score_details):
     allow = True
 
     # فلتر صلابة أساسي
-    if volume < 0.75 and not (alignment >= 9 and body >= 0.70 and orderbook >= 5):
+    if volume < 0.65 and not (alignment >= 9 and body >= 0.70 and orderbook >= 5):
         allow = False
         reasons.append(f'حجم ضعيف جداً {volume:.2f}x')
-    if alignment <= 4 and regime not in ('RANGE', 'NEUTRAL'):
+    if alignment <= 3.5 and regime not in ('RANGE', 'NEUTRAL'):
         allow = False
         reasons.append(f'ترابط ضعيف {alignment:.1f} في سوق غير رينج')
     if confidence < _f(getattr(cfg, 'MIN_CONFIDENCE_AUTO', 60), 60):
@@ -107,7 +107,7 @@ def evaluate_signal(signal, analysis, score_details):
         strategy = 'BREAKOUT'
         score += 12
         reasons.append('اختراق قوي بحجم وترابط')
-    elif alignment >= 8 and volume >= 1.0 and body >= 0.35 and aligned_momentum and orderbook >= 3:
+    elif alignment >= 8 and volume >= 0.9 and body >= 0.35 and aligned_momentum and orderbook >= 2:
         strategy = 'TREND_SCALP'
         score += 8
         reasons.append('ترند سليم قابل للخطف السريع')
@@ -116,21 +116,21 @@ def evaluate_signal(signal, analysis, score_details):
         score += 5
         reasons.append('ارتداد رينج فقط')
     else:
-        score -= 12
+        score -= 10
         reasons.append('لا توجد استراتيجية واضحة')
 
-    # عقوبات جودة
+    # عقوبات جودة — متوازنة وليست مشللة
     if volume < 1.0:
-        score -= 4
+        score -= 3
         reasons.append('حجم أقل من المتوسط')
     if volume < 0.8:
-        score -= 4
+        score -= 3
         reasons.append('حجم منخفض جداً')
     if alignment < 6:
-        score -= 5
+        score -= 4
         reasons.append('ترابط ضعيف')
     if orderbook <= 2:
-        score -= 4
+        score -= 3
         reasons.append('دفتر أوامر ضعيف')
     if funding_oi <= 4:
         score -= 2
