@@ -574,6 +574,18 @@ class MainSystem:
                     notifier.notify_trade_opened(result, signal, amount, leverage)
             elif result:
                 logger.info(f"✅ {symbol}: تم فتح الصفقة بنجاح")
+
+                # تفعيل Breakeven/Trailing فور فتح الصفقة حتى لا يبقى الوقف الأصلي بعد تحقق الربح
+                try:
+                    entry_for_trail = float(result.get('entry_price') or signal.get('entry_price') or 0)
+                    qty_for_trail = float(result.get('quantity') or result.get('executedQty') or 0)
+                    if entry_for_trail > 0 and qty_for_trail > 0:
+                        sl_for_trail, _ = core.calculate_dynamic_sl(symbol, entry_for_trail, pside)
+                        core.setup_trailing_sl(symbol, pside, entry_for_trail, qty_for_trail, sl_for_trail)
+                        logger.info(f"🛡️ Breakeven/Trailing مفعّل: {symbol} {pside}")
+                except Exception as trail_setup_err:
+                    logger.debug(f"trailing setup skipped: {trail_setup_err}")
+
                 self.last_signal_time = time.time()
                 self.signals_sent += 1
                 self._update_daily_stats(symbol, direction, 'OPEN', 0)
@@ -739,6 +751,11 @@ class MainSystem:
 
                     if _cfg('TRAILING_SL_ENABLED', True):
                         try:
+                            trailing_key = f"{symbol}_{position_side}"
+                            if trailing_key not in core._trailing_sl_positions:
+                                sl_price_fallback, _ = core.calculate_dynamic_sl(symbol, position_side, entry_price)
+                                core.setup_trailing_sl(symbol, position_side, entry_price, amount, sl_price_fallback)
+                                logger.info(f"🛡️ Breakeven/Trailing مفعّل retrospectively: {symbol} {position_side}")
                             core.update_trailing_sl(symbol, position_side, mark_price)
                         except Exception as e:
                             logger.debug(f"trailing {symbol}: {e}")

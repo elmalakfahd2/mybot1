@@ -1263,6 +1263,18 @@ def update_trailing_sl(symbol, position_side, current_price):
         entry_price = data['entry_price']
         quantity = data['quantity']
 
+        # بعد TP جزئي تتغير الكمية؛ نستخدم الكمية الحالية من Binance لتحديث الوقف
+        try:
+            positions_now = get_open_positions()
+            for pos in positions_now or []:
+                if pos.get("symbol") == symbol and pos.get("positionSide") == position_side:
+                    live_qty = abs(float(pos.get("positionAmt", 0) or 0))
+                    if live_qty > 0:
+                        quantity = live_qty
+                    break
+        except Exception:
+            pass
+
         if position_side == "LONG":
             profit_percent = ((current_price - entry_price) / entry_price) * 100
         else:
