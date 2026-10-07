@@ -784,8 +784,8 @@ def verify_tp_sl_created(symbol, position_side):
                 'sl_count': 0
             }
 
-        tp_orders = [o for o in open_orders if o.get('type') == 'TAKE_PROFIT_MARKET']
-        sl_orders = [o for o in open_orders if o.get('type') == 'STOP_MARKET']
+        tp_orders = [o for o in open_orders if o.get('type') in ('TAKE_PROFIT_MARKET', 'TAKE_PROFIT')]
+        sl_orders = [o for o in open_orders if o.get('type') in ('STOP_MARKET', 'STOP')]
 
         has_tp = len(tp_orders) > 0
         has_sl = len(sl_orders) > 0
@@ -2290,6 +2290,24 @@ def check_and_add_tp_sl_to_existing_positions():
                 if recreate_missing_tp(symbol, position_side, entry_price, quantity):
                     fixed += 1
                     logger.info(f"✅ تم إعادة إنشاء TP لـ {symbol}")
+                else:
+                    # إذا كان السعر تجاوز TP بالفعل والمنصة ترفض إعادة الأمر، نغلق لحماية الربح بدل الاستمرار بلا TP
+                    try:
+                        current_price = get_price(symbol)
+                        nearest_tp = calculate_tp_price(position_side, entry_price, TP_PERCENT)
+                        passed_tp = (
+                            (position_side == "LONG" and current_price is not None and current_price >= nearest_tp) or
+                            (position_side == "SHORT" and current_price is not None and current_price <= nearest_tp)
+                        )
+                        if passed_tp:
+                            logger.warning(f"⚠️ {symbol} تجاوز TP وإعادة الإنشاء فشلت — إغلاق لحماية الربح")
+                            if close_position_safe(symbol, position_side):
+                                fixed += 1
+                                logger.info(f"✅ تم إغلاق {symbol} بعد تجاوز TP")
+                        else:
+                            logger.error(f"❌ فشل إعادة TP لـ {symbol} والسعر لم يصل للهدف بعد")
+                    except Exception as close_err:
+                        logger.error(f"خطأ معالجة فشل TP لـ {symbol}: {close_err}")
 
         return fixed
     except Exception as e:
