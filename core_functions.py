@@ -2233,6 +2233,20 @@ def check_and_add_tp_sl_to_existing_positions():
             symbol = position["symbol"]
             position_side = position["positionSide"]
 
+            # 🧹 إغلاق بقايا الصفقات بعد TP الجزئي حتى لا تبقى كميات صغيرة بلا هدف
+            try:
+                entry_price_dust = float(position.get("entryPrice", 0) or 0)
+                quantity_dust = abs(float(position.get("positionAmt", 0) or 0))
+                notional_dust = entry_price_dust * quantity_dust
+                dust_limit = float(getattr(cfg, 'DUST_POSITION_NOTIONAL_USDT', 0.5))
+                if quantity_dust > 0 and notional_dust < dust_limit:
+                    logger.warning(f"🧹 {symbol} بقايا صفقة غبار {notional_dust:.4f}$ — إغلاقها")
+                    if close_position_safe(symbol, position_side):
+                        fixed += 1
+                    continue
+            except Exception as dust_err:
+                logger.debug(f"dust check skipped: {dust_err}")
+
             has_tp, has_sl, details = verify_tp_sl_created(symbol, position_side)
 
             if not has_sl:

@@ -117,6 +117,7 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 TRADE_USDT = 10
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 4               # هجين: حد التعرض الكلي أقل من النسخة السابقة
+DUST_POSITION_NOTIONAL_USDT = 0.50   # أي بقايا أقل من نصف دولار تُغلق فوراً
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
