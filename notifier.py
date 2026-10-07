@@ -234,7 +234,15 @@ def notify_trade_opened(result, signal=None, amount=None, leverage=None):
                 msg += f"   • TP{t.get('level')}: <code>{_fmt(t.get('tp_price'))}</code>{pct_s}\n"
 
         if tp.get("sl_success"):
-            msg += f"\n🛡️ <b>SL:</b> <code>{_fmt(tp.get('sl_price'))}</code>\n"
+            sl_pct_s = ""
+            try:
+                sl_pct = (float(tp.get("sl_price")) - float(entry)) / float(entry) * 100
+                if pside == "SHORT":
+                    sl_pct = -sl_pct
+                sl_pct_s = f" ({sl_pct:+.2f}%)"
+            except Exception:
+                pass
+            msg += f"\n🛡️ <b>SL:</b> <code>{_fmt(tp.get('sl_price'))}</code>{sl_pct_s}\n"
         else:
             msg += "\n🚨 <b>تحذير: لا يوجد SL!</b>\n"
 

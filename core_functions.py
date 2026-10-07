@@ -1179,7 +1179,8 @@ RISK_STATE_FILE = "risk_state.json"
 RISK_FIREBASE_DOC = "risk_state"
 
 
-def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=None):
+def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=None,
+                      breakeven_trigger=None, trailing_trigger=None, trailing_distance=None):
     try:
         key = f"{symbol}_{position_side}"
 
@@ -1200,6 +1201,9 @@ def setup_trailing_sl(symbol, position_side, entry_price, quantity, sl_price=Non
             'lowest_price': entry_price,
             'breakeven_set': False,
             'trailing_active': False,
+            'breakeven_trigger': breakeven_trigger if breakeven_trigger is not None else BREAKEVEN_TRIGGER,
+            'trailing_trigger': trailing_trigger if trailing_trigger is not None else TRAILING_SL_TRIGGER,
+            'trailing_distance': trailing_distance if trailing_distance is not None else TRAILING_SL_DISTANCE,
             'created_at': time.time()
         }
 
@@ -1290,8 +1294,11 @@ def update_trailing_sl(symbol, position_side, current_price):
                 data['lowest_price'] = current_price
 
         tp1_level = TP_MULTIPLE_LEVELS[0]
+        be_trigger = data.get('breakeven_trigger', BREAKEVEN_TRIGGER)
+        trail_trigger = data.get('trailing_trigger', TRAILING_SL_TRIGGER)
+        trail_distance = data.get('trailing_distance', TRAILING_SL_DISTANCE)
 
-        if not data['breakeven_set'] and profit_percent >= BREAKEVEN_TRIGGER:
+        if not data['breakeven_set'] and profit_percent >= be_trigger:
             if position_side == "LONG":
                 breakeven_price = entry_price * (1 + BREAKEVEN_OFFSET_PERCENT / 100)
             else:
@@ -1303,16 +1310,16 @@ def update_trailing_sl(symbol, position_side, current_price):
                 updated = True
                 logger.info(f"🔒 {symbol} - Breakeven")
 
-        if data['breakeven_set'] and profit_percent >= TRAILING_SL_TRIGGER:
+        if data['breakeven_set'] and profit_percent >= trail_trigger:
             if position_side == "LONG":
-                new_sl = data['highest_price'] * (1 - TRAILING_SL_DISTANCE / 100)
+                new_sl = data['highest_price'] * (1 - trail_distance / 100)
                 if new_sl > data['current_sl']:
                     if update_sl_order(symbol, position_side, data['current_sl'], new_sl, quantity):
                         data['current_sl'] = new_sl
                         data['trailing_active'] = True
                         updated = True
             else:
-                new_sl = data['lowest_price'] * (1 + TRAILING_SL_DISTANCE / 100)
+                new_sl = data['lowest_price'] * (1 + trail_distance / 100)
                 if new_sl < data['current_sl']:
                     if update_sl_order(symbol, position_side, data['current_sl'], new_sl, quantity):
                         data['current_sl'] = new_sl
@@ -1668,6 +1675,16 @@ def calculate_dynamic_sl(symbol, entry_price, position_side):
         atr_percent = (atr / entry_price) * 100 * SL_ATR_MULTIPLIER
         sl_percent = max(SL_MIN_PERCENT, min(SL_MAX_PERCENT, atr_percent))
 
+        # سقف خسارة الصفقة الواحدة: لا نسمح للوقف أن يتجاوز حد الخسارة المطلوب
+        try:
+            max_loss_usdt = float(getattr(cfg, 'MAX_TRADE_LOSS_USDT', 0) or 0)
+            notional = float(getattr(cfg, 'TRADE_USDT', 10)) * float(getattr(cfg, 'LEVERAGE', 10))
+            if max_loss_usdt > 0 and notional > 0:
+                loss_cap_percent = (max_loss_usdt / notional) * 100
+                sl_percent = min(sl_percent, loss_cap_percent)
+        except Exception:
+            pass
+
         if position_side == "LONG":
             sl_price = entry_price * (1 - sl_percent / 100)
         else:
@@ -1691,11 +1708,16 @@ def calculate_tp_price(position_side, entry_price, tp_percent):
 
 
 def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price,
-                              tp_levels, tp_ratios, sl_percent=None):
+                              tp_levels, tp_ratios, sl_percent=None, exit_mode=None):
     try:
         client_obj = get_client()
         if not client_obj:
             return {'sl_success': False, 'tp_orders': [], 'total_tp_quantity': 0, 'algo_ids': {}}
+
+        # وضع الخروج الواسع: أهداف أكبر وتوزيع مختلف للصفقات القوية فقط
+        if exit_mode == 'wide':
+            tp_levels = list(getattr(cfg, 'WIDE_TP_R_MULTIPLES', tp_levels))
+            tp_ratios = list(getattr(cfg, 'WIDE_TP_RATIOS', tp_ratios))
 
         ratios_sum = sum(tp_ratios)
         if abs(ratios_sum - 1.0) > 0.01:
@@ -1740,7 +1762,8 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
         try:
             if 'actual_sl_percent' not in locals() or actual_sl_percent is None:
                 actual_sl_percent = float(sl_percent or SL_PERCENT)
-            r_multipliers = list(getattr(cfg, 'TP_R_MULTIPLES', [1.2, 2.0, 3.2]))
+            r_multipliers = list(getattr(cfg, 'WIDE_TP_R_MULTIPLES' if exit_mode == 'wide' else 'TP_R_MULTIPLES',
+                                         getattr(cfg, 'TP_R_MULTIPLES', [1.2, 2.0, 3.2])))
             tp_min = float(getattr(cfg, 'TP_PERCENT', 1.2))
             tp_max = float(getattr(cfg, 'TP_MAX_PERCENT', 5.0))
             dynamic_tp_levels = []
@@ -1853,7 +1876,7 @@ def _apply_leverage(client_obj, symbol, leverage):
 
 
 def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
-                                        tp_levels=None, tp_ratios=None, sl_percent=None):
+                                        tp_levels=None, tp_ratios=None, sl_percent=None, exit_mode=None):
     try:
         if tp_levels is None:
             tp_levels = TP_MULTIPLE_LEVELS
@@ -1920,7 +1943,8 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
             entry_price=entry_price,
             tp_levels=tp_levels,
             tp_ratios=tp_ratios,
-            sl_percent=sl_percent
+            sl_percent=sl_percent,
+            exit_mode=exit_mode
         )
 
         time.sleep(2)

@@ -77,6 +77,20 @@ def evaluate_signal(signal, analysis, score_details):
     score = total_score
     allow = True
 
+    # 🧠 ذاكرة الرموز: لا تكرر العملات التي ثبتت خسارتها مؤخراً
+    try:
+        import trade_memory
+        symbol_mem = trade_memory.get_symbol_score(symbol) or {}
+        info['symbol_memory'] = symbol_mem
+        if not symbol_mem.get('should_trade', True):
+            allow = False
+            reasons.append(f'الرمز ضعيف حديثاً: score={symbol_mem.get("score", 0):.0f}')
+        elif _f(symbol_mem.get('score', 100), 100) < 50:
+            score -= 10
+            reasons.append('عقوبة رمز ضعيف')
+    except Exception:
+        pass
+
     # فلتر صلابة أساسي
     if volume < 0.65 and not (alignment >= 9 and body >= 0.70 and orderbook >= 5):
         allow = False

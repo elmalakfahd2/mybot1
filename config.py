@@ -121,16 +121,17 @@ DUST_POSITION_NOTIONAL_USDT = 0.50   # أي بقايا أقل من نصف دول
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.2, 2.0, 3.5]   # 🔥 v5.9: TP1 أقرب (40% من الصفقة تُقفل ربحاً مبكراً)
-TP_QUANTITY_RATIOS = [0.4, 0.35, 0.25]
+TP_MULTIPLE_LEVELS = [1.3, 2.0, 3.0]   # R:R أوضح: الهدف الأول أقرب وأقوى
+TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]   # نغلق نصف الصفقة مبكراً لحماية الربح
 SL_PERCENT = 1.3
 TP_PERCENT = 1.2                   # 🔥 v5.9: كان 2.5 — متوسط MFE الفعلي ~1% فقط، كان الربح لا يُلامس أبداً
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
-SL_ATR_MULTIPLIER = 2.0
-SL_MIN_PERCENT = 1.0
-SL_MAX_PERCENT = 1.6
+SL_ATR_MULTIPLIER = 1.2
+SL_MIN_PERCENT = 0.60
+SL_MAX_PERCENT = 0.90
+MAX_TRADE_LOSS_USDT = 0.75           # لا تسمح بخسارة صفقة واحدة أكثر من هذا المقدار تقريباً
 
 # ==================== Hybrid Engine v1 ====================
 USE_HYBRID_ENGINE = True
@@ -171,7 +172,7 @@ RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 60        # هجين متوازن: صارم لكن غير مشلول في السوق المتذبذب
+MIN_SCORE_REQUIRED = 75        # بياناتك: فقط 75+ كان رابحاً؛ 65-74 خاسر تاريخياً
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -215,10 +216,10 @@ DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً ل
 
 # ==================== Trailing SL ====================
 TRAILING_SL_ENABLED = True
-TRAILING_SL_TRIGGER = 0.6          # هجين: أسرع من القديم وأقل إحكاماً من 0.5
-TRAILING_SL_DISTANCE = 0.3         # هجين: يعطي الصفقة مساحة تنفس قبل القفل
-BREAKEVEN_TRIGGER = 0.5            # انقل SL للتعادل+ عند +0.5%
-BREAKEVEN_OFFSET_PERCENT = 0.12    # يغطي العمولة + انزلاق بسيط
+TRAILING_SL_TRIGGER = 0.5          # يبدأ حماية الربح مبكراً
+TRAILING_SL_DISTANCE = 0.25        # قفل أسرع للربح المتبقي
+BREAKEVEN_TRIGGER = 0.4            # انقل SL للتعادل+ عند +0.4%
+BREAKEVEN_OFFSET_PERCENT = 0.10    # يغطي العمولة + انزلاق بسيط
 
 # ==================== الحماية ====================
 MAX_CONSECUTIVE_LOSSES = 2
@@ -328,7 +329,7 @@ ADAPTIVE_MIN_TRADES_PER_HOUR = 10       # كان 4: حظر ساعة من 4-5 ص�
 
 # ==================== 🔥 v5.8/v1.1: إضافات إصلاح التداول والتعلم ====================
 AI_UNAVAILABLE_ALLOW_ENTRY = False      # هجين: لا دخول إطلاقاً إذا فشل الـ AI/الشبكة
-AI_FAIL_MIN_SCORE = 75                  # هجين: لا دخول طارئ إلا لإشارة قوية جداً
+AI_FAIL_MIN_SCORE = 80                  # لا دخول طارئ إلا لإشارة استثنائية إذا تعطل AI
 
 # ==================== 🧬 Similarity Engine v2.0 (من Claude v6.5 بدمج آمن) ====================
 SIMILARITY_FILTER_MODE = 'audit'        # audit أولاً: يتعلم ويسجل ولا يمنع حتى يثبت
@@ -348,6 +349,19 @@ SIMILARITY_WEIGHT_SCORE = 1.0
 SIMILARITY_WEIGHT_ALIGNMENT = 1.2
 SIMILARITY_WEIGHT_HYBRID = 1.0
 SIMILARITY_WEIGHT_DIRECTION = 2.0
+
+# ==================== Wide Exit Mode للصفقات عالية الثقة ====================
+WIDE_EXIT_ENABLED = True
+WIDE_EXIT_MIN_SCORE = 80          # أو تأكيد AI قوي مع نقاط >=75
+WIDE_EXIT_MIN_CONF = 75
+WIDE_SL_MULTIPLIER = 1.8          # نوسع الوقف عن الوقف العادي
+WIDE_SL_MIN_PERCENT = 1.0
+WIDE_SL_MAX_PERCENT = 1.8
+WIDE_TP_R_MULTIPLES = [1.5, 2.5, 4.0]
+WIDE_TP_RATIOS = [0.4, 0.3, 0.3]
+WIDE_BREAKEVEN_TRIGGER = 0.8
+WIDE_TRAILING_TRIGGER = 1.0
+WIDE_TRAILING_DISTANCE = 0.5
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 

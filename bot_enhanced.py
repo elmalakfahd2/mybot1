@@ -185,7 +185,8 @@ main_kb = ReplyKeyboardMarkup([
     ["📊 الأرباح الأسبوعية", "📈 الأرباح الشهرية"],
     ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
     ["🔎 فحص الأوامر المشروطة", "🧠 التعلم التلقائي"],
-    ["📊 تقرير سريع", "👻 تقرير الظل"]
+    ["📊 تقرير سريع", "👻 تقرير الظل"],
+    ["🧠 تقرير التشخيص"]
 ], resize_keyboard=True)
 
 
@@ -795,6 +796,24 @@ async def handle_message(update: Update, context: CallbackContext):
     # ==================== تقارير ====================
     if text == "📋 تقرير الأداء":
         await _show_enhanced_performance_report(update)
+        return
+
+    if text == "🧠 تقرير التشخيص":
+        try:
+            import learning_report
+            report = learning_report.build_report()
+            await update.message.reply_text(report[:3900], parse_mode="HTML", reply_markup=main_kb)
+            try:
+                with open("learning_report.txt", "w", encoding="utf-8") as f:
+                    f.write(report)
+                await update.message.reply_document(document=open("learning_report.txt", "rb"),
+                                                    caption="📎 تقرير التشخيص الكامل",
+                                                    reply_markup=main_kb)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"تقرير التشخيص: {e}")
+            await update.message.reply_text("❌ تعذر إنشاء تقرير التشخيص", reply_markup=main_kb)
         return
 
     # ==================== تحديث الأوامر ====================

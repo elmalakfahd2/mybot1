@@ -1266,6 +1266,18 @@ def generate_sniper_signal(symbol):
         signal['score_details'] = score_details
         signal['auto_executable'] = total_score >= required_score
 
+        # وضع الخروج الواسع: للصفقات عالية الثقة فقط، لنمنع الإغلاق المبكر بسبب ارتداد طبيعي
+        try:
+            ai_rec_now = str(signal.get('ai_recommendation') or signal.get('groq_recommendation') or '')
+            ai_conf_now = float(signal.get('ai_confidence') or signal.get('confidence') or 0)
+            wide_by_score = _cfg('WIDE_EXIT_ENABLED', True) and total_score >= _cfg('WIDE_EXIT_MIN_SCORE', 80)
+            wide_by_ai = (_cfg('WIDE_EXIT_ENABLED', True) and total_score >= 75 and
+                          ai_rec_now == 'تأكيد' and ai_conf_now >= _cfg('WIDE_EXIT_MIN_CONF', 75))
+            signal['exit_mode'] = 'wide' if (wide_by_score or wide_by_ai) else 'normal'
+            score_details['exit_mode'] = signal['exit_mode']
+        except Exception:
+            signal['exit_mode'] = 'normal'
+
         if total_score >= required_score:
             logger.info(f"✅ {symbol} - مقبول! النقاط: {total_score}/{100} (الحد {required_score})")
             return signal

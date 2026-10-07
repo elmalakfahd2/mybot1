@@ -560,12 +560,18 @@ class MainSystem:
                 except Exception:
                     pass
 
+            # Wide Exit Mode: للصفقات القوية فقط، نعطي السعر مساحة ارتداد طبيعية
+            exit_mode = signal.get('exit_mode', 'normal')
+            if exit_mode == 'wide' and _cfg('WIDE_EXIT_ENABLED', True):
+                wide_pct = sl_percent * _cfg('WIDE_SL_MULTIPLIER', 1.8)
+                sl_percent = max(_cfg('WIDE_SL_MIN_PERCENT', 1.0), min(_cfg('WIDE_SL_MAX_PERCENT', 1.8), wide_pct))
+
             leverage = _cfg('LEVERAGE', 15)
             logger.info(f"✅ {symbol}: اجتاز كل الفحوص - جاري التنفيذ ({amount}$ | SL {sl_percent:.2f}%)")
 
             # 🔥 v5.8: التوقيع الصحيح (كان يُمرَّر 6 وسائط لدالة تقبل 4 → TypeError ولا تُفتح صفقة)
             result = core.place_market_order_with_multiple_tp(
-                symbol, direction, amount, leverage, sl_percent=sl_percent
+                symbol, direction, amount, leverage, sl_percent=sl_percent, exit_mode=exit_mode
             )
 
             if result and result.get('closed_due_to_failure'):
@@ -580,9 +586,19 @@ class MainSystem:
                     entry_for_trail = float(result.get('entry_price') or signal.get('entry_price') or 0)
                     qty_for_trail = float(result.get('quantity') or result.get('executedQty') or 0)
                     if entry_for_trail > 0 and qty_for_trail > 0:
-                        sl_for_trail, _ = core.calculate_dynamic_sl(symbol, entry_for_trail, pside)
-                        core.setup_trailing_sl(symbol, pside, entry_for_trail, qty_for_trail, sl_for_trail)
-                        logger.info(f"🛡️ Breakeven/Trailing مفعّل: {symbol} {pside}")
+                        if exit_mode == 'wide':
+                            be_trig = _cfg('WIDE_BREAKEVEN_TRIGGER', 0.8)
+                            trail_trig = _cfg('WIDE_TRAILING_TRIGGER', 1.0)
+                            trail_dist = _cfg('WIDE_TRAILING_DISTANCE', 0.5)
+                        else:
+                            be_trig = _cfg('BREAKEVEN_TRIGGER', 0.4)
+                            trail_trig = _cfg('TRAILING_SL_TRIGGER', 0.5)
+                            trail_dist = _cfg('TRAILING_SL_DISTANCE', 0.25)
+                        core.setup_trailing_sl(symbol, pside, entry_for_trail, qty_for_trail, None,
+                                               breakeven_trigger=be_trig,
+                                               trailing_trigger=trail_trig,
+                                               trailing_distance=trail_dist)
+                        logger.info(f"🛡️ Breakeven/Trailing مفعّل ({exit_mode}): {symbol} {pside}")
                 except Exception as trail_setup_err:
                     logger.debug(f"trailing setup skipped: {trail_setup_err}")
 
