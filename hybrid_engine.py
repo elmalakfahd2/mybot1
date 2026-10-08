@@ -159,13 +159,61 @@ def evaluate_signal(signal, analysis, score_details):
         score -= 5
         reasons.append('RSI معادي للاتجاه')
 
+    # 🏛️ سياق السوق: اتجاه فريم أعلى + بنية السعر + منع الترابط
+    try:
+        import market_structure
+        context = market_structure.get_market_context(symbol, direction)
+        htf_bias = (context.get('htf') or {}).get('bias', 'UNKNOWN')
+        struct = context.get('structure') or {}
+        corr = context.get('correlation') or {}
+        info['htf_bias'] = htf_bias
+        info['market_structure'] = struct
+        info['correlation'] = corr
+
+        desired_htf = 'BULLISH' if direction == 'BUY' else 'BEARISH'
+        opposite_htf = 'BEARISH' if direction == 'BUY' else 'BULLISH'
+        if htf_bias == desired_htf:
+            score += 3
+            reasons.append('HTF مع الاتجاه')
+        elif htf_bias == opposite_htf:
+            score -= 6
+            reasons.append('HTF عكس الاتجاه')
+
+        setup = struct.get('setup', 'NONE')
+        if setup in ('BREAKOUT', 'PULLBACK'):
+            score += 5
+            reasons.append(f'بنية سعر واضحة: {setup}')
+            if strategy == 'NO_SETUP':
+                strategy = 'TREND_SCALP'
+        elif setup == 'RANGE_REVERSAL':
+            score += 2
+            reasons.append('ارتداد رينج من البنية')
+        elif setup == 'NONE':
+            score -= 4
+            reasons.append('لا توجد بنية سعر واضحة')
+
+        if corr.get('conflict'):
+            allow = False
+            reasons.append(corr.get('reason', 'تعارض ارتباط'))
+    except Exception as e:
+        logger.debug(f"market_structure skipped: {e}")
+
     score = max(0, min(100, score))
     info['hybrid_points'] = round(score - total_score, 2)
     info['hybrid_strategy'] = strategy
     info['hybrid_reasons'] = reasons
 
     min_required = _f(getattr(cfg, 'MIN_SCORE_REQUIRED', 55), 55)
-    if score < min_required:
+    opp_min = _f(getattr(cfg, 'OPPORTUNITY_MIN_SCORE', 70), 70)
+    opportunity_candidate = (
+        score >= opp_min and score < min_required and
+        strategy in ('TREND_SCALP', 'BREAKOUT') and
+        volume >= 1.0 and alignment >= 8 and body >= 0.45 and orderbook >= 3
+    )
+    if opportunity_candidate:
+        info['opportunity_candidate'] = True
+        reasons.append('فرصة محتملة بانتظار AI')
+    elif score < min_required:
         allow = False
         reasons.append(f'النقاط النهائية {score:.0f} < {min_required:.0f}')
 

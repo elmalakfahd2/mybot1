@@ -1278,6 +1278,25 @@ def generate_sniper_signal(symbol):
         except Exception:
             signal['exit_mode'] = 'normal'
 
+        # فرص محدودة 70-74: لا تدخل إلا إذا أكد AI وكانت الإشارة قوية فعلاً
+        try:
+            opp_candidate = bool(score_details.get('opportunity_candidate'))
+            ai_rec_now = str(signal.get('ai_recommendation') or signal.get('groq_recommendation') or '')
+            ai_conf_now = float(signal.get('ai_confidence') or signal.get('confidence') or 0)
+            vol_now = _f(signal.get('volume_ratio') or (analysis.get('volume_analysis') or {}).get('volume_5m_ratio'), 0)
+            body_now = abs(_f((analysis.get('price_action') or {}).get('body_ratio'), 0))
+            strategy_now = score_details.get('hybrid_strategy')
+            symbol_mem_now = (score_details.get('symbol_memory') or {})
+            if (opp_candidate and total_score >= _cfg('OPPORTUNITY_MIN_SCORE', 70) and
+                ai_rec_now == 'تأكيد' and ai_conf_now >= 75 and
+                strategy_now in ('TREND_SCALP', 'BREAKOUT') and
+                vol_now >= 1.2 and body_now >= 0.5 and symbol_mem_now.get('should_trade', True)):
+                required_score = total_score
+                score_details['opportunity_trade'] = True
+                logger.info(f"🎯 فرصة محدودة مقبولة {symbol}: {total_score:.0f} AI={ai_conf_now:.0f}%")
+        except Exception:
+            pass
+
         if total_score >= required_score:
             logger.info(f"✅ {symbol} - مقبول! النقاط: {total_score}/{100} (الحد {required_score})")
             return signal

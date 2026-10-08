@@ -945,6 +945,12 @@ class MainSystem:
                 except Exception as e:
                     logger.error(f"❌ [START] فشل {name}: {e}")
 
+            # جدولة التعلم/التحقق من الإغلاقات — كانت معرفة لكن لا تُشغَّل
+            try:
+                self.scheduler_loop()
+            except Exception as _e:
+                logger.warning(f"⚠️ [START] scheduler_loop: {_e}")
+
             # 🔥 فحص الأداء اليومي — حكم آلي على Telegram
             try:
                 import performance_check

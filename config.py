@@ -172,7 +172,9 @@ RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
 # ==================== نظام النقاط ====================
-MIN_SCORE_REQUIRED = 75        # بياناتك: فقط 75+ كان رابحاً؛ 65-74 خاسر تاريخياً
+MIN_SCORE_REQUIRED = 75        # الحد الأساسي الصارم
+OPPORTUNITY_MODE = True        # السماح بفرص 70-74 فقط إذا كانت قوية جداً وAI يؤكد
+OPPORTUNITY_MIN_SCORE = 70
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 

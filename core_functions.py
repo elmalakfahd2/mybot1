@@ -2194,8 +2194,26 @@ def recreate_missing_tp(symbol, position_side, entry_price, quantity):
             tp_levels = [TP_PERCENT]
             tp_ratios = [1.0]
 
+        # FIX: الكميات الصغيرة كانت تتقرب إلى 0 لكل مستوى فيفشل الإصلاح بلا نهاية.
+        # نرحّل كمية المستوى الصغير للمستوى التالي، والأخير يأخذ كل المتبقي.
+        total_qty = _round_quantity(symbol, quantity)
+        planned = []
+        carry = 0.0
+        remaining = total_qty
+        for idx, ratio in enumerate(tp_ratios):
+            is_last = idx == len(tp_ratios) - 1
+            q = remaining if is_last else _round_quantity(symbol, quantity * ratio + carry)
+            q = min(q, remaining)
+            if q <= 0:
+                carry += quantity * ratio
+                planned.append(0.0)
+                continue
+            planned.append(q)
+            remaining = _round_quantity(symbol, remaining - q)
+            carry = 0.0
+
         for i, (tp_percent, ratio) in enumerate(zip(tp_levels, tp_ratios)):
-            level_quantity = _round_quantity(symbol, quantity * ratio)
+            level_quantity = planned[i] if i < len(planned) else 0.0
             if level_quantity <= 0:
                 continue
 

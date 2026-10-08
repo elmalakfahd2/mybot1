@@ -344,8 +344,9 @@ def get_required_score(direction):
         extra = int(rules.get('min_score_boost', 0))
         extra += int(rules.get('direction_penalty', {}).get(direction, 0))
         cap = int(_c('ADAPTIVE_MAX_TOTAL_BOOST', 12))
-        # ملاحظة: min_score_boost سالب (من تعلم الظل) يمر هنا ويخفض الحد
-        return base + min(extra, cap)
+        # التعلم يمكنه خفض الحد فقط، ولا يرفعه فوق base حتى لا يخنق البوت
+        boost = min(extra, cap)
+        return base + min(boost, 0)
     except Exception:
         return base
 
