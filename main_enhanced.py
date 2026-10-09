@@ -173,6 +173,44 @@ def _cfg(name, default=None):
         return default
 
 
+ADD_ON_STATE_FILE = "add_on_state.json"
+
+
+def _load_add_on_state():
+    try:
+        with open(ADD_ON_STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _save_add_on_state(state):
+    try:
+        with open(ADD_ON_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def get_bot_owned_positions():
+    """صفقات البوت المحفوظة محلياً — يستخدمها daily_reporter."""
+    try:
+        state = bot_enhanced.load_state() or []
+        return state if isinstance(state, list) else []
+    except Exception:
+        return []
+
+
+def get_manual_positions():
+    """صفقات يدوية غير مسجلة في حالة البوت."""
+    try:
+        live = core.get_open_positions() or []
+        bot_keys = {f"{p.get('symbol')}_{p.get('positionSide')}" for p in get_bot_owned_positions()}
+        return [p for p in live if f"{p.get('symbol')}_{p.get('positionSide')}" not in bot_keys]
+    except Exception:
+        return []
+
+
 # 🔥 حالة عامة على مستوى الوحدة — يتوقعها bot_enhanced (أزرار التلغرام)
 _auto_scan_enabled = True
 _auto_trading_enabled = True
@@ -698,11 +736,50 @@ class MainSystem:
                         position_side = "LONG" if float(pos.get('positionAmt', 0)) > 0 else "SHORT"
                     mark_price = core.get_price(symbol) or entry_price
 
+                    # Add-on Mode: عند خسارة 5$ نفتح 5$ إضافية بنفس الاتجاه مرة واحدة فقط
+                    try:
+                        if _cfg('ADD_ON_ENABLED', True):
+                            _state_positions = bot_enhanced.load_state() or []
+                            pos_info_add = next((x for x in _state_positions if x.get('symbol') == symbol and x.get('positionSide') == position_side), {}) or {}
+                            add_key = f"{symbol}_{position_side}"
+                            add_state = _load_add_on_state()
+                            add_count = int(add_state.get(add_key, 0) or 0)
+                            loss_threshold = float(_cfg('ADD_ON_LOSS_USDT', 5.0))
+                            live_pnl = float(position.get('unrealizedProfit', 0) or position_pnl or 0)
+                            if live_pnl <= -loss_threshold and add_count < int(_cfg('ADD_ON_MAX_COUNT', 1)):
+                                add_size = float(_cfg('ADD_ON_SIZE_USDT', 5.0))
+                                add_leverage = int(float(position.get('leverage') or _cfg('LEVERAGE', 10)))
+                                add_sl_pct = float(_cfg('EXTREME_WIDE_SL_PERCENT', 7.0))
+                                logger.warning(f"➕ ADD-ON {symbol} {position_side}: خسارة {live_pnl:.2f}$ — فتح إضافة {add_size}$")
+                                add_res = core.place_market_order_with_multiple_tp(
+                                    symbol, position_side, add_size, add_leverage,
+                                    sl_percent=add_sl_pct, exit_mode='wide'
+                                )
+                                if add_res and add_res.get('success'):
+                                    add_state[add_key] = add_count + 1
+                                    _save_add_on_state(add_state)
+                                    try:
+                                        st = bot_enhanced.load_state() or []
+                                        for x in st:
+                                            if x.get('symbol') == symbol and x.get('positionSide') == position_side:
+                                                x['quantity'] = float(x.get('quantity', 0) or 0) + float(add_res.get('quantity', 0) or 0)
+                                                x['amount_usdt'] = float(x.get('amount_usdt', 0) or 0) + add_size
+                                                break
+                                        bot_enhanced._save_state(st)
+                                    except Exception:
+                                        pass
+                                    logger.info(f"✅ ADD-ON نجح: {symbol} {position_side}")
+                                else:
+                                    logger.error(f"❌ ADD-ON فشل: {symbol} {position_side}")
+                    except Exception as add_err:
+                        logger.debug(f"add-on skipped: {add_err}")
+
                     # Hybrid Time Stop: الصفقة البطيئة خسارة محتملة — نخرج قبل أن تتحول
                     try:
                         if _cfg('TIME_STOP_ENABLED', True):
                             pos_key = f"{symbol}_{position_side}"
-                            pos_info = (getattr(bot_enhanced, 'open_positions', {}) or {}).get(pos_key, {}) or {}
+                            _state_positions = bot_enhanced.load_state() or []
+                            pos_info = next((x for x in _state_positions if x.get('symbol') == symbol and x.get('positionSide') == position_side), {}) or {}
                             entry_time = pos_info.get('entry_time')
                             entry_dt = None
                             if entry_time:
@@ -789,17 +866,21 @@ class MainSystem:
     def record_missing_closed_trades(self):
         """يسجل الصفقات التي أُغلقت عبر TP/SL من Binance ولم تُسجل محلياً بعد."""
         try:
-            bot_positions = getattr(bot_enhanced, 'open_positions', {}) or {}
+            bot_positions = bot_enhanced.load_state() or []
             if not bot_positions:
                 return
             live_positions = core.get_open_positions_strict() or []
             live_keys = {f"{p.get('symbol')}_{p.get('positionSide')}" for p in live_positions}
             now_ms = int(time.time() * 1000)
-            for key, info in list(bot_positions.items()):
+            for info in list(bot_positions):
                 try:
+                    symbol = info.get('symbol')
+                    side = info.get('positionSide') or info.get('direction')
+                    if not symbol or not side:
+                        continue
+                    key = f"{symbol}_{side}"
                     if key in live_keys:
                         continue
-                    symbol, side = key.rsplit('_', 1)
                     entry_price = float(info.get('entry_price') or 0)
                     quantity = abs(float(info.get('quantity') or info.get('positionAmt') or 0))
                     entry_time_iso = info.get('entry_time')

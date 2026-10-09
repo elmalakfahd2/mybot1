@@ -1234,7 +1234,7 @@ def update_sl_order(symbol, position_side, old_sl, new_sl, quantity):
             'symbol': symbol,
             'side': close_side,
             'type': 'STOP_MARKET',
-            'quantity': quantity,
+            'quantity': _round_quantity(symbol, quantity),
             'stopPrice': formatted_sl,
             'positionSide': position_side,
             'timeInForce': 'GTC'
@@ -1638,6 +1638,15 @@ def get_consecutive_losses():
 
 def calculate_dynamic_sl(symbol, entry_price, position_side):
     try:
+        # وضع التنفس العميق: 70% من الهامش = 7% حركة سعرية عند رافعة 10x
+        if getattr(cfg, 'EXTREME_WIDE_MODE', False):
+            wide_pct = float(getattr(cfg, 'EXTREME_WIDE_SL_PERCENT', 7.0))
+            if position_side == "LONG":
+                sl_price = entry_price * (1 - wide_pct / 100)
+            else:
+                sl_price = entry_price * (1 + wide_pct / 100)
+            return sl_price, wide_pct
+
         if not DYNAMIC_SL_ENABLED:
             if position_side == "LONG":
                 sl_price = entry_price * (1 - SL_PERCENT / 100)

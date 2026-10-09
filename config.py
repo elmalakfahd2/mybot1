@@ -213,7 +213,7 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # هجين: مفعل لكن الحد أقل تشدداً من النسخة السابقة
-DAILY_MAX_LOSS_USDT = 20.0             # حسب إعدادك الأساسي: حد يومي 20$
+DAILY_MAX_LOSS_USDT = 30.0             # طلبك: توقف يومي عند -30$
 DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً لتجنب التوقف المبكر بسبب الرصيد/الصفقات المفتوحة
 
 # ==================== Trailing SL ====================
@@ -364,6 +364,16 @@ WIDE_TP_RATIOS = [0.4, 0.3, 0.3]
 WIDE_BREAKEVEN_TRIGGER = 0.8
 WIDE_TRAILING_TRIGGER = 1.0
 WIDE_TRAILING_DISTANCE = 0.5
+
+# ==================== Extreme Wide + Add-on Mode ====================
+# نعم: 70% من الهامش 10$ = خطرة 7$ للصفقة الأولى
+EXTREME_WIDE_MODE = True
+EXTREME_WIDE_SL_PERCENT = 7.0        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
+EXTREME_WIDE_MAX_TRADE_LOSS_USDT = 10.0
+ADD_ON_ENABLED = True
+ADD_ON_LOSS_USDT = 5.0               # عند خسارة 5$ نفتح إضافة
+ADD_ON_SIZE_USDT = 5.0               # الإضافة بـ 5$
+ADD_ON_MAX_COUNT = 1                 # إضافة واحدة فقط
 SHADOW_LEARN_MIN_TRADES = 20            # أقل عدد صفقات ظل لتخفيض الحد تلقائياً
 SHADOW_LEARN_SCORE_DROP = 6             # مقدار خفض الحد (نقاط) عند ربح صفقات الظل
 

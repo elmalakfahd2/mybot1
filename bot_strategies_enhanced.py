@@ -1287,10 +1287,14 @@ def generate_sniper_signal(symbol):
             body_now = abs(_f((analysis.get('price_action') or {}).get('body_ratio'), 0))
             strategy_now = score_details.get('hybrid_strategy')
             symbol_mem_now = (score_details.get('symbol_memory') or {})
+            htf_now = score_details.get('htf_bias')
+            struct_now = (score_details.get('market_structure') or {}).get('setup')
+            desired_htf_now = 'BULLISH' if signal.get('direction') == 'BUY' else 'BEARISH'
+            context_aligned = (htf_now == desired_htf_now or struct_now in ('BREAKOUT', 'PULLBACK'))
             if (opp_candidate and total_score >= _cfg('OPPORTUNITY_MIN_SCORE', 70) and
                 ai_rec_now == 'تأكيد' and ai_conf_now >= 75 and
-                strategy_now in ('TREND_SCALP', 'BREAKOUT') and
-                vol_now >= 1.2 and body_now >= 0.5 and symbol_mem_now.get('should_trade', True)):
+                strategy_now in ('TREND_SCALP', 'BREAKOUT') and context_aligned and
+                vol_now >= 1.0 and body_now >= 0.35 and symbol_mem_now.get('should_trade', True)):
                 required_score = total_score
                 score_details['opportunity_trade'] = True
                 logger.info(f"🎯 فرصة محدودة مقبولة {symbol}: {total_score:.0f} AI={ai_conf_now:.0f}%")

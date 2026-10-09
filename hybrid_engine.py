@@ -121,7 +121,7 @@ def evaluate_signal(signal, analysis, score_details):
         strategy = 'BREAKOUT'
         score += 12
         reasons.append('اختراق قوي بحجم وترابط')
-    elif alignment >= 8 and volume >= 0.9 and body >= 0.35 and aligned_momentum and orderbook >= 2:
+    elif alignment >= 8 and volume >= 0.9 and body >= 0.30 and aligned_momentum and orderbook >= 2:
         strategy = 'TREND_SCALP'
         score += 8
         reasons.append('ترند سليم قابل للخطف السريع')
@@ -155,10 +155,6 @@ def evaluate_signal(signal, analysis, score_details):
     if momentum_points <= 3:
         score -= 2
         reasons.append('Momentum غير حاسم')
-    if (direction == 'BUY' and rsi >= 70) or (direction == 'SELL' and rsi <= 30):
-        score -= 5
-        reasons.append('RSI معادي للاتجاه')
-
     # 🏛️ سياق السوق: اتجاه فريم أعلى + بنية السعر + منع الترابط
     try:
         import market_structure
@@ -192,6 +188,14 @@ def evaluate_signal(signal, analysis, score_details):
             score -= 4
             reasons.append('لا توجد بنية سعر واضحة')
 
+        # RSI المتطرف ليس عدواً بحد ذاته داخل ترند واضح
+        if direction == 'BUY' and rsi >= 70 and not (htf_bias == 'BULLISH' or setup == 'BREAKOUT'):
+            score -= 3
+            reasons.append('RSI مرتفع بدون ترند داعم')
+        if direction == 'SELL' and rsi <= 30 and not (htf_bias == 'BEARISH' or setup == 'BREAKOUT'):
+            score -= 3
+            reasons.append('RSI منخفض بدون ترند داعم')
+
         if corr.get('conflict'):
             allow = False
             reasons.append(corr.get('reason', 'تعارض ارتباط'))
@@ -208,7 +212,7 @@ def evaluate_signal(signal, analysis, score_details):
     opportunity_candidate = (
         score >= opp_min and score < min_required and
         strategy in ('TREND_SCALP', 'BREAKOUT') and
-        volume >= 1.0 and alignment >= 8 and body >= 0.45 and orderbook >= 3
+        volume >= 1.0 and alignment >= 8 and body >= 0.35 and orderbook >= 3
     )
     if opportunity_candidate:
         info['opportunity_candidate'] = True
