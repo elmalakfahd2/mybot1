@@ -186,7 +186,8 @@ main_kb = ReplyKeyboardMarkup([
     ["⚡ إغلاق جميع الصفقات", "🛑 إغلاق الصفقات الخاسرة"],
     ["🔎 فحص الأوامر المشروطة", "🧠 التعلم التلقائي"],
     ["📊 تقرير سريع", "👻 تقرير الظل"],
-    ["🧠 تقرير التشخيص"]
+    ["🧠 تقرير التشخيص", "💸 العمولات"],
+    ["📄 آخر 300 سطر", "🧩 تقرير المشاكل"]
 ], resize_keyboard=True)
 
 
@@ -640,6 +641,33 @@ async def start(update: Update, context: CallbackContext):
     )
 
 
+async def _send_last_log_lines(update: Update, lines_count: int = 300):
+    try:
+        import io
+        data, total_lines, t0, t1 = log_capture.get_excerpt(hours=24, errors_only=False)
+        text = data.decode("utf-8", errors="ignore")
+        tail = "\n".join(text.splitlines()[-lines_count:])
+        bio = io.BytesIO(tail.encode("utf-8"))
+        bio.name = f"bot_log_last_{lines_count}_lines.txt"
+        await update.message.reply_document(document=bio, caption=f"📄 آخر {lines_count} سطر", reply_markup=main_kb)
+    except Exception as e:
+        logger.error(f"آخر 300 سطر: {e}")
+        await update.message.reply_text("❌ تعذر إنشاء آخر 300 سطر", reply_markup=main_kb)
+
+
+async def _send_problems_report(update: Update):
+    try:
+        import io
+        data, total_lines, t0, t1 = log_capture.get_excerpt(hours=24, errors_only=True)
+        text = data.decode("utf-8", errors="ignore")
+        bio = io.BytesIO(text.encode("utf-8"))
+        bio.name = f"bot_log_errors_24h_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+        await update.message.reply_document(document=bio, caption="🧩 تقرير المشاكل — أرسل هذا الملف مع تقرير التشخيص", reply_markup=main_kb)
+    except Exception as e:
+        logger.error(f"تقرير المشاكل: {e}")
+        await update.message.reply_text("❌ تعذر إنشاء تقرير المشاكل", reply_markup=main_kb)
+
+
 async def handle_message(update: Update, context: CallbackContext):
     text = (update.message.text or "").strip()
     global _bot_running
@@ -814,6 +842,23 @@ async def handle_message(update: Update, context: CallbackContext):
         except Exception as e:
             logger.error(f"تقرير التشخيص: {e}")
             await update.message.reply_text("❌ تعذر إنشاء تقرير التشخيص", reply_markup=main_kb)
+        return
+
+    if text == "💸 العمولات":
+        try:
+            import telegram_reports
+            await update.message.reply_text(telegram_reports.build_fees_report()[:3900], parse_mode="HTML", reply_markup=main_kb)
+        except Exception as e:
+            logger.error(f"تقرير العمولات: {e}")
+            await update.message.reply_text("❌ تعذر إنشاء تقرير العمولات", reply_markup=main_kb)
+        return
+
+    if text == "📄 آخر 300 سطر":
+        await _send_last_log_lines(update, 300)
+        return
+
+    if text == "🧩 تقرير المشاكل":
+        await _send_problems_report(update)
         return
 
     # ==================== تحديث الأوامر ====================
