@@ -830,7 +830,7 @@ async def handle_message(update: Update, context: CallbackContext):
         try:
             import learning_report
             report = learning_report.build_report()
-            await update.message.reply_text(report[:3900], parse_mode="HTML", reply_markup=main_kb)
+            await update.message.reply_text(report[:3900], reply_markup=main_kb)
             try:
                 with open("learning_report.txt", "w", encoding="utf-8") as f:
                     f.write(report)

@@ -119,6 +119,16 @@ def get_excerpt(hours=None, errors_only=False, max_lines=None):
         except Exception:
             continue
 
+    # إزالة التكرار المتتالي للسطر نفسه إن وجد
+    cleaned = []
+    prev_line = None
+    for line in out:
+        if line == prev_line:
+            continue
+        cleaned.append(line)
+        prev_line = line
+    out = cleaned
+
     if max_lines and len(out) > max_lines:
         out = out[-max_lines:]
 

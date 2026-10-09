@@ -51,7 +51,7 @@ def _band(score):
         return "75-79"
     if s >= 65:
         return "65-74"
-    return "<65"
+    return "أقل من 65"
 
 
 def build_report():
@@ -80,7 +80,7 @@ def build_report():
     for t in trades:
         bands[_band((t.get("score_details") or {}).get("total"))].append(t)
     lines.append("📊 <b>حسب النقاط:</b>")
-    for b in ["80+", "75-79", "65-74", "<65", "غير معروف"]:
+    for b in ["80+", "75-79", "65-74", "أقل من 65", "غير معروف"]:
         arr = bands.get(b, [])
         if not arr:
             continue
