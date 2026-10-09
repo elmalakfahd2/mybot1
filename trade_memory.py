@@ -28,6 +28,27 @@ MEMORY_FILE = "trade_memory.json"
 MAX_TRADES_TO_KEEP = 100
 _lock = Lock()
 
+
+def _dedupe_memory_trades(trades):
+    """إزالة التكرارات الناتجة عن تسجيل الإغلاق أكثر من مرة."""
+    try:
+        deduped = []
+        seen = set()
+        for t in trades or []:
+            key = (
+                t.get('symbol'),
+                t.get('direction'),
+                str(t.get('entry_time') or '')[:16],
+                round(float(t.get('pnl', 0) or 0), 2),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(t)
+        return deduped
+    except Exception:
+        return trades or []
+
 try:
     from config import COMMISSION_RATE
 except ImportError:
@@ -85,7 +106,10 @@ def load_memory():
     try:
         _ensure_memory_file()
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("trades"), list):
+            data["trades"] = _dedupe_memory_trades(data["trades"])
+        return data
     except Exception as e:
         logger.error(f"خطأ في تحميل الذاكرة: {e}")
         return {
@@ -97,6 +121,8 @@ def load_memory():
 
 def save_memory(data):
     try:
+        if isinstance(data, dict) and isinstance(data.get("trades"), list):
+            data["trades"] = _dedupe_memory_trades(data["trades"])
         data["last_updated"] = datetime.now().isoformat()
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)

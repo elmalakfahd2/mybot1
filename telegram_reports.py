@@ -38,14 +38,38 @@ def _trade_date(t):
 
 def _fees(t):
     try:
+        notional = abs(float(t.get("entry_price", 0) or 0) * float(t.get("quantity", 0) or 0))
+        plausible_cap = max(1.0, notional * 0.005)  # أي عمولة أكبر من 0.5% من الحجم مريبة
         if t.get("fees") is not None:
-            return abs(float(t.get("fees")))
+            fees = abs(float(t.get("fees")))
+            if fees <= plausible_cap:
+                return fees
     except Exception:
         pass
     try:
-        return abs(float(t.get("pnl_gross", 0)) - float(t.get("pnl", 0)))
+        notional = abs(float(t.get("entry_price", 0) or 0) * float(t.get("quantity", 0) or 0))
+        if notional > 0:
+            return notional * 0.0008
     except Exception:
-        return 0.0
+        pass
+    return 0.0
+
+
+def _dedupe_trades(trades):
+    seen = set()
+    out = []
+    for t in sorted(trades, key=lambda x: str(x.get("entry_time") or x.get("closed_at") or "")):
+        key = (
+            t.get("symbol"),
+            t.get("direction"),
+            str(t.get("entry_time") or "")[:16],
+            round(float(t.get("pnl", 0) or 0), 2),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    return out
 
 
 def _fmt(x, n=4):
@@ -56,7 +80,7 @@ def _fmt(x, n=4):
 
 
 def build_fees_report(last_n=20):
-    trades = _verified_closed(_load_trades())
+    trades = _dedupe_trades(_verified_closed(_load_trades()))
     if not trades:
         return "لا توجد صفقات موثقة مغلقة بعد."
 
