@@ -50,6 +50,11 @@ def evaluate_signal(signal, analysis, score_details):
     direction = _direction(signal)
     regime = _regime_name(signal)
 
+    blacklisted = set(getattr(cfg, 'SYMBOL_BLACKLIST', []) or [])
+    if symbol in blacklisted:
+        allow = False
+        reasons.append('الرمز معطل مؤقتاً بسبب سوء الأداء الحديث')
+
     alignment = _f(signal.get('timeframe_alignment', analysis.get('timeframe_alignment', 0)))
 
     # استخراج الحقول من بنية التحليل الفعلية وليس من مفاتيح غير موجودة

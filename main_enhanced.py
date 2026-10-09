@@ -864,7 +864,7 @@ class MainSystem:
             logger.error(f"خطأ في المراقبة: {e}")
 
     def record_missing_closed_trades(self):
-        """يسجل الصفقات التي أُغلقت عبر TP/SL من Binance ولم تُسجل محلياً بعد."""
+        """يسجل الصفقات المغلقة فقط إذا كانت بيانات الدخول كاملة."""
         try:
             bot_positions = bot_enhanced.load_state() or []
             if not bot_positions:
@@ -881,11 +881,18 @@ class MainSystem:
                     key = f"{symbol}_{side}"
                     if key in live_keys:
                         continue
+                    score_details = info.get('score_details') or {}
+                    if not score_details or score_details.get('total') is None:
+                        logger.warning(f"⚠️ {symbol} {side}: إغلاق بدون بيانات دخول كاملة — تنظيف الحالة بدون تسجيل تعلم")
+                        try:
+                            bot_enhanced.remove_open_position(symbol, side)
+                        except Exception:
+                            pass
+                        continue
                     entry_price = float(info.get('entry_price') or 0)
                     quantity = abs(float(info.get('quantity') or info.get('positionAmt') or 0))
                     entry_time_iso = info.get('entry_time')
                     exit_price = core.get_price(symbol) or entry_price
-                    score_details = info.get('score_details') or {}
                     side_sign = 1.0 if side == 'LONG' else -1.0
                     estimated_pnl = 0.0
                     if entry_price and quantity and exit_price:

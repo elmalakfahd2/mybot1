@@ -175,6 +175,7 @@ RSI_SELL_WARNING = 22
 MIN_SCORE_REQUIRED = 75        # الحد الأساسي الصارم
 OPPORTUNITY_MODE = True        # السماح بفرص 70-74 فقط إذا كانت قوية جداً وAI يؤكد
 OPPORTUNITY_MIN_SCORE = 70
+SYMBOL_BLACKLIST = ['AVAXUSDT', 'AAVEUSDT']  # تعطيل مؤقت: 0% فوز في آخر 8 صفقات لكل منهما
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -367,10 +368,10 @@ WIDE_TRAILING_DISTANCE = 0.5
 
 # ==================== Extreme Wide + Add-on Mode ====================
 # نعم: 70% من الهامش 10$ = خطرة 7$ للصفقة الأولى
-EXTREME_WIDE_MODE = True
+EXTREME_WIDE_MODE = False
 EXTREME_WIDE_SL_PERCENT = 7.0        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
 EXTREME_WIDE_MAX_TRADE_LOSS_USDT = 10.0
-ADD_ON_ENABLED = True
+ADD_ON_ENABLED = False
 ADD_ON_LOSS_USDT = 5.0               # عند خسارة 5$ نفتح إضافة
 ADD_ON_SIZE_USDT = 5.0               # الإضافة بـ 5$
 ADD_ON_MAX_COUNT = 1                 # إضافة واحدة فقط
