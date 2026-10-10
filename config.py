@@ -118,13 +118,17 @@ TRADE_USDT = 10
 LEVERAGE = 10
 MAX_OPEN_POSITIONS = 4               # هجين: حد التعرض الكلي أقل من النسخة السابقة
 DUST_POSITION_NOTIONAL_USDT = 0.50   # أي بقايا أقل من نصف دولار تُغلق فوراً
+DUST_CLOSE_ALL_POSITIONS = True      # إغلاق أي بقايا صغيرة حتى لو لم تكن مسجلة كصفقة بوت
 
 # ==================== TP المتعدد ====================
 ENABLE_MULTIPLE_TP = True
-TP_MULTIPLE_LEVELS = [1.3, 2.0, 3.0]   # R:R أوضح: الهدف الأول أقرب وأقوى
-TP_QUANTITY_RATIOS = [0.5, 0.3, 0.2]   # نغلق نصف الصفقة مبكراً لحماية الربح
+# 🔥 TP هدف واحد/اثنان حسب الربح المطلوب
+TP_DOLLAR_TARGET_MODE = True
+TP_DOLLAR_TARGET_USDT = 2.0      # عند ربح حوالي 2$ نغلق جيداً من الصفقة
+TP_MULTIPLE_LEVELS = [1.0, 2.0]  # 50% عند +1% ثم الباقي عند +2%
+TP_QUANTITY_RATIOS = [0.5, 0.5]  # هدفان فقط
 SL_PERCENT = 1.3
-TP_PERCENT = 1.2                   # 🔥 v5.9: كان 2.5 — متوسط MFE الفعلي ~1% فقط، كان الربح لا يُلامس أبداً
+TP_PERCENT = 2.0                   # هدف إجمالي تقريبي +2% عند رافعة 10x = 2$ لكل 10$ هامش
 
 # ==================== SL ديناميكي ====================
 DYNAMIC_SL_ENABLED = True
@@ -175,7 +179,7 @@ RSI_SELL_WARNING = 22
 MIN_SCORE_REQUIRED = 75        # الحد الأساسي الصارم
 OPPORTUNITY_MODE = True        # السماح بفرص 70-74 فقط إذا كانت قوية جداً وAI يؤكد
 OPPORTUNITY_MIN_SCORE = 70
-SYMBOL_BLACKLIST = ['AVAXUSDT', 'AAVEUSDT']  # تعطيل مؤقت: 0% فوز في آخر 8 صفقات لكل منهما
+SYMBOL_BLACKLIST = []  # لا قائمة سوداء الآن بعد توضيحك أن خسائر AVAX/AAVE قديمة
 MIN_ORDER_BOOK_POINTS = 3
 MIN_RSI_POINTS = 0
 
@@ -214,7 +218,7 @@ MAX_CORRELATION = 0.75
 ENABLE_OPPOSITE_DIRECTION_FILTER = False
 
 ENABLE_DAILY_DRAWDOWN_LIMIT = True     # هجين: مفعل لكن الحد أقل تشدداً من النسخة السابقة
-DAILY_MAX_LOSS_USDT = 30.0             # طلبك: توقف يومي عند -30$
+DAILY_MAX_LOSS_USDT = 30.0             # الاتفاق: توقف يومي عند -30$
 DAILY_MAX_LOSS_PERCENT = 0.0           # تعطيل النسبة مؤقتاً لتجنب التوقف المبكر بسبب الرصيد/الصفقات المفتوحة
 
 # ==================== Trailing SL ====================
@@ -368,10 +372,10 @@ WIDE_TRAILING_DISTANCE = 0.5
 
 # ==================== Extreme Wide + Add-on Mode ====================
 # نعم: 70% من الهامش 10$ = خطرة 7$ للصفقة الأولى
-EXTREME_WIDE_MODE = False
+EXTREME_WIDE_MODE = True
 EXTREME_WIDE_SL_PERCENT = 7.0        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
 EXTREME_WIDE_MAX_TRADE_LOSS_USDT = 10.0
-ADD_ON_ENABLED = False
+ADD_ON_ENABLED = True
 ADD_ON_LOSS_USDT = 5.0               # عند خسارة 5$ نفتح إضافة
 ADD_ON_SIZE_USDT = 5.0               # الإضافة بـ 5$
 ADD_ON_MAX_COUNT = 1                 # إضافة واحدة فقط

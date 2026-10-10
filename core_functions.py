@@ -1771,8 +1771,9 @@ def create_multiple_tp_orders(symbol, position_side, total_quantity, entry_price
         try:
             if 'actual_sl_percent' not in locals() or actual_sl_percent is None:
                 actual_sl_percent = float(sl_percent or SL_PERCENT)
-            r_multipliers = list(getattr(cfg, 'WIDE_TP_R_MULTIPLES' if exit_mode == 'wide' else 'TP_R_MULTIPLES',
-                                         getattr(cfg, 'TP_R_MULTIPLES', [1.2, 2.0, 3.2])))
+            r_multipliers = [] if getattr(cfg, 'TP_DOLLAR_TARGET_MODE', False) else list(
+                getattr(cfg, 'WIDE_TP_R_MULTIPLES' if exit_mode == 'wide' else 'TP_R_MULTIPLES',
+                        getattr(cfg, 'TP_R_MULTIPLES', [1.2, 2.0, 3.2])))
             tp_min = float(getattr(cfg, 'TP_PERCENT', 1.2))
             tp_max = float(getattr(cfg, 'TP_MAX_PERCENT', 5.0))
             dynamic_tp_levels = []
@@ -2274,11 +2275,30 @@ def check_and_add_tp_sl_to_existing_positions():
             if p.get('symbol') and p.get('positionSide')
         }
 
+        all_positions = get_open_positions()
+
+        # 🧹 إغلاق أي بقايا صغيرة جداً حتى لو لم تكن مسجلة كصفقة بوت
+        fixed = 0
+        if getattr(cfg, 'DUST_CLOSE_ALL_POSITIONS', True):
+            dust_limit = float(getattr(cfg, 'DUST_POSITION_NOTIONAL_USDT', 0.5))
+            for pos in list(all_positions or []):
+                try:
+                    entry_price_d = float(pos.get('entryPrice', 0) or 0)
+                    qty_d = abs(float(pos.get('positionAmt', 0) or 0))
+                    notional_d = entry_price_d * qty_d
+                    if qty_d > 0 and notional_d < dust_limit:
+                        logger.warning(f"🧹 {pos.get('symbol')} بقايا صفقة غبار {notional_d:.4f}$ — إغلاقها")
+                        if close_position_safe(pos.get('symbol'), pos.get('positionSide')):
+                            fixed += 1
+                except Exception as dust_err:
+                    logger.debug(f"dust cleanup all: {dust_err}")
+            if fixed:
+                all_positions = get_open_positions()
+
         if not bot_owned_keys:
             logger.info("ℹ️ لا توجد صفقات بوت")
-            return 0
+            return fixed
 
-        all_positions = get_open_positions()
         bot_positions = [
             p for p in all_positions
             if f"{p['symbol']}_{p['positionSide']}" in bot_owned_keys
@@ -2286,11 +2306,9 @@ def check_and_add_tp_sl_to_existing_positions():
 
         if not bot_positions:
             logger.info("ℹ️ لا توجد صفقات بوت مفتوحة")
-            return 0
+            return fixed
 
         logger.info(f"🔧 فحص {len(bot_positions)} صفقة بوت (تجاهل {len(all_positions) - len(bot_positions)} صفقة يدوية)")
-
-        fixed = 0
 
         for position in bot_positions:
             symbol = position["symbol"]
