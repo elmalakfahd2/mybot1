@@ -80,27 +80,45 @@ def _fmt(x, n=4):
 
 
 def build_fees_report(last_n=20, today_only=True):
-    trades = _dedupe_trades(_verified_closed(_load_trades()))
+    """🔥 v9.8: عمولات حقيقية من Binance API — مع رجوع للتقدير عند تعذر الجلب"""
     today = datetime.now().strftime("%Y-%m-%d")
+    real = None
+    try:
+        import core_functions as core
+        real = core.get_today_commissions()
+    except Exception:
+        real = None
 
+    if real is not None:
+        lines = []
+        lines.append("💸 <b>تقرير عمولات اليوم (حقيقي من Binance)</b>")
+        lines.append(f"📅 التاريخ: <b>{today}</b>")
+        lines.append(f"عدد العمولات المحصلة: <b>{real.get('count', 0)}</b>")
+        lines.append("")
+        lines.append(f"إجمالي عمولات اليوم: <b>{_fmt(real.get('total', 0), 3)} USDT</b>")
+        per = real.get('per_symbol') or {}
+        if per:
+            lines.append("")
+            lines.append("🧾 <b>العمولة لكل عملة:</b>")
+            for sym, amt in list(per.items())[:15]:
+                lines.append(f"• {sym}: <b>{_fmt(amt, 3)}$</b>")
+        return "\n".join(lines)
+
+    trades = _dedupe_trades(_verified_closed(_load_trades()))
     if today_only:
         trades = [t for t in trades if _trade_date(t) == today]
-
     if not trades:
         return f"💸 <b>تقرير عمولات اليوم</b>\n📅 التاريخ: {today}\n\nلا توجد صفقات موثقة مغلقة اليوم بعد."
-
     total_fees = sum(_fees(t) for t in trades)
     total_pnl = sum(float(t.get("pnl", 0) or 0) for t in trades)
     net_after_fees = total_pnl - total_fees
-
     wins = [t for t in trades if float(t.get("pnl", 0) or 0) > 0]
     losses = [t for t in trades if float(t.get("pnl", 0) or 0) < 0]
-
     lines = []
-    lines.append("💸 <b>تقرير عمولات اليوم فقط</b>")
+    lines.append("💸 <b>تقرير عمولات اليوم (تقديري — تعذر جلب Binance)</b>")
     lines.append(f"📅 التاريخ: <b>{today}</b>")
     lines.append(f"عدد صفقات اليوم: <b>{len(trades)}</b>")
-    lines.append(f"الصفقات الرابحة: <b>{len(wins)}</b> | الخاسرة: <b>{len(losses)}</b>")
+    lines.append(f"الرابحة: <b>{len(wins)}</b> | الخاسرة: <b>{len(losses)}</b>")
     lines.append("")
     lines.append(f"العمولات اليوم: <b>{_fmt(total_fees, 3)} USDT</b>")
     lines.append(f"PnL المسجل اليوم: <b>{_fmt(total_pnl, 3)} USDT</b>")

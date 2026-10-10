@@ -115,9 +115,9 @@ USE_TESTNET = _get_bool("USE_TESTNET", default=False)
 
 # ==================== التداول ====================
 TRADE_USDT = 10
-LEVERAGE = 10
+LEVERAGE = 15  # 🔥 v9.8: رفع الرافعة إلى 15x بناءً على طلب المستخدم
 MAX_OPEN_POSITIONS = 4               # هجين: حد التعرض الكلي أقل من النسخة السابقة
-DUST_POSITION_NOTIONAL_USDT = 0.50   # أي بقايا أقل من نصف دولار تُغلق فوراً
+DUST_POSITION_NOTIONAL_USDT = 2.0    # 🔥 v9.8: بقايا أقل من 2$ تُغلق فوراً
 DUST_CLOSE_ALL_POSITIONS = True      # إغلاق أي بقايا صغيرة حتى لو لم تكن مسجلة كصفقة بوت
 
 # ==================== TP المتعدد ====================

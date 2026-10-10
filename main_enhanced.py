@@ -289,6 +289,11 @@ def _daily_pnl():
     return {'pnl': 0.0}
 
 
+# ==================== 🔥 v9.8: حارس تشغيل الخيوط مرة واحدة فقط ====================
+_THREADS_STARTED = False
+_THREADS_LOCK = threading.Lock()
+
+
 class MainSystem:
     def __init__(self):
         self.running = True
@@ -674,6 +679,24 @@ class MainSystem:
 
                 # سجّل الصفقة كصفقة بوت (لحماية TP/SL وفصلها عن الصفقات اليدوية)
                 try:
+                    # 🔥 v9.8: إثراء النتيجة ببيانات الإشارة — بدون هذا كانت الصفقة تُحفظ
+                    # بدون score_details فلا يتعلم البوت منها عند إغلاقها (خسارة أو ربح)
+                    result = dict(result or {})
+                    sd = dict(signal.get('score_details') or {})
+                    if sd.get('total') is None:
+                        sd['total'] = signal.get('score', 0)
+                    result['score_details'] = sd
+                    result.setdefault('confidence', signal.get('confidence', 0))
+                    result.setdefault('timeframe_alignment', signal.get('timeframe_alignment', 0))
+                    try:
+                        result.setdefault('volume_ratio', signal.get('analysis', {}).get('volume_analysis', {}).get('volume_5m_ratio', 1.0))
+                    except Exception:
+                        pass
+                    result.setdefault('groq_recommendation', signal.get('groq_recommendation'))
+                    result.setdefault('groq_confidence', signal.get('groq_confidence', 0))
+                    result.setdefault('strategy', signal.get('strategy'))
+                    if not result.get('entry_time'):
+                        result['entry_time'] = datetime.now().isoformat()
                     bot_enhanced.add_open_position(result)
                 except Exception as e:
                     logger.debug(f"add_open_position: {e}")
@@ -883,12 +906,9 @@ class MainSystem:
                         continue
                     score_details = info.get('score_details') or {}
                     if not score_details or score_details.get('total') is None:
-                        logger.warning(f"⚠️ {symbol} {side}: إغلاق بدون بيانات دخول كاملة — تنظيف الحالة بدون تسجيل تعلم")
-                        try:
-                            bot_enhanced.remove_open_position(symbol, side)
-                        except Exception:
-                            pass
-                        continue
+                        # 🔥 v9.8: سجّلها بقيم افتراضية بدل التخطي — الخسارة يجب أن تدخل التعلم
+                        logger.warning(f"⚠️ {symbol} {side}: بيانات دخول ناقصة — تسجيل تعلم افتراضي بدلاً من التخطي")
+                        score_details = {'total': info.get('score', 0) or 0, 'incomplete': True}
                     entry_price = float(info.get('entry_price') or 0)
                     quantity = abs(float(info.get('quantity') or info.get('positionAmt') or 0))
                     entry_time_iso = info.get('entry_time')
@@ -1004,7 +1024,13 @@ class MainSystem:
             logger.error(f"خطأ في StallChecker: {e}")
 
     def start_scanner_threads(self):
-        """بدء جميع الخيوط"""
+        """بدء جميع الخيوط — 🔥 v9.8: بوابة تشغيل واحدة تمنع الازدواج"""
+        global _THREADS_STARTED
+        with _THREADS_LOCK:
+            if _THREADS_STARTED:
+                logger.warning("⚠️ [START] الخيوط تعمل Already — تم تجاهل طلب التشغيل المكرر")
+                return
+            _THREADS_STARTED = True
         try:
             logger.info("🔧 [START] بدء تشغيل الخيوط...")
             logger.info("=" * 60)

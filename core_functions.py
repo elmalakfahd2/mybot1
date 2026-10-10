@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 from config import *
+import config as cfg  # 🔥 v9.8: إصلاح NameError 'cfg'
 
 logger = logging.getLogger("core")
 _client = None
@@ -1544,6 +1545,7 @@ def _midnight_after_now():
 
 
 _income_cache = {'ts': 0, 'value': None}
+_income_comm_cache = {'ts': 0, 'value': None}  # 🔥 v9.8
 
 
 def get_today_net_income(max_age=45):
@@ -1586,6 +1588,32 @@ def get_today_net_income(max_age=45):
         return _income_cache['value']
     except Exception as e:
         logger.warning(f"⚠️ تعذر جلب دخل اليوم: {e}")
+        return None
+
+
+def get_today_commissions(max_age=45):
+    """🔥 v9.8: عمولات اليوم الحقيقية من Binance (incomeType=COMMISSION) — لزر العمولات في Telegram"""
+    try:
+        if _income_comm_cache['value'] is not None and time.time() - _income_comm_cache['ts'] < max_age:
+            return _income_comm_cache['value']
+        client_obj = get_client()
+        if not client_obj:
+            return None
+        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        rows = client_obj.futures_income_history(incomeType='COMMISSION',
+            startTime=int(start.timestamp() * 1000), limit=1000)
+        total = 0.0; per_symbol = {}
+        for r in rows or []:
+            amt = abs(float(r.get('income', 0) or 0))
+            total += amt
+            sym = r.get('symbol') or 'UNKNOWN'
+            per_symbol[sym] = per_symbol.get(sym, 0.0) + amt
+        result = {'total': round(total, 4), 'count': len(rows or []),
+                  'per_symbol': {k: round(v, 4) for k, v in sorted(per_symbol.items(), key=lambda x: -x[1])}}
+        _income_comm_cache['ts'] = time.time(); _income_comm_cache['value'] = result
+        return result
+    except Exception as e:
+        logger.warning(f"⚠️ تعذر جلب عمولات اليوم: {e}")
         return None
 
 

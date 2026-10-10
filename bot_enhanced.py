@@ -452,7 +452,8 @@ async def error_handler(update, context):
     if "Event loop is closed" in str(error):
         logger.warning("⚠️ Event loop مغلق")
         return
-    logger.error(f"❌ خطأ Telegram: {error}")
+    import traceback
+    logger.error(f"❌ خطأ Telegram: {error}\n{traceback.format_exc()}")  # 🔥 v9.8
 
 
 # ==================== الأوامر ====================
@@ -1561,8 +1562,14 @@ async def button_handler(update: Update, context: CallbackContext):
         return
 
     if data.startswith("trade_"):
-        _, symbol, side = data.split("_")
-        execute_trade_manual(update, symbol, side)
+        # 🔥 v9.8: حماية من list index out of range إذا كان التنسيق غير متوقع
+        parts = data.split("_")
+        if len(parts) == 3:
+            _, symbol, side = parts
+            execute_trade_manual(update, symbol, side)
+        else:
+            logger.warning(f"⚠️ callback تنسيق غير متوقع: {data}")
+            run_async_safe(send_message_safe(update, "⚠️ زر قديم أو غير صالح — أعد فتح القائمة", reply_markup=main_kb))
 
     elif data.startswith("new_analysis_"):
         parts = data.split("_", 2)
