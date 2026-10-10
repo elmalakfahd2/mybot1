@@ -79,36 +79,38 @@ def _fmt(x, n=4):
         return str(x)
 
 
-def build_fees_report(last_n=20):
+def build_fees_report(last_n=20, today_only=True):
     trades = _dedupe_trades(_verified_closed(_load_trades()))
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if today_only:
+        trades = [t for t in trades if _trade_date(t) == today]
+
     if not trades:
-        return "لا توجد صفقات موثقة مغلقة بعد."
+        return f"💸 <b>تقرير عمولات اليوم</b>\n📅 التاريخ: {today}\n\nلا توجد صفقات موثقة مغلقة اليوم بعد."
 
     total_fees = sum(_fees(t) for t in trades)
     total_pnl = sum(float(t.get("pnl", 0) or 0) for t in trades)
-    by_day = defaultdict(float)
-    for t in trades:
-        by_day[_trade_date(t)] += _fees(t)
+    net_after_fees = total_pnl - total_fees
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_fees = by_day.get(today, 0.0)
+    wins = [t for t in trades if float(t.get("pnl", 0) or 0) > 0]
+    losses = [t for t in trades if float(t.get("pnl", 0) or 0) < 0]
 
     lines = []
-    lines.append("💸 <b>تقرير العمولات</b>")
-    lines.append(f"إجمالي العمولات: <b>{_fmt(total_fees, 3)} USDT</b>")
-    lines.append(f"عمولات اليوم: <b>{_fmt(today_fees, 3)} USDT</b>")
-    lines.append(f"عدد الصفقات: <b>{len(trades)}</b>")
-    lines.append(f"صافي PnL بعد العمولات: <b>{_fmt(total_pnl, 3)} USDT</b>")
+    lines.append("💸 <b>تقرير عمولات اليوم فقط</b>")
+    lines.append(f"📅 التاريخ: <b>{today}</b>")
+    lines.append(f"عدد صفقات اليوم: <b>{len(trades)}</b>")
+    lines.append(f"الصفقات الرابحة: <b>{len(wins)}</b> | الخاسرة: <b>{len(losses)}</b>")
     lines.append("")
-    lines.append("📅 <b>العمولات اليومية:</b>")
-    for day in sorted(by_day.keys(), reverse=True)[:10]:
-        lines.append(f"• {day}: {_fmt(by_day[day], 3)} USDT")
+    lines.append(f"العمولات اليوم: <b>{_fmt(total_fees, 3)} USDT</b>")
+    lines.append(f"PnL المسجل اليوم: <b>{_fmt(total_pnl, 3)} USDT</b>")
+    lines.append(f"بعد تقدير العمولات: <b>{_fmt(net_after_fees, 3)} USDT</b>")
     lines.append("")
-    lines.append(f"🧾 <b>آخر {min(last_n, len(trades))} صفقة:</b>")
+    lines.append(f"🧾 <b>صفقات اليوم ({min(last_n, len(trades))}):</b>")
     recent = sorted(trades, key=lambda t: str(t.get("entry_time") or t.get("closed_at") or ""))[-last_n:]
     for t in reversed(recent):
         lines.append(
             f"• {t.get('symbol')} {t.get('direction')} | العمولة: {_fmt(_fees(t), 3)}$ | "
-            f"pnl: {_fmt(t.get('pnl'), 3)}$ | {t.get('ai_recommendation') or t.get('groq_recommendation') or ''}"
+            f"pnl: {_fmt(t.get('pnl'), 3)}$"
         )
     return "\n".join(lines)
