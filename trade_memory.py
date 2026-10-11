@@ -602,7 +602,12 @@ def record_trade(symbol, direction, entry_price, exit_price,
                     exit_price = 0
 
             if verified:
-                net = float(net_pnl)
+                # 🔥 v9.9: get_real_net_pnl ترجع dict {'net':...} — float(dict) كان يفشل
+                # ويهدر تسجيل كل صفقة موثقة، فبقي التعلم فارغاً
+                if isinstance(net_pnl, dict):
+                    net = float(net_pnl.get('net', 0) or 0)
+                else:
+                    net = float(net_pnl)
             elif exit_price and exit_price > 0:
                 net = calculate_net_pnl(entry_price, exit_price, quantity, direction)
             elif pnl is None:
