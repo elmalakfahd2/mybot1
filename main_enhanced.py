@@ -741,9 +741,16 @@ class MainSystem:
             try:
                 bot_keys = {f"{s.get('symbol')}_{s.get('positionSide')}" for s in bot_enhanced.load_state()}
             except Exception:
-                pass
+                bot_keys = set()
 
-            logger.info(f"📊 [MONITOR] مراقبة {len(positions)} صفقة...")
+            # 🔥 v9.9.3: فشل مغلق — سجل البوت فارغ (نشر جديد/فقدان الملف/استعادة
+            # Firebase لم تكتمل) = لا مراقبة إطلاقاً، حمايةً للصفقات اليدوية من أن
+            # تُعامل كصفقات بوت وتُغلق بإغلاق الخسارة الحرجة
+            if not bot_keys:
+                logger.info("📊 [MONITOR] سجل البوت فارغ — لا مراقبة هذه الجولة (حماية الصفقات اليدوية)")
+                return
+
+            logger.info(f"📊 [MONITOR] مراقبة {len(bot_keys)} صفقة بوت من أصل {len(positions)} على المنصة...")
 
             for pos in positions:
                 try:
@@ -757,7 +764,7 @@ class MainSystem:
                         continue
 
                     # 🔥 تخطي الصفقات اليدوية — لا فحص TP/SL ولا trailing لها
-                    if bot_keys and f"{symbol}_{position_side}" not in bot_keys:
+                    if f"{symbol}_{position_side}" not in bot_keys:
                         continue
 
                     # get_open_positions ترجع LONG/SHORT
