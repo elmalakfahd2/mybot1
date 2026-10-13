@@ -614,6 +614,12 @@ async def start(update: Update, context: CallbackContext):
 
     groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
     learning_status = "✅ مفعل" if ENABLE_AUTO_LEARNING else "❌ معطل"
+    # 🔥 v9.9.1: بناء مستويات TP ديناميكياً حسب الإعداد الفعلي
+    _tp_lines = []
+    for _i, (_lvl, _qty) in enumerate(zip(TP_MULTIPLE_LEVELS, TP_QUANTITY_RATIOS)):
+        _tp_lines.append(f"• L{_i+1}: {_lvl}% ({_qty*100}%)")
+    tp_levels_text = "\n".join(_tp_lines)
+
     firebase_status = "✅ مفعل" if ENABLE_FIREBASE_BACKUP else "❌ معطل"
 
     await update.message.reply_text(
@@ -629,9 +635,7 @@ async def start(update: Update, context: CallbackContext):
         f"• التعلم: {learning_status}\n"
         f"• Firebase: {firebase_status}\n\n"
         f"🚀 <b>نظام TP:</b>\n"
-        f"• L1: {TP_MULTIPLE_LEVELS[0]}% ({TP_QUANTITY_RATIOS[0]*100}%)\n"
-        f"• L2: {TP_MULTIPLE_LEVELS[1]}% ({TP_QUANTITY_RATIOS[1]*100}%)\n"
-        f"• L3: {TP_MULTIPLE_LEVELS[2]}% ({TP_QUANTITY_RATIOS[2]*100}%)\n\n"
+        f"{tp_levels_text}\n\n"
         f"📊 <b>الأرباح:</b>\n"
         f"• اليوم: {daily_data['daily_pnl']:.2f}\n"
         f"• الأسبوع: {weekly_data['weekly_pnl']:.2f}\n"

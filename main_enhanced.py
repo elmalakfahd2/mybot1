@@ -450,7 +450,13 @@ class MainSystem:
                 return False, f"التداول موقوف ({risk.get('remaining_minutes', 0)} دقيقة)"
 
             max_pos = _cfg('MAX_OPEN_POSITIONS', 6)
-            open_pos = self.get_open_positions()
+            # 🔥 v9.9.2: عدّ صفقات البوت المسجلة في open_positions فقط —
+            # صفقات المستخدم اليدوية لا تحجب خانات البوت (لها حدها الخاص في المنصة)
+            try:
+                import bot_enhanced as _be_count
+                open_pos = _be_count.load_state() or []
+            except Exception:
+                open_pos = self.get_open_positions()
             if len(open_pos) >= max_pos:
                 return False, f"أقصى عدد صفقات ({len(open_pos)}/{max_pos})"
 
