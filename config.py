@@ -373,7 +373,7 @@ WIDE_TRAILING_DISTANCE = 0.5
 # ==================== Extreme Wide + Add-on Mode ====================
 # نعم: 70% من الهامش 10$ = خطرة 7$ للصفقة الأولى
 EXTREME_WIDE_MODE = True
-EXTREME_WIDE_SL_PERCENT = 7.0        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
+EXTREME_WIDE_SL_PERCENT = 3.35  # 🔥 v10.1: خسارة قصوى 5$ (50% من هامش 10$ × 15x = 150$ → 3.33%) — كانت 7% ≈ 10$        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
 EXTREME_WIDE_MAX_TRADE_LOSS_USDT = 10.0
 ADD_ON_ENABLED = True
 ADD_ON_LOSS_USDT = 5.0               # عند خسارة 5$ نفتح إضافة
