@@ -107,6 +107,12 @@ class MarketRegime:
             change_1h = MarketRegime.calculate_change(closes_1h, 1)
             change_4h = MarketRegime.calculate_change(closes_1h, 4)
             change_24h = MarketRegime.calculate_change(closes_1h, 24)
+            # 🔥 v10.0: مرساة الاتجاه الأكبر — تغيّر 3 أيام من شموع 4h (~18 شمعة)
+            # تمنع قراءة "صاعد" بسبب ارتداد يومي داخل هبوط أكبر (كان يشتري قمم الهبوط)
+            try:
+                change_3d = MarketRegime.calculate_change(closes_4h, 18) if len(closes_4h) >= 18 else 0
+            except Exception:
+                change_3d = 0
             
             # حساب التقلب
             recent_high = max(btc['highs_1h'][-6:])
@@ -132,8 +138,13 @@ class MarketRegime:
                 regime_ar = 'صاعد قوي'
                 recommendation = 'التركيز على BUY'
                 should_trade = True
-            # سوق صاعد
-            elif change_4h > 0.5 or change_24h > 1.0:
+            # 🔥 v10.0: مرساة 3 أيام — اتجاه الأسبوع يُغلّب ارتداد اليوم
+            elif change_3d < -2.5 and change_4h < 0:
+                regime = 'bearish'
+                regime_ar = 'هابط'
+                recommendation = 'تفضيل SELL'
+                should_trade = True
+            elif change_3d > 2.5 and change_4h > 0:
                 regime = 'bullish'
                 regime_ar = 'صاعد'
                 recommendation = 'تفضيل BUY'
@@ -144,8 +155,13 @@ class MarketRegime:
                 regime_ar = 'هابط قوي'
                 recommendation = 'التركيز على SELL أو التوقف'
                 should_trade = True
-            # سوق هابط
-            elif change_4h < -0.5 or change_24h < -1.0:
+            # 🔥 v10.0: and بدل or — يتطلب إجماع الفترتين ولا ينقلب بارتداد واحد
+            elif change_4h > 0.5 and change_24h > 0.5:
+                regime = 'bullish'
+                regime_ar = 'صاعد'
+                recommendation = 'تفضيل BUY'
+                should_trade = True
+            elif change_4h < -0.5 and change_24h < -0.5:
                 regime = 'bearish'
                 regime_ar = 'هابط'
                 recommendation = 'تفضيل SELL'
@@ -173,6 +189,7 @@ class MarketRegime:
                 'change_1h': round(change_1h, 2),
                 'change_4h': round(change_4h, 2),
                 'change_24h': round(change_24h, 2),
+                'change_3d': round(change_3d, 2),
                 'volatility': volatility,
                 'volatility_pct': round(volatility_pct, 2),
                 'recommendation': recommendation,

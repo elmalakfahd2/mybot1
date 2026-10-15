@@ -1125,6 +1125,28 @@ def generate_sniper_signal(symbol):
         if not market_ok:
             return None
 
+        # 🔥 v10.0: حظر التداول عكس اتجاه السوق — كان يشتري قمم الهبوط!
+        # متذبذب بهيمنة اتجاه: ارتداد داخل هبوط أكبر لا يبرر شراء القمة
+        try:
+            _reg_dict = regime_data if isinstance(regime_data, dict) else {}
+            _regime_type = _reg_dict.get('regime', _reg_dict.get('regime_type', ''))
+            _drift_3d = _reg_dict.get('change_3d', 0) or 0
+            if _regime_type in ('bearish', 'strong_bearish') and direction == "BUY":
+                logger.warning(f"⛔ {symbol}: شراء معاكس محظور — السوق {_regime_type} [v10.0]")
+                return None
+            if _regime_type in ('bullish', 'strong_bullish') and direction == "SELL":
+                logger.warning(f"⛔ {symbol}: بيع معاكس محظور — السوق {_regime_type} [v10.0]")
+                return None
+            if _regime_type == 'ranging':
+                if direction == "BUY" and _drift_3d < -2.5:
+                    logger.warning(f"⛔ {symbol}: متذبذب بهيمنة هابطة 3 أيام ({_drift_3d}%) — شراء محظور [v10.0]")
+                    return None
+                if direction == "SELL" and _drift_3d > 2.5:
+                    logger.warning(f"⛔ {symbol}: متذبذب بهيمنة صاعدة 3 أيام ({_drift_3d}%) — بيع محظور [v10.0]")
+                    return None
+        except Exception:
+            pass
+
         signal = {
             "symbol": symbol,
             "direction": direction,
