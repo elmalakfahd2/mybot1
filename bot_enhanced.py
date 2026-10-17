@@ -614,7 +614,7 @@ async def start(update: Update, context: CallbackContext):
 
     groq_status = "✅ مفعل" if GROQ_AVAILABLE else "❌ معطل"
     learning_status = "✅ مفعل" if ENABLE_AUTO_LEARNING else "❌ معطل"
-    # 🔥 v9.9.1: بناء مستويات TP ديناميكياً حسب الإعداد الفعلي
+    # 🔥 v9.9.1: بناء مستويات TP ديناميكياً
     _tp_lines = []
     for _i, (_lvl, _qty) in enumerate(zip(TP_MULTIPLE_LEVELS, TP_QUANTITY_RATIOS)):
         _tp_lines.append(f"• L{_i+1}: {_lvl}% ({_qty*100}%)")
@@ -1566,7 +1566,7 @@ async def button_handler(update: Update, context: CallbackContext):
         return
 
     if data.startswith("trade_"):
-        # 🔥 v9.8: حماية من list index out of range إذا كان التنسيق غير متوقع
+        # 🔥 v9.8: حماية من list index out of range
         parts = data.split("_")
         if len(parts) == 3:
             _, symbol, side = parts

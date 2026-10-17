@@ -1938,6 +1938,17 @@ def place_market_order_with_multiple_tp(symbol, side, amount_usdt, leverage,
         if not eff_leverage:
             return None
 
+        # 🔥 v10.1: استوب ديناميكي بالدولار — خسارة قصوى MAX_SL_LOSS_USDT مهما كانت الرافعة الفعلية
+        # (GTC وغيرها يقبلون 10x فقط؛ نسبة ثابتة كانت تخسر 3.35$ لا 5$، والإشعار كان يزعم 15x)
+        try:
+            _sl_target = float(getattr(cfg, 'MAX_SL_LOSS_USDT', 5.0) or 5.0)
+            _dyn_sl = (_sl_target / (float(amount_usdt) * float(eff_leverage))) * 100
+            _dyn_sl = min(_dyn_sl, 8.0)  # سقف أمان لعملات الرافعة المنخفضة جداً
+            sl_percent = _dyn_sl
+            logger.info(f"🛡️ SL ديناميكي: {_dyn_sl:.2f}% (هدف الخسارة ~{_sl_target}$ | رافعة فعلية {eff_leverage}x)")
+        except Exception:
+            pass
+
         notional = float(amount_usdt) * float(eff_leverage)
         total_qty = _round_quantity(symbol, notional / price)
 

@@ -88,7 +88,6 @@ def build_fees_report(last_n=20, today_only=True):
         real = core.get_today_commissions()
     except Exception:
         real = None
-
     if real is not None:
         lines = []
         lines.append("💸 <b>تقرير عمولات اليوم (حقيقي من Binance)</b>")
@@ -103,7 +102,6 @@ def build_fees_report(last_n=20, today_only=True):
             for sym, amt in list(per.items())[:15]:
                 lines.append(f"• {sym}: <b>{_fmt(amt, 3)}$</b>")
         return "\n".join(lines)
-
     trades = _dedupe_trades(_verified_closed(_load_trades()))
     if today_only:
         trades = [t for t in trades if _trade_date(t) == today]

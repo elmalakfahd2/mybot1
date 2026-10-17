@@ -107,8 +107,7 @@ class MarketRegime:
             change_1h = MarketRegime.calculate_change(closes_1h, 1)
             change_4h = MarketRegime.calculate_change(closes_1h, 4)
             change_24h = MarketRegime.calculate_change(closes_1h, 24)
-            # 🔥 v10.0: مرساة الاتجاه الأكبر — تغيّر 3 أيام من شموع 4h (~18 شمعة)
-            # تمنع قراءة "صاعد" بسبب ارتداد يومي داخل هبوط أكبر (كان يشتري قمم الهبوط)
+            # 🔥 v10.0: مرساة الاتجاه الأكبر — تغيّر 3 أيام من شموع 4h
             try:
                 change_3d = MarketRegime.calculate_change(closes_4h, 18) if len(closes_4h) >= 18 else 0
             except Exception:
@@ -155,7 +154,7 @@ class MarketRegime:
                 regime_ar = 'هابط قوي'
                 recommendation = 'التركيز على SELL أو التوقف'
                 should_trade = True
-            # 🔥 v10.0: and بدل or — يتطلب إجماع الفترتين ولا ينقلب بارتداد واحد
+            # 🔥 v10.0: and بدل or — إجماع الفترتين
             elif change_4h > 0.5 and change_24h > 0.5:
                 regime = 'bullish'
                 regime_ar = 'صاعد'

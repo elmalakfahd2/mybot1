@@ -170,8 +170,8 @@ MIN_CONFIDENCE_AUTO = 55
 MIN_SIGNAL_STRENGTH = 4
 
 # ==================== RSI ====================
-RSI_BUY_HARD_REJECT = 90
-RSI_SELL_HARD_REJECT = 10
+RSI_BUY_HARD_REJECT = 75   # 🔥 v10.1: حظر شراء عند تشبع ≥75 (كان 90 — يشتري القمم)
+RSI_SELL_HARD_REJECT = 25  # 🔥 v10.1: حظر بيع عند تشبع بيع ≤25
 RSI_BUY_WARNING = 78
 RSI_SELL_WARNING = 22
 
@@ -373,9 +373,10 @@ WIDE_TRAILING_DISTANCE = 0.5
 # ==================== Extreme Wide + Add-on Mode ====================
 # نعم: 70% من الهامش 10$ = خطرة 7$ للصفقة الأولى
 EXTREME_WIDE_MODE = True
-EXTREME_WIDE_SL_PERCENT = 3.35  # 🔥 v10.1: خسارة قصوى 5$ (50% من هامش 10$ × 15x = 150$ → 3.33%) — كانت 7% ≈ 10$        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
+EXTREME_WIDE_SL_PERCENT = 3.35
+MAX_SL_LOSS_USDT = 5.0   # 🔥 v10.1: الخسارة القصوى لكل صفقة بالدولار — الاستوب يُحسب منها ديناميكياً  # 🔥 أساس الاستوب — النهائي ديناميكي بالدولار أدناه        # 7% حركة سعرية تقريباً = 7$ عند رافعة 10x
 EXTREME_WIDE_MAX_TRADE_LOSS_USDT = 10.0
-ADD_ON_ENABLED = True
+ADD_ON_ENABLED = False  # 🔥 v10.1: معطّل — كان يتفعّل عند خسارة 5$ = لحظة الاستوب نفسها
 ADD_ON_LOSS_USDT = 5.0               # عند خسارة 5$ نفتح إضافة
 ADD_ON_SIZE_USDT = 5.0               # الإضافة بـ 5$
 ADD_ON_MAX_COUNT = 1                 # إضافة واحدة فقط

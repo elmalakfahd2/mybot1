@@ -450,8 +450,7 @@ class MainSystem:
                 return False, f"التداول موقوف ({risk.get('remaining_minutes', 0)} دقيقة)"
 
             max_pos = _cfg('MAX_OPEN_POSITIONS', 6)
-            # 🔥 v9.9.2: عدّ صفقات البوت المسجلة في open_positions فقط —
-            # صفقات المستخدم اليدوية لا تحجب خانات البوت (لها حدها الخاص في المنصة)
+            # 🔥 v9.9.2: عدّ صفقات البوت المسجلة فقط — لا صفقات المستخدم اليدوية
             try:
                 import bot_enhanced as _be_count
                 open_pos = _be_count.load_state() or []
@@ -459,6 +458,21 @@ class MainSystem:
                 open_pos = self.get_open_positions()
             if len(open_pos) >= max_pos:
                 return False, f"أقصى عدد صفقات ({len(open_pos)}/{max_pos})"
+
+            # 🔥 v10.1: تهدئة 45 دقيقة لكل عملة — يمنع إعادة الدخول الفوري بعد ربح/خسارة على نفس العملة
+            try:
+                import json as _json, time as _time
+                _cd_path = os.path.join(os.getcwd(), 'symbol_cooldown.json')
+                if os.path.exists(_cd_path):
+                    with open(_cd_path, encoding='utf-8') as _f:
+                        _cd = _json.load(_f)
+                    _last = _cd.get((symbol or '').upper(), 0)
+                    _elapsed = _time.time() - float(_last)
+                    if 0 < _elapsed < 45 * 60:
+                        _left = int((45 * 60 - _elapsed) / 60) + 1
+                        return False, f"⏳ {symbol}: تهدئة بعد صفقة سابقة — متبقي ~{_left} دقيقة [v10.1]"
+            except Exception:
+                pass
 
             if _cfg('ENABLE_DAILY_DRAWDOWN_LIMIT', True):
                 daily_pnl = _daily_pnl().get('pnl', 0)
@@ -704,6 +718,19 @@ class MainSystem:
                     if not result.get('entry_time'):
                         result['entry_time'] = datetime.now().isoformat()
                     bot_enhanced.add_open_position(result)
+                    # 🔥 v10.1: تهدئة 45 دقيقة للعملة — تسجيل وقت الدخول
+                    try:
+                        import json as _json, time as _time
+                        _cd_path = os.path.join(os.getcwd(), 'symbol_cooldown.json')
+                        _cd = {}
+                        if os.path.exists(_cd_path):
+                            with open(_cd_path, encoding='utf-8') as _f:
+                                _cd = _json.load(_f)
+                        _cd[(result.get('symbol') or '').upper()] = _time.time()
+                        with open(_cd_path, 'w', encoding='utf-8') as _f:
+                            _json.dump(_cd, _f)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.debug(f"add_open_position: {e}")
                 if notifier:
@@ -743,9 +770,7 @@ class MainSystem:
             except Exception:
                 bot_keys = set()
 
-            # 🔥 v9.9.3: فشل مغلق — سجل البوت فارغ (نشر جديد/فقدان الملف/استعادة
-            # Firebase لم تكتمل) = لا مراقبة إطلاقاً، حمايةً للصفقات اليدوية من أن
-            # تُعامل كصفقات بوت وتُغلق بإغلاق الخسارة الحرجة
+            # 🔥 v9.9.3: فشل مغلق — سجل البوت فارغ = لا مراقبة إطلاقاً (حماية الصفقات اليدوية)
             if not bot_keys:
                 logger.info("📊 [MONITOR] سجل البوت فارغ — لا مراقبة هذه الجولة (حماية الصفقات اليدوية)")
                 return
